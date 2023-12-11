@@ -8,11 +8,11 @@ from astropy.visualization.wcsaxes import *
 from astropy.coordinates import SkyCoord
 from astropy.visualization import ZScaleInterval, ImageNormalize
 
-import sys
-module_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(module_dir)
+#import sys
+#module_dir = os.path.dirname(os.path.abspath(__file__))
+#sys.path.append(module_dir)
 
-from Lenstool_GUI.source_extraction.source_extract import source_extract
+from source_extraction.source_extract import source_extract
 
 
 
@@ -52,6 +52,11 @@ class fits_image() :
                     image = np.dstack((data_red, data_green, data_blue))
             return pix_deg_scale, wcs, image
         self.pix_deg_scale, self.wcs, self.image = open_image(image_path)
+        self.sources = None
+        self.fig = None
+        self.ax = None
+        self.multiple_images = None
+        self.galaxy_selection = None
     
     def plot_image(self, fig=None, wcs_projection=True, units='pixel', pos=111, make_axes_labels=True) :
         if fig is None :
@@ -90,6 +95,8 @@ class fits_image() :
         self.sources = source_extract(self.image_path, weight_path=None, zero_point=None,
                        out_dir='PWD', outfile_name='SExtractor_cat', return_sources=True)
         return self.sources
+    
+    def select_multiple_images
 
 
 

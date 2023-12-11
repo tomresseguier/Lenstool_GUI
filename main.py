@@ -1,7 +1,7 @@
 import argparse
 import os
-from Lenstool_GUI.fits_image import fits_image
-from Lenstool_GUI.photometry_catalog import photometry_catalog
+from fits_image import fits_image
+from photometry_catalog import photometry_catalog
 
 #from Lenstool_GUI.pyextract import pysex
 
@@ -41,8 +41,8 @@ else :
 
 
 
-image_path = '/Users/Margaux/Desktop/RESEARCH/spt0615/DATA/v7-wisps/color/' + 'spt0615_color_rgb.fits'
-photometry_catalog_path = '/Users/Margaux/Desktop/RESEARCH/spt0615/DATA/v7-deblend/catalogs/' + 'spt0615_phot-eazy.csv'
+image_path = '../../spt0615/DATA/v7-wisps/color/' + 'spt0615_color_rgb.fits'
+photometry_catalog_path = '../../spt0615/DATA/v7-deblend/catalogs/' + 'spt0615_phot-eazy.cat'
 
 
 

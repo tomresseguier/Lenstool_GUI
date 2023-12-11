@@ -3,12 +3,12 @@ source_extract.py from David Harvey's pyRRG
 """
 
 #from pyextract import pysex
-from Lenstool_GUI.source_extraction.pysex import pysex
+from source_extraction.pysex import pysex
 from astropy.io import fits
 
 import numpy as np
 import os as os
-from Lenstool_GUI.source_extraction.match_cat import run_match
+from source_extraction.match_cat import run_match
 from numpy.lib.recfunctions import append_fields as append_rec
 
 module_dir = os.path.dirname(os.path.abspath(__file__))
@@ -35,7 +35,7 @@ def source_extract( image_path, weight_path=None, zero_point=None,
     
     '''
     
-    config_dir = os.path.join(module_dir, 'Lenstool_GUI/source_extraction/SExtractor_config/from_pyRRG/')
+    config_dir = os.path.join(module_dir, 'SExtractor_config/from_pyRRG')
     check_sex_files(config_dir)
     
     if out_dir == 'PWD':
@@ -70,11 +70,10 @@ def source_extract( image_path, weight_path=None, zero_point=None,
 
     #Second hot 
     hot_conf = config_dir+'/HFF_hot.param'
-        
     hot_sources = pysex.run( image_path, \
                                conf_file=hot_conf, \
                                conf_args=conf_args, \
-                               params=config_dir+'/rrg.param')
+                               param_file=config_dir+'/rrg.param')
 
 
     hot_sources = append_fits_field( hot_sources, 'RA', hot_sources['X_WORLD'])
@@ -85,8 +84,8 @@ def source_extract( image_path, weight_path=None, zero_point=None,
     hot_sources['NUMBER'] = np.arange( len(hot_sources['NUMBER'])) +1
     cold_sources['NUMBER'] = np.arange( len(cold_sources['NUMBER'])) +1
     
-    fits.writeto( 'cold_sources.fits', cold_sources, clobber=True )
-    fits.writeto( 'hot_sources.fits', hot_sources, clobber=True )
+    fits.writeto( 'cold_sources.fits', cold_sources, overwrite=True )
+    fits.writeto( 'hot_sources.fits', hot_sources, overwrite=True )
 
 
     
@@ -113,11 +112,11 @@ def acs_zero_point( header ):
 def check_sex_files( config_dir ):
     #Check all the sex files to see if they exist
     if (not os.path.isfile(config_dir+'/HFF_hot.param')):
-        raise ValueError('HFF_hot.param not found')
+        raise ValueError('HFF_hot.param not found at ' + config_dir+'/HFF_hot.param')
     if (not os.path.isfile(config_dir+'/HFF_cold.param')):
-        raise ValueError('HFF_cold.param not found')
+        raise ValueError('HFF_cold.param not found at ' + config_dir+'/HFF_cold.param')
     if (not os.path.isfile(config_dir+'/rrg.param')):
-        raise ValueError('rrg.param not found')
+        raise ValueError('rrg.param not found at ' + config_dir+'/rrg.param')
 
 
     
