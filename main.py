@@ -2,6 +2,7 @@ import argparse
 import os
 from fits_image import fits_image
 from photometry_catalog import photometry_catalog
+#from astropy import units as u
 
 #from Lenstool_GUI.pyextract import pysex
 
@@ -19,6 +20,7 @@ parser.add_argument('photometry_catalog')
 
 
 args = parser.parse_args()
+
 
 ### Check that the files exist ###
 if os.path.exists( os.path.join( os.path.dirname(os.path.abspath(__file__)), args.FITS_image ) ):
@@ -41,13 +43,39 @@ else :
 
 
 
-image_path = '../../spt0615/DATA/v7-wisps/color/' + 'spt0615_color_rgb.fits'
+RGB_image_path = '../../spt0615/DATA/v7-wisps/color/' + 'spt0615_color_rgb.fits'
+F444W_image_path = '/Users/Margaux/Desktop/RESEARCH/spt0615/DATA/background_subtracted/j061548m5745-grizli-v7.0-f444w-clear_drc_sci_bkgsub.fits'
+
 photometry_catalog_path = '../../spt0615/DATA/v7-deblend/catalogs/' + 'spt0615_phot-eazy.cat'
+mult_file_path = '../../spt0615/spt0615_process/SL_models/' + 'spt0615_mult_images.lenstool'
+
+potfile_path = '../../spt0615/spt0615_process/SL_models/galcat.cat'
+
+
+image = fits_image(RGB_image_path)
+image.extract_sources(F444W_image_path)
+image.import_multiple_images(mult_file_path)
+image.multiple_images.plot()
+image.load_potfile(potfile_path)
+image.import_catalog(photometry_catalog_path)
+image.imported_cat.plot(color=[0,1,0])
+image.potfile.plot(color=[0,0,0])
 
 
 
-image = fits_image(image_path)
-photometry_catalog = photometry_catalog(photometry_catalog_path)
+
+
+
+RGB_image_path = '/Users/Margaux/Desktop/RESEARCH/Planck_bullet_cluster/DATA/Treated_data/images/total/' + 'hlsp_16429_hst_acs-wfc3-60mas_plckg282+49_total_drz.fits'
+mult_file_path = '/Users/Margaux/Desktop/RESEARCH/Planck_bullet_cluster/PBC_process/Lenstool/SL_only/RUN_045_forme4/' + 'PBC_mult_images.lenstool'
+
+image2 = fits_image(RGB_image_path)
+image2.import_multiple_images(mult_file_path)
+image2.multiple_images.plot()
+
+
+
+#photometry_catalog = photometry_catalog(photometry_catalog_path)
 
 
 ### Extract galaxy shapes ###

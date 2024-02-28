@@ -4,11 +4,11 @@
 # 06/2006
 #
 
-PIXEL_SCALE     0.030                          # size of pixel in arcsec.
-SEEING_FWHM     0.12                           # stellar FWHM in arcsec
+PIXEL_SCALE     0.0396                          # size of pixel in arcsec.
+SEEING_FWHM     0.145                           # stellar FWHM in arcsec
 DETECT_TYPE     CCD                            # "CCD" or "PHOTO"
 SATUR_LEVEL     80                             # level of saturation
-#MAG_ZEROPOINT   25.946622                      # magnitude zero-point
+MAG_ZEROPOINT   28.0                      # magnitude zero-point
 MAG_GAMMA       4.0                            # gamma of emulsion (for photographic scans)
 GAIN            4056                           # gain adjusted for exposure params
 
@@ -19,8 +19,8 @@ WEIGHT_TYPE MAP_WEIGHT			       #Set Weight image type
 FILTER          Y                              # apply filter for detection ("Y" or "N")?
 
 
-DETECT_MINAREA  18                             # minimum number of pixels above threshold
-DETECT_THRESH   1.0                            # <sigmas> or <threshold>,<ZP> in mag.arcsec-2
+DETECT_MINAREA  40                             # minimum number of pixels above threshold
+DETECT_THRESH   1.5                            # <sigmas> or <threshold>,<ZP> in mag.arcsec-2
 ANALYSIS_THRESH 1.5                           # <sigmas> or <threshold>,<ZP> in mag.arcsec-2
 THRESH_TYPE RELATIVE
 

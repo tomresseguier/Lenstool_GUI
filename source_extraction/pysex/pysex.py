@@ -19,6 +19,8 @@ Usage:
 """
 
 import os, shutil, sys
+module_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(module_dir)
 import asciidata
 import numpy as np
 import glob
@@ -161,8 +163,8 @@ def run(image='', imageref='', params=[], param_file=None, conf_file=None, conf_
         cat = pysex.run(myimage, params=['X_IMAGE', 'Y_IMAGE', 'FLUX_APER'], conf_args={'PHOT_APERTURES':5})
         print cat['FLUX_APER']
     """
-    default_param='/Users/DavidHarvey/Library/Code/IDL/rrg/code/shape/sex_files/py.param'
-    default_conf_file='/Users/DavidHarvey/Library/Code/IDL/rrg/code/shape/sex_files/py.sex'
+    default_param='./source_extraction/SExtractor_config/default/default.param'
+    default_conf_file='./source_extraction/SExtractor_config/default/default.sex'
     
     if conf_file is None:
         if os.path.isfile(default_conf_file):
