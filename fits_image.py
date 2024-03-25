@@ -13,6 +13,7 @@ import requests
 import types
 
 import PyQt5
+from PyQt5.QtWidgets import QMainWindow, QWidget, QHBoxLayout
 import pyqtgraph as pg
 #from PyQt5.QtWidgets import QGraphicsEllipseItem, QGraphicsScene, QGraphicsView, QGraphicsSceneMouseEvent, QApplication
 #from PyQt5.QtCore import Qt
@@ -28,6 +29,7 @@ import pandas as pd
 from source_extraction.source_extract import source_extract
 from utils.utils_plots.plot_utils_general import *
 from utils.utils_classes.selectable_ellipse import *
+from utils.utils_general.utils import flux_muJy_to_magAB
 
 
 pg.setConfigOption('imageAxisOrder', 'row-major')
@@ -38,7 +40,7 @@ pg.setConfigOption('imageAxisOrder', 'row-major')
 class fits_image :
     def __init__(self, image_path) :
         self.image_path = image_path
-        self.pix_deg_scale, self.wcs, self.image = self.open_image()
+        self.pix_deg_scale, self.wcs, self.image_data = self.open_image()
         ### Following lines useless, just to see the possible attributes of the class ###
         self.sources = None
         self.fig = None
@@ -86,10 +88,89 @@ class fits_image :
     
     def plot_image(self) :
         #if self.qt_plot is None :
-        #to_plot = self.image
-        #to_plot = np.transpose(self.image, axes=[1,0,2])
-        to_plot = np.flip(self.image, axis=0)
+        #to_plot = self.image_data
+        #to_plot = np.transpose(self.image_data, axes=[1,0,2])
+        to_plot = np.flip(self.image_data, axis=0)
+        
         self.qt_plot = pg.image(to_plot)
+        
+        ############### NEW CODE ###############
+        self.window = QMainWindow()
+        self.window.setWindowTitle(os.path.basename(self.image_path))
+        self.image_widget_layout = QHBoxLayout()
+        
+        self.image_widget_layout.addWidget(self.qt_plot)
+        #self.qt_plot.setSizePolicy(pg.QtWidgets.QSizePolicy.Fixed, pg.QtWidgets.QSizePolicy.Expanding)
+        self.image_widget_layout.setStretchFactor(self.qt_plot, 6)
+        
+        if self.imported_cat is not None :
+            self.RS_widget = pg.PlotWidget()
+            self.RS_widget.setTitle('Red sequence')
+            
+            mag_F444W = flux_muJy_to_magAB(self.imported_cat.cat['f444w_tot_0'])
+            mag_F090W = flux_muJy_to_magAB(self.imported_cat.cat['f090w_tot_0'])
+            nan_mask = np.logical_not(np.isnan(mag_F444W)) & np.logical_not(np.isnan(mag_F090W))
+            inf_mask = (mag_F444W!=np.inf) & (mag_F090W!=np.inf)
+            #extremes_mask = (mag_F444W>0) & (mag_F444W<50)
+            full_mask = nan_mask & inf_mask
+            mag_F444W = mag_F444W[full_mask]
+            mag_F090W = mag_F090W[full_mask]
+            self.RS_widget.plot(mag_F444W, (mag_F090W-mag_F444W), pen=None, symbol='o', symbolBrush='r', symbolSize=2)
+            self.RS_widget.setAspectLocked(lock=True, ratio=1)
+            self.RS_widget.autoRange()
+            #self.RS_widget.setSizePolicy(pg.QtWidgets.QSizePolicy.Fixed, pg.QtWidgets.QSizePolicy.Expanding)
+            self.image_widget_layout.addWidget(self.RS_widget)
+            self.image_widget_layout.setStretchFactor(self.RS_widget, 4)
+            
+            center_x = np.mean(mag_F444W)
+            center_y = np.mean(mag_F090W-mag_F444W)
+            self.selection_ROI = pg.ROI([center_x-2, center_y-1], [4, 2], removable=True)
+            self.selection_ROI.addScaleHandle([0.5,0], [0.5,1])
+            self.selection_ROI.addScaleHandle([1,0.5], [0,0.5])
+            self.selection_ROI.addScaleHandle([0.5,1], [0.5,0])
+            self.selection_ROI.addScaleHandle([0,0.5], [1,0.5])
+            
+            self.selection_ROI.addScaleHandle([0,0], [1,1])
+            self.selection_ROI.addScaleHandle([0,1], [1,0])
+            self.selection_ROI.addScaleHandle([1,1], [0,0])
+            self.selection_ROI.addScaleHandle([1,0], [0,1])
+            
+            self.selection_ROI.addScaleRotateHandle([0, 0.125], [1,1])
+            self.selection_ROI.addScaleRotateHandle([0.125, 0], [1,1])
+            self.selection_ROI.addScaleRotateHandle([0.875, 0], [0,1])
+            self.selection_ROI.addScaleRotateHandle([1, 0.125], [0,1])
+            self.selection_ROI.addScaleRotateHandle([0, 0.875], [1,0])
+            self.selection_ROI.addScaleRotateHandle([0.125, 1], [1,0])
+            self.selection_ROI.addScaleRotateHandle([0.875, 1], [0,0])
+            self.selection_ROI.addScaleRotateHandle([1, 0.875], [0,0])
+            
+            self.selection_ROI.addScaleRotateHandle([0.5, 1.125], [0.5,0.5])
+            self.selection_ROI.addScaleRotateHandle([1.125, 0.5], [0.5,0.5])
+            self.selection_ROI.addScaleRotateHandle([0.5, -0.125], [0.5,0.5])
+            self.selection_ROI.addScaleRotateHandle([ -0.125, 0.5], [0.5,0.5])
+            self.RS_widget.addItem(selection_ROI)
+        
+        self.image_widget = QWidget()
+        self.image_widget.setLayout(self.image_widget_layout)
+        self.window.setCentralWidget(self.image_widget)
+        self.window.show()
+        
+        #win = pg.GraphicsLayoutWidget()
+        #win.setWindowTitle(os.path.basename(image.image_path))
+        #win.show()
+        
+        #win_element = win.addPlot()
+        #win_element.addItem(image.qt_plot, row=0, col=0)
+        ########################################
+        
+        if False :
+            self.qt_plot = pg.ImageItem(to_plot)
+            self.window = pg.GraphicsLayoutWidget()
+            plot_element = self.window.addPlot(title=os.path.basename(self.image_path))
+            plot_element.addItem(self.qt_plot)
+            self.window.show()
+        
+        
         return self.qt_plot
     
     def extract_sources(self, image_path=None, rerun=False) :
@@ -271,7 +352,7 @@ class fits_image :
         uniform_names_cat = self.make_uniform_names_cat(cat)
         if self.qt_plot is None :
             self.plot_image()
-        return self.catalog(uniform_names_cat, self.image, self.qt_plot)
+        return self.catalog(uniform_names_cat, self.image_data, self.qt_plot)
         
     ###########################################################################
     
@@ -289,9 +370,9 @@ class fits_image :
     
     
     class catalog :
-        def __init__(self, cat, image, qt_plot) :
+        def __init__(self, cat, image_data, qt_plot) :
             self.cat = cat
-            self.image = image
+            self.image_data = image_data
             self.qt_plot = qt_plot
             self.qtItems = np.empty(len(cat), dtype=PyQt5.QtWidgets.QGraphicsEllipseItem)
             #self.qtItems = np.empty(len(cat), dtype=utils.utils_classes.selectable_ellipse.SelectableEllipse)
@@ -314,16 +395,14 @@ class fits_image :
         def plot_one_object(self, x, y, semi_major, semi_minor, angle, idx, color=[1., 1., 0]) :
             color = list(np.array(color)*255)
             #make the flip to accomosate pyqtgraph's strange plotting conventions
-            y = self.image.shape[0] - y
+            y = self.image_data.shape[0] - y
             angle = -angle
             #####################################################################
-            ellipse = SelectableEllipse(x-semi_major/2, y-semi_minor/2, semi_major, semi_minor, idx, self.selection_mask, self.qtItems)
+            ellipse = SelectableEllipse(x-semi_major/2, y-semi_minor/2, semi_major, semi_minor, idx, self.selection_mask, self.qtItems, color)
             #ellipse = PyQt5.QtWidgets.QGraphicsEllipseItem(x-semi_major/2, y-semi_minor/2, semi_major, semi_minor)
             ellipse.setTransformOriginPoint( PyQt5.QtCore.QPointF(x, y) ) 
             #ellipse.setTransform( PyQt5.QtGui.QTransform().rotate(angle[i]) )
             ellipse.setRotation(angle)
-            ellipse.setPen( pg.mkPen(color + [255]) )
-            ellipse.setBrush( pg.mkBrush(color + [127]) )
             self.qt_plot.addItem(ellipse)
             return ellipse
         
@@ -403,7 +482,7 @@ class fits_image :
     def plot_one_source(self, x, y, semi_major, semi_minor, angle, color=[1., 1., 0]) :
         color = list(np.array(color)*255)
         #make the flip to accomosate pyqtgraph's strange plotting conventions
-        y = self.image.shape[0] - y
+        y = self.image_data.shape[0] - y
         angle = -angle
         #####################################################################
         ellipse = PyQt5.QtWidgets.QGraphicsEllipseItem(x-semi_major/2, y-semi_minor/2, semi_major, semi_minor)
@@ -510,9 +589,9 @@ class fits_image :
             self.ax.set_xlabel(' ')
             self.ax.set_ylabel(' ')
         if wcs_projection :
-            self.ax.imshow(self.image, origin="lower")
+            self.ax.imshow(self.image_data, origin="lower")
         if not wcs_projection :
-            self.ax.imshow(self.image, origin='lower', extent=[0, self.image.shape[1]*scaling, 0, self.image.shape[0]*scaling])
+            self.ax.imshow(self.image_data, origin='lower', extent=[0, self.image_data.shape[1]*scaling, 0, self.image_data.shape[0]*scaling])
         #ax.figure.tight_layout()
         return self.fig, self.ax
     
