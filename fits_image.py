@@ -28,7 +28,8 @@ import pandas as pd
 
 from source_extraction.source_extract import source_extract
 from utils.utils_plots.plot_utils_general import *
-from utils.utils_classes.selectable_ellipse import *
+from utils.utils_Qt.selectable_classes import *
+from utils.utils_Qt.utils_general import *
 from utils.utils_general.utils import flux_muJy_to_magAB
 
 
@@ -101,54 +102,6 @@ class fits_image :
         
         self.image_widget_layout.addWidget(self.qt_plot)
         #self.qt_plot.setSizePolicy(pg.QtWidgets.QSizePolicy.Fixed, pg.QtWidgets.QSizePolicy.Expanding)
-        self.image_widget_layout.setStretchFactor(self.qt_plot, 6)
-        
-        if self.imported_cat is not None :
-            self.RS_widget = pg.PlotWidget()
-            self.RS_widget.setTitle('Red sequence')
-            
-            mag_F444W = flux_muJy_to_magAB(self.imported_cat.cat['f444w_tot_0'])
-            mag_F090W = flux_muJy_to_magAB(self.imported_cat.cat['f090w_tot_0'])
-            nan_mask = np.logical_not(np.isnan(mag_F444W)) & np.logical_not(np.isnan(mag_F090W))
-            inf_mask = (mag_F444W!=np.inf) & (mag_F090W!=np.inf)
-            #extremes_mask = (mag_F444W>0) & (mag_F444W<50)
-            full_mask = nan_mask & inf_mask
-            mag_F444W = mag_F444W[full_mask]
-            mag_F090W = mag_F090W[full_mask]
-            self.RS_widget.plot(mag_F444W, (mag_F090W-mag_F444W), pen=None, symbol='o', symbolBrush='r', symbolSize=2)
-            self.RS_widget.setAspectLocked(lock=True, ratio=1)
-            self.RS_widget.autoRange()
-            #self.RS_widget.setSizePolicy(pg.QtWidgets.QSizePolicy.Fixed, pg.QtWidgets.QSizePolicy.Expanding)
-            self.image_widget_layout.addWidget(self.RS_widget)
-            self.image_widget_layout.setStretchFactor(self.RS_widget, 4)
-            
-            center_x = np.mean(mag_F444W)
-            center_y = np.mean(mag_F090W-mag_F444W)
-            self.selection_ROI = pg.ROI([center_x-2, center_y-1], [4, 2], removable=True)
-            self.selection_ROI.addScaleHandle([0.5,0], [0.5,1])
-            self.selection_ROI.addScaleHandle([1,0.5], [0,0.5])
-            self.selection_ROI.addScaleHandle([0.5,1], [0.5,0])
-            self.selection_ROI.addScaleHandle([0,0.5], [1,0.5])
-            
-            self.selection_ROI.addScaleHandle([0,0], [1,1])
-            self.selection_ROI.addScaleHandle([0,1], [1,0])
-            self.selection_ROI.addScaleHandle([1,1], [0,0])
-            self.selection_ROI.addScaleHandle([1,0], [0,1])
-            
-            self.selection_ROI.addScaleRotateHandle([0, 0.125], [1,1])
-            self.selection_ROI.addScaleRotateHandle([0.125, 0], [1,1])
-            self.selection_ROI.addScaleRotateHandle([0.875, 0], [0,1])
-            self.selection_ROI.addScaleRotateHandle([1, 0.125], [0,1])
-            self.selection_ROI.addScaleRotateHandle([0, 0.875], [1,0])
-            self.selection_ROI.addScaleRotateHandle([0.125, 1], [1,0])
-            self.selection_ROI.addScaleRotateHandle([0.875, 1], [0,0])
-            self.selection_ROI.addScaleRotateHandle([1, 0.875], [0,0])
-            
-            self.selection_ROI.addScaleRotateHandle([0.5, 1.125], [0.5,0.5])
-            self.selection_ROI.addScaleRotateHandle([1.125, 0.5], [0.5,0.5])
-            self.selection_ROI.addScaleRotateHandle([0.5, -0.125], [0.5,0.5])
-            self.selection_ROI.addScaleRotateHandle([ -0.125, 0.5], [0.5,0.5])
-            self.RS_widget.addItem(selection_ROI)
         
         self.image_widget = QWidget()
         self.image_widget.setLayout(self.image_widget_layout)
@@ -163,13 +116,13 @@ class fits_image :
         #win_element.addItem(image.qt_plot, row=0, col=0)
         ########################################
         
-        if False :
-            self.qt_plot = pg.ImageItem(to_plot)
-            self.window = pg.GraphicsLayoutWidget()
-            plot_element = self.window.addPlot(title=os.path.basename(self.image_path))
-            plot_element.addItem(self.qt_plot)
-            self.window.show()
-        
+        """
+        self.qt_plot = pg.ImageItem(to_plot)
+        self.window = pg.GraphicsLayoutWidget()
+        plot_element = self.window.addPlot(title=os.path.basename(self.image_path))
+        plot_element.addItem(self.qt_plot)
+        self.window.show()
+        """
         
         return self.qt_plot
     
@@ -278,7 +231,7 @@ class fits_image :
     def import_catalog(self, cat_path=None, cat=None) :
         if cat==None :
             cat = self.open_cat(cat_path)
-        self.imported_cat = self.make_catalog(cat=cat)
+        self.imported_cat = self.make_catalog(cat=cat, make_selection_panel=True)
         return self.imported_cat.cat
     
     ################## Transform catalog into catalog class ###################
@@ -346,13 +299,13 @@ class fits_image :
             uniform_names_cat['theta'] = np.full(len(uniform_names_cat), 0.)
         return uniform_names_cat
     
-    def make_catalog(self, cat=None, cat_path=None) :
+    def make_catalog(self, cat=None, cat_path=None, make_selection_panel=False) :
         if cat_path is not None :
             cat = self.open_cat(cat_path)
         uniform_names_cat = self.make_uniform_names_cat(cat)
         if self.qt_plot is None :
             self.plot_image()
-        return self.catalog(uniform_names_cat, self.image_data, self.qt_plot)
+        return self.catalog(uniform_names_cat, self.image_data, self.qt_plot, make_selection_panel=make_selection_panel, image_widget_layout=self.image_widget_layout)
         
     ###########################################################################
     
@@ -370,35 +323,60 @@ class fits_image :
     
     
     class catalog :
-        def __init__(self, cat, image_data, qt_plot) :
+        def __init__(self, cat, image_data, qt_plot, make_selection_panel=False, image_widget_layout=None) :
             self.cat = cat
             self.image_data = image_data
             self.qt_plot = qt_plot
             self.qtItems = np.empty(len(cat), dtype=PyQt5.QtWidgets.QGraphicsEllipseItem)
             #self.qtItems = np.empty(len(cat), dtype=utils.utils_classes.selectable_ellipse.SelectableEllipse)
+            self.color = [1., 1., 0]
             self.selection_mask = np.full(len(cat), False)
+            self.make_selection_panel = make_selection_panel
+            self.image_widget_layout = image_widget_layout
+            self.RS_widget = None
+            self.x_axis_cleaned = np.full(len(cat), None)
+            self.y_axis_cleaned = np.full(len(cat), None)
         
-        def plot(self, scale=1., color=[1., 1., 0]) :
+        def make_mask_naninf(self) :
+            mag_F444W = flux_muJy_to_magAB(self.cat['f444w_tot_0'])
+            mag_F090W = flux_muJy_to_magAB(self.cat['f090w_tot_0'])
+            x_axis = mag_F444W
+            y_axis = mag_F090W - mag_F444W
+            
+            nan_mask = np.logical_not(np.isnan(x_axis)) & np.logical_not(np.isnan(y_axis))
+            inf_mask = (x_axis!=np.inf) & (y_axis!=np.inf)
+            #extremes_mask = (x_axis>0) & (x_axis<50)
+            self.mask_naninf = nan_mask & inf_mask
+            self.x_axis_cleaned = x_axis[self.mask_naninf]
+            self.y_axis_cleaned = y_axis[self.mask_naninf]
+            
+            self.clear()
+            self.cat = self.cat[self.mask_naninf]
+            self.qtItems = np.empty(len(self.cat), dtype=PyQt5.QtWidgets.QGraphicsEllipseItem)
+            self.selection_mask = np.full(len(self.cat), False)
+        
+        def plot(self, scale=1.) :
             x = self.cat['x']
             y = self.cat['y']
             semi_major = self.cat['a'] * scale
             semi_minor = self.cat['b'] * scale
             angle = self.cat['theta']
             for i in tqdm(range(len(semi_major))) :
-                ellipse = self.plot_one_object(x[i], y[i], semi_major[i], semi_minor[i], angle[i], i, color=color)
+                ellipse = self.plot_one_object(x[i], y[i], semi_major[i], semi_minor[i], angle[i], i)
                 self.qtItems[i] = ellipse
         
         def clear(self) :
             for i in tqdm( range(len(self.qtItems)) ) :
                 self.qt_plot.removeItem(self.qtItems[i])
         
-        def plot_one_object(self, x, y, semi_major, semi_minor, angle, idx, color=[1., 1., 0]) :
-            color = list(np.array(color)*255)
+        def plot_one_object(self, x, y, semi_major, semi_minor, angle, idx) :
+            color = list(np.array(self.color)*255)
             #make the flip to accomosate pyqtgraph's strange plotting conventions
             y = self.image_data.shape[0] - y
             angle = -angle
             #####################################################################
-            ellipse = SelectableEllipse(x-semi_major/2, y-semi_minor/2, semi_major, semi_minor, idx, self.selection_mask, self.qtItems, color)
+            ellipse = SelectableEllipse(x-semi_major/2, y-semi_minor/2, semi_major, semi_minor, idx, self.selection_mask, \
+                                        self.qtItems, color, scatter_pos=(self.x_axis_cleaned[idx], self.y_axis_cleaned[idx]), RS_widget=self.RS_widget)
             #ellipse = PyQt5.QtWidgets.QGraphicsEllipseItem(x-semi_major/2, y-semi_minor/2, semi_major, semi_minor)
             ellipse.setTransformOriginPoint( PyQt5.QtCore.QPointF(x, y) ) 
             #ellipse.setTransform( PyQt5.QtGui.QTransform().rotate(angle[i]) )
@@ -406,6 +384,18 @@ class fits_image :
             self.qt_plot.addItem(ellipse)
             return ellipse
         
+        def plot_selection_panel(self) :
+            if self.make_selection_panel :
+                self.make_mask_naninf()
+                
+                self.RS_widget, self.selection_ROI = plot_panel(self.x_axis_cleaned, self.y_axis_cleaned, self.image_widget_layout, self.qt_plot)
+                
+                data=(self.x_axis_cleaned, self.y_axis_cleaned)
+                #self.selection_mask = np.full(len(self.mag_F444W_cleaned), False)
+                self.selectable_scatter = SelectableScatter(self.RS_widget, self.selection_ROI, data, self.selection_mask, qtItems=self.qtItems, color=list(np.array(self.color)*255))
+                
+                
+            
         #def select(self) :
         #    class MouseClickHandler(QtCore.QObject) :
         #        clicked = QtCore.Signal(float, float)

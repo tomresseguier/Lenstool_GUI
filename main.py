@@ -53,8 +53,12 @@ potfile_path = '../../spt0615/spt0615_process/SL_models/galcat.cat'
 
 
 image = fits_image(RGB_image_path)
+#image.plot_image()
 image.import_catalog(photometry_catalog_path)
-image.plot_image()
+image.imported_cat.plot()
+image.imported_cat.plot_selection_panel()
+image.imported_cat.plot()
+
 image.extract_sources(F444W_image_path)
 image.import_multiple_images(mult_file_path)
 image.multiple_images.plot()
