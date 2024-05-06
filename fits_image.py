@@ -15,22 +15,33 @@ import types
 import PyQt5
 from PyQt5.QtWidgets import QMainWindow, QWidget, QHBoxLayout
 import pyqtgraph as pg
-#from PyQt5.QtWidgets import QGraphicsEllipseItem, QGraphicsScene, QGraphicsView, QGraphicsSceneMouseEvent, QApplication
+from PyQt5.QtWidgets import QGraphicsEllipseItem, QGraphicsScene, QGraphicsView, QGraphicsSceneMouseEvent, QApplication
 #from PyQt5.QtCore import Qt
 from pyqtgraph.Qt import QtCore
 from astropy.table import Table
 import lenstool
 import pandas as pd
 
-#import sys
-#module_dir = os.path.dirname(os.path.abspath(__file__))
-#sys.path.append(module_dir)
+###############################################################################
+import sys
+module_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(module_dir)
 
+from source_extraction.source_extract import source_extract
+sys.path.append(module_dir + "/utils")
+from utils_plots.plot_utils_general import *
+from utils_Qt.selectable_classes import *
+from utils_Qt.utils_general import *
+from utils_general.utils import flux_muJy_to_magAB
+###############################################################################
+
+"""
 from source_extraction.source_extract import source_extract
 from utils.utils_plots.plot_utils_general import *
 from utils.utils_Qt.selectable_classes import *
 from utils.utils_Qt.utils_general import *
 from utils.utils_general.utils import flux_muJy_to_magAB
+"""
 
 
 pg.setConfigOption('imageAxisOrder', 'row-major')
@@ -219,13 +230,16 @@ class fits_image :
         return self.potfile.cat
     
     def open_cat(self, cat_path) :
-        with open(cat_path, 'r') as raw_cat :
-            first_line = raw_cat.readlines()[0]
-        if len(first_line.split()) > len(first_line.split(',')) :
-            cat_df = pd.read_csv(cat_path, delim_whitespace=True)[1:].apply(pd.to_numeric, errors='coerce')
+        if '.fits' in cat_path :
+            cat = Table.read(cat_path, format='fits')
         else :
-            cat_df = pd.read_csv(cat_path)[1:].apply(pd.to_numeric, errors='coerce')
-        cat = Table.from_pandas(cat_df)
+            with open(cat_path, 'r') as raw_cat :
+                first_line = raw_cat.readlines()[0]
+            if len(first_line.split()) > len(first_line.split(',')) :
+                cat_df = pd.read_csv(cat_path, delim_whitespace=True)[1:].apply(pd.to_numeric, errors='coerce')
+            else :
+                cat_df = pd.read_csv(cat_path)[1:].apply(pd.to_numeric, errors='coerce')
+            cat = Table.from_pandas(cat_df)
         return cat
     
     def import_catalog(self, cat_path=None, cat=None) :
@@ -250,17 +264,18 @@ class fits_image :
         to_test_names_dict = {}
         to_test_names_dict['ra'] = ['ra', 'ALPHA_J2000']
         to_test_names_dict['dec'] = ['dec', 'DELTA_J2000']
-        to_test_names_dict['x'] = ['x', 'X_IMAGE']
-        to_test_names_dict['y'] = ['y', 'Y_IMAGE']
+        #to_test_names_dict['x'] = ['X_IMAGE', 'x']
+        #to_test_names_dict['y'] = ['Y_IMAGE', 'y']
         to_test_names_dict['a'] = ['a', 'A_IMAGE']
         to_test_names_dict['b'] = ['b', 'B_IMAGE']
-        to_test_names_dict['theta'] = ['theta', 'THETA_IMAGE', 'angle']
+        to_test_names_dict['theta'] = ['angle', 'theta', 'THETA_IMAGE']
         
         names_list = list(to_test_names_dict.keys())
         #names_list = ['ra', 'dec', 'x', 'y', 'a', 'b']
         names_dict = {}
+        names_dict_default = {}
         for name in names_list :
-            names_dict[name] = None
+            names_dict[name] = []
         for name in names_list :
             for to_test_name in to_test_names_dict[name] :
                 cat_colnames_lower = [col.lower() for col in catalog.colnames]
@@ -272,8 +287,19 @@ class fits_image :
                 
                 if to_test_name.lower() in cat_colnames_lower :
                     col_idx = np.where( np.array(cat_colnames_lower) == to_test_name.lower() )[0][0]
-                    #names_dict[name] = to_test_name
-                    names_dict[name] = catalog.colnames[col_idx]
+                    names_dict[name].append(catalog.colnames[col_idx])
+                    names_dict_default[name] = to_test_name
+        
+        yesno = input('Columns to be used: \n' + str(names_dict_default) + '\nKeep these names? (if no, user prompted to select other columns) [y][n]')
+        if yesno == 'n' :
+            for name in names_list :
+                if len(names_dict[name]) > 1 :
+                    selected_name = input("Several columns found for name " + name + ": " + str(names_dict[name]) + ". Which one should be kept (if unit, should be image pixels)?")
+                    names_dict[name] = selected_name
+                else :
+                    names_dict[name] = names_dict[name][0]
+        else :
+            names_dict = names_dict_default
         return names_dict
     
     def make_uniform_names_cat(self, cat) :
@@ -285,14 +311,30 @@ class fits_image :
         
         for colname in colnames_dict.keys() :
             if colnames_dict[colname] is not None :
-                uniform_names_cat.rename_column(colnames_dict[colname], colname)
-                if colnames_dict[colname] == 'a' or colnames_dict[colname] == 'b' :
-                    uniform_names_cat.replace_column( colname, uniform_names_cat[colname]/(self.pix_deg_scale*3600)*10 )
-        if colnames_dict['x']==None :
-            x, y = self.world_to_image(uniform_names_cat['ra'], uniform_names_cat['dec'], unit='deg')
-            uniform_names_cat['x'] = x
-            uniform_names_cat['y'] = y
-        if colnames_dict['a']==None :
+                
+                if colname in uniform_names_cat.columns :
+                    uniform_names_cat[colname] = uniform_names_cat[colnames_dict[colname]]
+                else :
+                    uniform_names_cat.rename_column(colnames_dict[colname], colname)
+                
+        if colnames_dict['a'] != 'A_IMAGE' and colnames_dict['b'] != 'B_IMAGE' :
+            yesno = input("ellipticity parameters " + colnames_dict['a'] + " and " + colnames_dict['b'] + " in pixels? [y][arcsec][deg]")
+            if yesno == 'deg' :
+                uniform_names_cat.replace_column( 'a', uniform_names_cat['a']/(self.pix_deg_scale) )
+                uniform_names_cat.replace_column( 'b', uniform_names_cat['b']/(self.pix_deg_scale) )
+            if yesno == 'arcsec' :
+                uniform_names_cat.replace_column( 'a', uniform_names_cat['a']/(self.pix_deg_scale*3600) )
+                uniform_names_cat.replace_column( 'b', uniform_names_cat['b']/(self.pix_deg_scale*3600) )
+        
+        #if colnames_dict['x']==None :
+        x, y = self.world_to_image(uniform_names_cat['ra'], uniform_names_cat['dec'], unit='deg')
+        uniform_names_cat['x'] = x
+        uniform_names_cat['y'] = y
+        
+        yesno = 'n'
+        if colnames_dict['a'] is not None :
+            yesno = input("'a', 'b' and 'theta' columns found in catalog. Use them as ellipticity parameters? [y] or [n]")
+        if colnames_dict['a']==None or yesno != 'y' :
             size = 40.
             uniform_names_cat['a'] = np.full(len(uniform_names_cat), size)
             uniform_names_cat['b'] = np.full(len(uniform_names_cat), size)
@@ -323,10 +365,11 @@ class fits_image :
     
     
     class catalog :
-        def __init__(self, cat, image_data, qt_plot, make_selection_panel=False, image_widget_layout=None) :
+        def __init__(self, cat, image_data, qt_plot, window=None, make_selection_panel=False, image_widget_layout=None) :
             self.cat = cat
             self.image_data = image_data
             self.qt_plot = qt_plot
+            self.window = window
             self.qtItems = np.empty(len(cat), dtype=PyQt5.QtWidgets.QGraphicsEllipseItem)
             #self.qtItems = np.empty(len(cat), dtype=utils.utils_classes.selectable_ellipse.SelectableEllipse)
             self.color = [1., 1., 0]
@@ -338,10 +381,15 @@ class fits_image :
             self.y_axis_cleaned = np.full(len(cat), None)
         
         def make_mask_naninf(self) :
-            mag_F444W = flux_muJy_to_magAB(self.cat['f444w_tot_0'])
-            mag_F090W = flux_muJy_to_magAB(self.cat['f090w_tot_0'])
-            x_axis = mag_F444W
-            y_axis = mag_F090W - mag_F444W
+            #mag_F444W = flux_muJy_to_magAB(self.cat['f444w_tot_0'])
+            #mag_F090W = flux_muJy_to_magAB(self.cat['f090w_tot_0'])
+            #x_axis = mag_F444W
+            #y_axis = mag_F090W - mag_F444W
+            
+            mag_F814W = self.cat['f814w_mag']
+            mag_F435W = self.cat['f435w_mag']
+            x_axis = mag_F814W
+            y_axis = mag_F435W - mag_F814W
             
             nan_mask = np.logical_not(np.isnan(x_axis)) & np.logical_not(np.isnan(y_axis))
             inf_mask = (x_axis!=np.inf) & (y_axis!=np.inf)
@@ -378,7 +426,7 @@ class fits_image :
             ellipse = SelectableEllipse(x-semi_major/2, y-semi_minor/2, semi_major, semi_minor, idx, self.selection_mask, \
                                         self.qtItems, color, scatter_pos=(self.x_axis_cleaned[idx], self.y_axis_cleaned[idx]), RS_widget=self.RS_widget)
             #ellipse = PyQt5.QtWidgets.QGraphicsEllipseItem(x-semi_major/2, y-semi_minor/2, semi_major, semi_minor)
-            ellipse.setTransformOriginPoint( PyQt5.QtCore.QPointF(x, y) ) 
+            ellipse.setTransformOriginPoint( PyQt5.QtCore.QPointF(x, y) )
             #ellipse.setTransform( PyQt5.QtGui.QTransform().rotate(angle[i]) )
             ellipse.setRotation(angle)
             self.qt_plot.addItem(ellipse)
@@ -394,6 +442,43 @@ class fits_image :
                 #self.selection_mask = np.full(len(self.mag_F444W_cleaned), False)
                 self.selectable_scatter = SelectableScatter(self.RS_widget, self.selection_ROI, data, self.selection_mask, qtItems=self.qtItems, color=list(np.array(self.color)*255))
                 
+        def make_image_ROI(self) :
+            center_y = self.image_data.shape[0]/2
+            center_x = self.image_data.shape[1]/2
+            self.ellipse_maker_ROI = ellipse_maker_ROI([center_x-200, center_y-100], [400, 200], self.qt_plot, self.window, self.cat)
+            self.qt_plot.addItem(self.ellipse_maker_ROI)
+            
+            
+            
+            #def selection_ROI_image_changed() :
+                
+            """
+            def mousePressEvent(self, event: QGraphicsSceneMouseEvent):
+                if event.button() == Qt.RightButton:
+                    x, y = self.selection_ROI_image.pos()
+                    a, b = self.selection_ROI_image.size()
+                    theta = self.selection_ROI_image.angle()
+                    
+                    color=list(np.array(self.color)*255)
+                    color=list(np.array([1., 0., 1.])*255)
+                    
+                    ellipse = QGraphicsEllipseItem(x, y, a, b)
+                    ellipse.setTransformOriginPoint( PyQt5.QtCore.QPointF(x, y) ) 
+                    
+                    ellipse.setRotation(theta)
+                    ellipse.setPen( pg.mkPen(color + [255]) )
+                    ellipse.setBrush( pg.mkBrush(color + [127]) )
+                    
+                    self.qt_plot.addItem(test_ellipse)
+                            
+                    #Draw ellipse
+                    #Add ellipse to catalog when enter is pressed or double click in the ellipse (then can use native sellectable ellipse function)
+                    
+                    
+            #self.selection_ROI_image.sigRegionChangeFinished.connect(selection_ROI_image_changed)
+            """
+
+            
                 
             
         #def select(self) :
@@ -446,6 +531,39 @@ class fits_image :
             if self.qtItems_dict[key] is not None :
                 for i in tqdm( range(len(self.qtItems_dict[key])) ) :
                     self.qt_plot.removeItem(self.qtItems_dict[key][i])
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    def make_hand_made_catalogue(self) :
+        empty_cat_dict = {'x': [], 'y': [], 'a': [], 'b': [], 'theta': []}
+        empty_cat = Table(empty_cat_dict)
+        self.hand_made_catalogue = self.catalog(empty_cat, self.image_data, self.qt_plot, window=self.window, make_selection_panel=False, image_widget_layout=self.image_widget_layout)
+        
+        
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     
     
     

@@ -1,5 +1,7 @@
 from PyQt5.QtWidgets import QGraphicsEllipseItem, QGraphicsScene, QGraphicsView, QGraphicsSceneMouseEvent, QApplication
 from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QKeyEvent
+import PyQt5
 import pyqtgraph as pg
 import numpy as np
 from tqdm import tqdm
@@ -49,7 +51,7 @@ class SelectableEllipse(QGraphicsEllipseItem) :
             
         
 class SelectableScatter() : #pg.PlotWidget()
-    def __init__(self, RS_widget, selection_ROI, data, selection_mask, qtItems=None, color=None, selection_color=[255, 0, 0]):
+    def __init__(self, RS_widget, selection_ROI, data, selection_mask, qtItems=None, color=None, selection_color=[255, 0, 0]) :
         self.selection_ROI = selection_ROI
         self.selection_mask = selection_mask
         self.RS_widget = RS_widget
@@ -107,7 +109,105 @@ class SelectableScatter() : #pg.PlotWidget()
         
         
         
+class ellipse_maker_ROI(pg.EllipseROI) :
+    def __init__(self, pos, size, qt_plot, window, cat, color=[1, 1, 0]) :
+        super(ellipse_maker_ROI, self).__init__(pos, size, removable=True)
+        self.qt_plot = qt_plot
+        self.color = color
+        self.cat = cat
+        window.keyPressEvent = self.keyPressEvent.__get__(window, window)
+        
+    def keyPressEvent(self, event) :
+        print(self.pos())
+        if event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter :
+            x, y = self.pos()
+            a, b = self.size()
+            theta = self.angle()
+            
+            color=list(np.array(self.color)*255)
+            
+            ellipse = QGraphicsEllipseItem(x, y, a, b)
+            ellipse.setTransformOriginPoint( PyQt5.QtCore.QPointF(x, y) ) 
+            
+            ellipse.setRotation(theta)
+            ellipse.setPen( pg.mkPen(color + [255]) )
+            ellipse.setBrush( pg.mkBrush(color + [127]) )
+            
+            self.qt_plot.addItem(ellipse)
+            
+            self.cat.add_row([x, y, a, b, theta])
+            
         
         
+    
+                
+                
+    #Add ellipse to catalog when enter is pressed or double click in the ellipse (then can use native sellectable ellipse function)
+            
         
-        
+            
+    #self.selection_ROI_image.sigRegionChangeFinished.connect(selection_ROI_image_changed)
+    
+
+            
+    
+    
+    
+    
+    
+    
+    
+    
+    """
+    def make_image_ROI(self) :
+        center_y = self.image_data.shape[0]/2
+        center_x = self.image_data.shape[1]/2
+        self.selection_ROI_image = pg.EllipseROI([center_x-200, center_y-100], [400, 200], removable=True)            
+        self.qt_plot.addItem(self.selection_ROI_image)
+            
+            
+            def selection_ROI_image_changed() :
+                x, y = self.selection_ROI_image.pos()
+                a, b = self.selection_ROI_image.size()
+                theta = self.selection_ROI_image.angle()
+                
+                color=list(np.array(self.color)*255)
+                color=list(np.array([1., 0., 1.])*255)
+                
+                test_ellipse = QGraphicsEllipseItem(x, y, a, b)
+                test_ellipse.setTransformOriginPoint( PyQt5.QtCore.QPointF(x, y) ) 
+                
+                test_ellipse.setRotation(theta)
+                test_ellipse.setPen( pg.mkPen(color + [255]) )
+                test_ellipse.setBrush( pg.mkBrush(color + [127]) )
+                
+                self.qt_plot.addItem(test_ellipse)
+                
+                
+                def mousePressEvent(self, event: QGraphicsSceneMouseEvent):
+                    if event.button() == Qt.LeftButton:
+                        
+                #Draw ellipse
+                #Add ellipse to catalog when enter is pressed or double click in the ellipse (then can use native sellectable ellipse function)
+                
+                
+            self.selection_ROI_image.sigRegionChangeFinished.connect(selection_ROI_image_changed)
+        """
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
