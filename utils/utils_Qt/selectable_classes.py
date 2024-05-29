@@ -135,6 +135,17 @@ class ellipse_maker_ROI(pg.EllipseROI) :
             
             self.qt_plot.addItem(ellipse)
             
+            size_y = self.qt_plot.image.shape[0]
+            y = size_y-y
+            theta = -theta
+            
+            alpha = np.arctan(b/a)
+            beta = theta*np.pi/180 - alpha
+            r = (a**2 + b**2)**0.5/2
+            
+            x = x + r*np.cos(beta)
+            y = y + r*np.sin(beta)
+            
             self.cat.add_row([x, y, a, b, theta])
             
         

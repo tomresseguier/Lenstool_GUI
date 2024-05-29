@@ -4,6 +4,8 @@ from matplotlib import pyplot as plt
 from matplotlib.patches import Ellipse, Polygon, Circle
 from astropy.io import fits
 from astropy.wcs import WCS
+import astropy.units as u
+import astropy.constants as c
 #from astropy.visualization.wcsaxes import *
 from astropy.coordinates import SkyCoord
 from astropy.visualization import ZScaleInterval, ImageNormalize
@@ -28,6 +30,7 @@ module_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(module_dir)
 
 from source_extraction.source_extract import source_extract
+from source_extraction.match_cat import run_match
 sys.path.append(module_dir + "/utils")
 from utils_plots.plot_utils_general import *
 from utils_Qt.selectable_classes import *
@@ -52,7 +55,12 @@ pg.setConfigOption('imageAxisOrder', 'row-major')
 class fits_image :
     def __init__(self, image_path) :
         self.image_path = image_path
-        self.pix_deg_scale, self.wcs, self.image_data = self.open_image()
+        if os.path.isfile(self.image_path[:-8] + 'wht.fits') :
+            print("Weight file found: " + self.image_path[:-8] + 'wht.fits')
+            self.weight_path = self.image_path[:-8] + 'wht.fits'
+        else :
+            self.weight_path = None
+        self.pix_deg_scale, self.wcs, self.image_data, self.header = self.open_image()
         ### Following lines useless, just to see the possible attributes of the class ###
         self.sources = None
         self.fig = None
@@ -75,6 +83,7 @@ class fits_image :
                     header = hdu.header
                     break
             wcs = WCS(hdus[0].header)
+            header = hdus[0].header
             ### Finding the pixel scale ###
             #if 'CD1_1' in hdus[0].header.keys() :
             #    CD1_1 = hdus[0].header['CD1_1']
@@ -96,7 +105,7 @@ class fits_image :
                 data_green = data[1]
                 data_blue = data[2]
                 image = np.dstack((data_red, data_green, data_blue))
-        return pix_deg_scale, wcs, image
+        return pix_deg_scale, wcs, image, header
     
     def plot_image(self) :
         #if self.qt_plot is None :
@@ -137,21 +146,40 @@ class fits_image :
         
         return self.qt_plot
     
-    def extract_sources(self, image_path=None, rerun=False) :
+    def set_weight(self, weight_path) :
+        self.weight_path = weight_path
+    
+    def extract_sources(self, image_path=None, weight_path=None, rerun=False) :
         if image_path is None :
-            self.sources_all = source_extract(self.image_path, weight_path=None, zero_point=None, out_dir='PWD',
-                                              outfile_name='SExtractor_cat.fits', return_sources=True, rerun=rerun)
-        else :
-            self.sources_all = source_extract(image_path, weight_path=None, zero_point=None, out_dir='PWD',
-                                              outfile_name='SExtractor_cat.fits', return_sources=True, rerun=rerun)
+            image_path = self.image_path
+            weight_path = self.weight_path
+            
+        out_dir = os.path.join( os.path.dirname(image_path), 'source_extraction/' )
+        if not os.path.exists(out_dir) :
+            os.mkdir(out_dir)
         
+        outfile_name = 'SExtractor_cat.fits'
+        out_path = os.path.join( out_dir, outfile_name )
+        if os.path.isfile(out_path) and not rerun :
+            print('Previous SExtractor catalog found.')
+            self.sources_all = Table( fits.open(out_path)[1].data )
+        else :
+            self.sources_all = source_extract(image_path, weight_path=weight_path, pixel_scale=self.pix_deg_scale*3600, zero_point=None, out_dir=out_dir,
+                                              outfile_name=outfile_name, return_sources=True)
+        
+        # This next part doesn't make sense here as the purpose of extract_sources() is to extract sources from the imported image,
+        # but the code should be added to import_cat()/make_catalog()
+        # THE WAY TO CONVERT ANGLES IS MORE COMPLICATED!!!
         x, y = self.world_to_image(self.sources_all['RA'], self.sources_all['DEC'], unit='deg')
         if x[0] != self.sources_all['X_IMAGE'][0] :
-            print('Catalog sextracted from different image: replacing X_IMAGE, Y_IMAGE and THETA_IMAGE columns with current image coordinates.')
-            self.sources_all['X_IMAGE'], self.sources_all['Y_IMAGE'] = x, y
-            #self.wcs.get_pc()[0, 1]
+            #print('Catalog sextracted from different image: replacing X_IMAGE, Y_IMAGE and THETA_IMAGE columns with current image coordinates.')
+            #self.sources_all['X_IMAGE'], self.sources_all['Y_IMAGE'] = x, y
+            print('Catalog SExtracted from different image: keeping X_IMAGE, Y_IMAGE and THETA_IMAGE and adding x, y, theta columns from current image coordinates.')
+            self.sources_all.add_column(x, name='x')
+            self.sources_all.add_column(y, name='y')
             ref_image_angle = ( np.arctan2(self.wcs.wcs.get_pc()[1, 0], self.wcs.wcs.get_pc()[0, 0]) %np.pi ) * 360/np.pi
-            self.sources_all['THETA_IMAGE'] = self.sources_all['THETA_WORLD'] + ref_image_angle
+            print('Overall angle of imported image: ' + str(ref_image_angle))
+            #self.sources_all.add_column(self.sources_all['THETA_WORLD'] + ref_image_angle, name='prout')
         
         #mask_mag = self.sources_all['MAG_AUTO']<-10.
         #mask = self.sources['KRON_RADIUS']
@@ -160,8 +188,30 @@ class fits_image :
         #mask = mask_mag & mask_galstar & mask_size
         
         #self.sources = self.sources_all #[mask]
+        self.make_photometry(self.sources_all)
         self.sources = self.make_catalog(self.sources_all)
         return str(len(self.sources.cat)) + ' sources found.'
+    
+    def make_photometry(self, cat) :
+        print("################")
+        print("Figuring out the photometry:")
+        print("Assuming instrument HST/ACS")
+        print("PHOTFLAM = " + str(self.header['PHOTFLAM']))
+        print("Pivot wavelength = " + str(self.header['PHOTPLAM']))
+        print("################")
+        flux_lambda = self.header['PHOTFLAM'] * cat['FLUX_AUTO'] * u.erg/u.cm**2/u.s/u.AA
+        magST = -2.5*np.log10(flux_lambda.value) - 21.1
+        pivot_wavelength = self.header['PHOTPLAM'] * u.AA
+        flux_nu = flux_lambda.to(u.erg/u.cm**2/u.s/u.Hz, u.spectral_density(pivot_wavelength))
+        magAB = -2.5*np.log10(flux_nu.value) - 48.6
+        if 'FILTER2' in self.header.keys() :
+            print("filter " + self.header['FILTER2'] + " found")
+            cat.add_column(magAB, name='magAB_' + self.header['FILTER2'])
+            cat.add_column(magST, name='magST_' + self.header['FILTER2'])
+        else :
+            cat.add_column(magAB, name='magAB')
+            cat.add_column(magST, name='magST')
+        return 'Magnitudes calculated'
     
     def select_multiple_images(self) :
         return 'in progress'
@@ -242,15 +292,34 @@ class fits_image :
             cat = Table.from_pandas(cat_df)
         return cat
     
-    def import_catalog(self, cat_path=None, cat=None) :
-        if cat==None :
-            cat = self.open_cat(cat_path)
-        self.imported_cat = self.make_catalog(cat=cat, make_selection_panel=True)
+    def import_catalog(self, cat_path=None, cat=None, color=[1., 1., 0]) :
+        if cat is None :
+            if isinstance(cat_path, list) :
+                run_match(cat_path[0], cat_path[1])
+                for i in range(len(cat_path)-3) :
+                    run_match('matched_A_B.fits', cat_path[i+2])
+                matched_cat = run_match('matched_A_B.fits', cat_path[-1])
+                cat = Table(matched_cat[1].data)
+                os.remove('matched_A_B.fits')
+                
+                #cat = []
+                #for path in cat_path :
+                #    cat.append(self.open_cat(cat_path))
+            else :
+                cat = self.open_cat(cat_path)
+        
+        #if isinstance(cat, list) :
+        #    matched_cat = cat[0]
+        #    for i in range(len(cat)-1) :
+        #        matched_cat = run_match(matched_cat, cat[i+1])
+        #    cat = matched_cat
+        
+        self.imported_cat = self.make_catalog(cat=cat, make_selection_panel=True, color=color)
         return self.imported_cat.cat
     
     ################## Transform catalog into catalog class ###################
     
-    def make_colnames_dict(self, catalog):
+    def make_colnames_dict(self, catalog, use_default_names=True):
         """
         Extracts column names for positions and shape parameters from an Astropy table.
         Parameters:
@@ -262,8 +331,8 @@ class fits_image :
         """
         
         to_test_names_dict = {}
-        to_test_names_dict['ra'] = ['ra', 'ALPHA_J2000']
-        to_test_names_dict['dec'] = ['dec', 'DELTA_J2000']
+        to_test_names_dict['ra'] = ['ra', 'ALPHA_J2000', 'X_WORLD']
+        to_test_names_dict['dec'] = ['dec', 'DELTA_J2000', 'Y_WORLD']
         #to_test_names_dict['x'] = ['X_IMAGE', 'x']
         #to_test_names_dict['y'] = ['Y_IMAGE', 'y']
         to_test_names_dict['a'] = ['a', 'A_IMAGE']
@@ -288,9 +357,11 @@ class fits_image :
                 if to_test_name.lower() in cat_colnames_lower :
                     col_idx = np.where( np.array(cat_colnames_lower) == to_test_name.lower() )[0][0]
                     names_dict[name].append(catalog.colnames[col_idx])
-                    names_dict_default[name] = to_test_name
+                    names_dict_default[name] = catalog.colnames[col_idx]
         
-        yesno = input('Columns to be used: \n' + str(names_dict_default) + '\nKeep these names? (if no, user prompted to select other columns) [y][n]')
+        print('Columns found in catalog: \n' + str(names_dict))
+        yesno = 'y' if use_default_names else input('Columns to be used: \n' + str(names_dict_default) + \
+                                                    '\nKeep these names? (if no, user prompted to select other columns) [y][n]')
         if yesno == 'n' :
             for name in names_list :
                 if len(names_dict[name]) > 1 :
@@ -302,9 +373,9 @@ class fits_image :
             names_dict = names_dict_default
         return names_dict
     
-    def make_uniform_names_cat(self, cat) :
+    def make_uniform_names_cat(self, cat, use_default_names=True) :
         uniform_names_cat = cat.copy()
-        colnames_dict = self.make_colnames_dict(cat)
+        colnames_dict = self.make_colnames_dict(cat, use_default_names=use_default_names)
         
         print('Column names to be used:')
         print(colnames_dict)
@@ -315,7 +386,9 @@ class fits_image :
                 if colname in uniform_names_cat.columns :
                     uniform_names_cat[colname] = uniform_names_cat[colnames_dict[colname]]
                 else :
-                    uniform_names_cat.rename_column(colnames_dict[colname], colname)
+                    #uniform_names_cat.rename_column(colnames_dict[colname], colname)
+                    uniform_names_cat.add_column( uniform_names_cat[colnames_dict[colname]], name=colname )
+                    
                 
         if colnames_dict['a'] != 'A_IMAGE' and colnames_dict['b'] != 'B_IMAGE' :
             yesno = input("ellipticity parameters " + colnames_dict['a'] + " and " + colnames_dict['b'] + " in pixels? [y][arcsec][deg]")
@@ -331,23 +404,23 @@ class fits_image :
         uniform_names_cat['x'] = x
         uniform_names_cat['y'] = y
         
-        yesno = 'n'
-        if colnames_dict['a'] is not None :
-            yesno = input("'a', 'b' and 'theta' columns found in catalog. Use them as ellipticity parameters? [y] or [n]")
-        if colnames_dict['a']==None or yesno != 'y' :
+        yesno = 'y'
+        if colnames_dict['a'] is not None and not use_default_names :
+            yesno = input("'a', 'b' and 'theta' columns found in catalog. Use them as ellipticity parameters (if not, sources will be shown as circles)? [y] or [n]")
+        if colnames_dict['a'] is None or yesno != 'y' :
             size = 40.
             uniform_names_cat['a'] = np.full(len(uniform_names_cat), size)
             uniform_names_cat['b'] = np.full(len(uniform_names_cat), size)
             uniform_names_cat['theta'] = np.full(len(uniform_names_cat), 0.)
         return uniform_names_cat
     
-    def make_catalog(self, cat=None, cat_path=None, make_selection_panel=False) :
+    def make_catalog(self, cat=None, cat_path=None, make_selection_panel=False, color=[1., 1., 0.]) :
         if cat_path is not None :
             cat = self.open_cat(cat_path)
         uniform_names_cat = self.make_uniform_names_cat(cat)
         if self.qt_plot is None :
             self.plot_image()
-        return self.catalog(uniform_names_cat, self.image_data, self.qt_plot, make_selection_panel=make_selection_panel, image_widget_layout=self.image_widget_layout)
+        return self.catalog(uniform_names_cat, self.image_data, self.qt_plot, make_selection_panel=make_selection_panel, image_widget_layout=self.image_widget_layout, color=color)
         
     ###########################################################################
     
@@ -365,14 +438,14 @@ class fits_image :
     
     
     class catalog :
-        def __init__(self, cat, image_data, qt_plot, window=None, make_selection_panel=False, image_widget_layout=None) :
+        def __init__(self, cat, image_data, qt_plot, window=None, make_selection_panel=False, image_widget_layout=None, color=[1., 1., 0.]) :
             self.cat = cat
             self.image_data = image_data
             self.qt_plot = qt_plot
             self.window = window
             self.qtItems = np.empty(len(cat), dtype=PyQt5.QtWidgets.QGraphicsEllipseItem)
             #self.qtItems = np.empty(len(cat), dtype=utils.utils_classes.selectable_ellipse.SelectableEllipse)
-            self.color = [1., 1., 0]
+            self.color = color
             self.selection_mask = np.full(len(cat), False)
             self.make_selection_panel = make_selection_panel
             self.image_widget_layout = image_widget_layout
@@ -386,8 +459,10 @@ class fits_image :
             #x_axis = mag_F444W
             #y_axis = mag_F090W - mag_F444W
             
-            mag_F814W = self.cat['f814w_mag']
-            mag_F435W = self.cat['f435w_mag']
+            #mag_F814W = self.cat['f814w_mag']
+            #mag_F435W = self.cat['f435w_mag']
+            mag_F814W = self.cat['magAB_F814W']
+            mag_F435W = self.cat['magAB_F435W']
             x_axis = mag_F814W
             y_axis = mag_F435W - mag_F814W
             
@@ -403,22 +478,25 @@ class fits_image :
             self.qtItems = np.empty(len(self.cat), dtype=PyQt5.QtWidgets.QGraphicsEllipseItem)
             self.selection_mask = np.full(len(self.cat), False)
         
-        def plot(self, scale=1.) :
+        def plot(self, scale=1., color=None) :
             x = self.cat['x']
             y = self.cat['y']
             semi_major = self.cat['a'] * scale
             semi_minor = self.cat['b'] * scale
             angle = self.cat['theta']
             for i in tqdm(range(len(semi_major))) :
-                ellipse = self.plot_one_object(x[i], y[i], semi_major[i], semi_minor[i], angle[i], i)
+                ellipse = self.plot_one_object(x[i], y[i], semi_major[i], semi_minor[i], angle[i], i, color=color)
                 self.qtItems[i] = ellipse
         
         def clear(self) :
             for i in tqdm( range(len(self.qtItems)) ) :
                 self.qt_plot.removeItem(self.qtItems[i])
         
-        def plot_one_object(self, x, y, semi_major, semi_minor, angle, idx) :
-            color = list(np.array(self.color)*255)
+        def plot_one_object(self, x, y, semi_major, semi_minor, angle, idx, color=None) :
+            if color is None :
+                color = list(np.array(self.color)*255)
+            else :
+                color = list(np.array(color)*255)
             #make the flip to accomosate pyqtgraph's strange plotting conventions
             y = self.image_data.shape[0] - y
             angle = -angle
@@ -445,8 +523,9 @@ class fits_image :
         def make_image_ROI(self) :
             center_y = self.image_data.shape[0]/2
             center_x = self.image_data.shape[1]/2
-            self.ellipse_maker_ROI = ellipse_maker_ROI([center_x-200, center_y-100], [400, 200], self.qt_plot, self.window, self.cat)
-            self.qt_plot.addItem(self.ellipse_maker_ROI)
+            self.image_ROI = ellipse_maker_ROI([center_x-200, center_y-100], [400, 200], self.qt_plot, self.window, self.cat)
+            make_handles(self.image_ROI)
+            self.qt_plot.addItem(self.image_ROI)
             
             
             

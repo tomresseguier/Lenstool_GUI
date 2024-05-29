@@ -26,7 +26,7 @@ def run_match( cat_A, cat_B, search_rad=2 ):
     os.system(command_str)
 
     matched_cat = fits.open('matched_A_B.fits')
-
+    
     return matched_cat
 
 
