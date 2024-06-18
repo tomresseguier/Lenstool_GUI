@@ -55,16 +55,17 @@ def source_extract( image_path, weight_path=None, pixel_scale=0.03, zero_point=N
     if np.all(findPhot == False) :
         header = fits.open( image_path )[1].header
     
-    ### FIX THE PHOTOMETRY HERE!!! AND ADD WEIGHT FILE OPTION ###
+    ### FIX THE PHOTOMETRY HERE!!! ###
     zero_point = acs_zero_point(header) #0.
         
     conf_args = {'PIXEL_SCALE': pixel_scale,
                  'MAG_ZEROPOINT': zero_point,
-                 'WEIGHT_TYPE': 'NONE',
+                 'WEIGHT_TYPE': 'MAP_WEIGHT',
                  'PARAMETERS_NAME': config_dir + '/rrg.param',
                  'STARNNW_NAME': config_dir + '/default.nnw',
                  'FILTER_NAME': config_dir + '/gauss_5.0_9x9.conv'}
-    
+    if weight_path is not None :
+        conf_args['WEIGHT_IMAGE'] : weight_path
     
     #F## COLD RUN ###
     cold_conf = config_dir + '/HFF_cold.param'
@@ -129,10 +130,8 @@ def acs_zero_point( header ):
 
 def check_sex_files( config_dir ):
     #Check all the sex files to see if they exist
-    if (not os.path.isfile(config_dir+'/HFF_hot.param')):
-        raise ValueError('HFF_hot.param not found at ' + config_dir+'/HFF_hot.param')
-    if (not os.path.isfile(config_dir+'/HFF_cold.param')):
-        raise ValueError('HFF_cold.param not found at ' + config_dir+'/HFF_cold.param')
+    if (not os.path.isfile(config_dir+'/DC.conf')):
+        raise ValueError('DC.conf not found at ' + config_dir+'/DC.conf')
     if (not os.path.isfile(config_dir+'/rrg.param')):
         raise ValueError('rrg.param not found at ' + config_dir+'/rrg.param')
 
@@ -148,3 +147,75 @@ def append_fits_field( fits_array, name, array, format='D'):
     new_cols = fits.ColDefs(cols)
     new_fits = fits.BinTableHDU.from_columns(orig_cols + new_cols)
     return new_fits.data
+
+
+
+
+def _reg_path(filename):
+    if isinstance(filename, str) and len(filename)>0 and filename[0] != os.path.sep:
+        return os.path.abspath(filename)
+    else:
+        return filename
+
+
+def source_extract_DIM( detection_paths, measurement_paths, pixel_scale=0.03, zero_point=None,
+                        out_dir='PWD', outfile_name='SExtractor_cat_DIM.fits',
+                        return_sources=True) :
+    
+    ref_image_path = detection_paths if type(detection_paths) is str else detection_paths[0]
+    image_path = measurement_paths if type(measurement_paths) is str else measurement_paths[0]
+    print('Measuring in ' + image_path, "\nDetecting in " + ref_image_path)
+    
+    if out_dir == 'PWD':
+        out_dir = os.getcwd()
+    out_path = out_dir + '/' + outfile_name
+    config_dir = os.path.join(module_dir, 'SExtractor_config/from_DC')
+    check_sex_files(config_dir)
+    
+    header = fits.open( image_path )[0].header
+    #findPhot = np.array(['PHOTFLAM' in key for key in header.keys()])
+    #if np.all(findPhot == False) :
+    #    header = fits.open( image_path )[1].header
+    
+    ### FIX THE PHOTOMETRY HERE!!! AND ADD WEIGHT FILE OPTION ###
+    zero_point = 0. #acs_zero_point(header)
+        
+    conf_args = {'PIXEL_SCALE': pixel_scale,
+                 'MAG_ZEROPOINT': zero_point,
+                 'PARAMETERS_NAME': config_dir + '/rrg.param',
+                 'STARNNW_NAME': config_dir + '/default.nnw',
+                 'FILTER_NAME': config_dir + '/gauss_2.0_5x5.conv'}
+    if type(detection_paths) is list :
+        conf_args['WEIGHT_TYPE'] = 'MAP_WEIGHT,MAP_WEIGHT'
+        conf_args['WEIGHT_IMAGE'] = _reg_path(detection_paths[1]) + ',' + _reg_path(measurement_paths[1])
+        
+    conf = config_dir + '/DC.conf'
+    sources = pysex.run( image=image_path, \
+                         imageref=ref_image_path, \
+                         conf_file=conf, \
+                         conf_args=conf_args, \
+                         param_file=config_dir+'/rrg.param')
+    
+    sources = append_fits_field( sources, 'RA', sources['X_WORLD'])
+    sources = append_fits_field( sources, 'DEC', sources['Y_WORLD'])
+    
+    sources['NUMBER'] = np.arange(len(sources))
+    
+    fits.writeto( out_dir + '/' + outfile_name, sources, overwrite=True )
+    
+    if return_sources:
+        return Table(sources)
+
+
+
+
+
+
+
+
+
+
+
+
+
+

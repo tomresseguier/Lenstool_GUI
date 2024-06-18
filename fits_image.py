@@ -6,6 +6,7 @@ from astropy.io import fits
 from astropy.wcs import WCS
 import astropy.units as u
 import astropy.constants as c
+from reproject import reproject_interp
 #from astropy.visualization.wcsaxes import *
 from astropy.coordinates import SkyCoord
 from astropy.visualization import ZScaleInterval, ImageNormalize
@@ -29,7 +30,7 @@ import sys
 module_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(module_dir)
 
-from source_extraction.source_extract import source_extract
+from source_extraction.source_extract import source_extract, source_extract_DIM
 from source_extraction.match_cat import run_match
 sys.path.append(module_dir + "/utils")
 from utils_plots.plot_utils_general import *
@@ -149,7 +150,7 @@ class fits_image :
     def set_weight(self, weight_path) :
         self.weight_path = weight_path
     
-    def extract_sources(self, image_path=None, weight_path=None, rerun=False) :
+    def extract_sources(self, image_path=None, weight_path=None, DIM_ref_path=None, rerun=False, reproject=True) :
         if image_path is None :
             image_path = self.image_path
             weight_path = self.weight_path
@@ -158,14 +159,30 @@ class fits_image :
         if not os.path.exists(out_dir) :
             os.mkdir(out_dir)
         
-        outfile_name = 'SExtractor_cat.fits'
+        outfile_name = 'SExtractor_cat.fits' if DIM_ref_path is None else 'SExtractor_cat_DIM.fits'
         out_path = os.path.join( out_dir, outfile_name )
         if os.path.isfile(out_path) and not rerun :
             print('Previous SExtractor catalog found.')
             self.sources_all = Table( fits.open(out_path)[1].data )
-        else :
+        elif DIM_ref_path is None :
             self.sources_all = source_extract(image_path, weight_path=weight_path, pixel_scale=self.pix_deg_scale*3600, zero_point=None, out_dir=out_dir,
                                               outfile_name=outfile_name, return_sources=True)
+        else :
+            if type(DIM_ref_path) is list :
+                if reproject :
+                    reprojected_image_path = self.reproject(DIM_ref_path[0], image_path)
+                    reprojected_weight_path = self.reproject(DIM_ref_path[0], weight_path)
+                    reprojected_image_path = [reprojected_image_path, reprojected_weight_path]
+                else :
+                    reprojected_image_path = [image_path, weight_path]
+            else :
+                if reproject :
+                    reprojected_image_path = self.reproject(DIM_ref_path, image_path)
+                else :
+                    reprojected_image_path = image_path
+            
+            self.sources_all = source_extract_DIM(DIM_ref_path, reprojected_image_path, pixel_scale=self.pix_deg_scale*3600, zero_point=None, out_dir=out_dir,
+                                                  outfile_name=outfile_name, return_sources=True)
         
         # This next part doesn't make sense here as the purpose of extract_sources() is to extract sources from the imported image,
         # but the code should be added to import_cat()/make_catalog()
@@ -192,6 +209,19 @@ class fits_image :
         self.sources = self.make_catalog(self.sources_all)
         return str(len(self.sources.cat)) + ' sources found.'
     
+    def reproject(self, ref_image_path, image_path) :
+        reprojected_image_path = image_path[:-len('.fits')] + '_reprojected.fits'
+        if os.path.isfile(reprojected_image_path) :
+            print('Previous reprojected image found.')
+        else :
+            with fits.open(ref_image_path) as hdu :
+                reference_header = hdu[0].header
+            with fits.open(image_path) as hdu :
+                print('Reprojecting image ' + image_path + ' onto reference ' + ref_image_path)
+                reprojected_data, footprint = reproject_interp(hdu[0], reference_header)
+                fits.writeto(reprojected_image_path, reprojected_data, reference_header)
+        return reprojected_image_path
+    
     def make_photometry(self, cat) :
         print("################")
         print("Figuring out the photometry:")
@@ -199,7 +229,7 @@ class fits_image :
         print("PHOTFLAM = " + str(self.header['PHOTFLAM']))
         print("Pivot wavelength = " + str(self.header['PHOTPLAM']))
         print("################")
-        flux_lambda = self.header['PHOTFLAM'] * cat['FLUX_AUTO'] * u.erg/u.cm**2/u.s/u.AA
+        flux_lambda = self.header['PHOTFLAM'] * cat['FLUX_ISO'] * u.erg/u.cm**2/u.s/u.AA #FLUX_AUTO, FLUX_ISO, FLUX_APER
         magST = -2.5*np.log10(flux_lambda.value) - 21.1
         pivot_wavelength = self.header['PHOTPLAM'] * u.AA
         flux_nu = flux_lambda.to(u.erg/u.cm**2/u.s/u.Hz, u.spectral_density(pivot_wavelength))
@@ -292,7 +322,7 @@ class fits_image :
             cat = Table.from_pandas(cat_df)
         return cat
     
-    def import_catalog(self, cat_path=None, cat=None, color=[1., 1., 0]) :
+    def import_catalog(self, cat_path=None, cat=None, color=[1., 1., 0], mag_colnames=['magAB_F814W', 'magAB_F435W']) :
         if cat is None :
             if isinstance(cat_path, list) :
                 run_match(cat_path[0], cat_path[1])
@@ -314,7 +344,7 @@ class fits_image :
         #        matched_cat = run_match(matched_cat, cat[i+1])
         #    cat = matched_cat
         
-        self.imported_cat = self.make_catalog(cat=cat, make_selection_panel=True, color=color)
+        self.imported_cat = self.make_catalog(cat=cat, make_selection_panel=True, color=color, mag_colnames=mag_colnames)
         return self.imported_cat.cat
     
     ################## Transform catalog into catalog class ###################
@@ -345,6 +375,7 @@ class fits_image :
         names_dict_default = {}
         for name in names_list :
             names_dict[name] = []
+            names_dict_default[name] = None
         for name in names_list :
             for to_test_name in to_test_names_dict[name] :
                 cat_colnames_lower = [col.lower() for col in catalog.colnames]
@@ -391,7 +422,7 @@ class fits_image :
                     
                 
         if colnames_dict['a'] != 'A_IMAGE' and colnames_dict['b'] != 'B_IMAGE' :
-            yesno = input("ellipticity parameters " + colnames_dict['a'] + " and " + colnames_dict['b'] + " in pixels? [y][arcsec][deg]")
+            yesno = input("ellipticity parameters " + str(colnames_dict['a']) + " and " + str(colnames_dict['b']) + " in pixels? [y][arcsec][deg]")
             if yesno == 'deg' :
                 uniform_names_cat.replace_column( 'a', uniform_names_cat['a']/(self.pix_deg_scale) )
                 uniform_names_cat.replace_column( 'b', uniform_names_cat['b']/(self.pix_deg_scale) )
@@ -414,13 +445,14 @@ class fits_image :
             uniform_names_cat['theta'] = np.full(len(uniform_names_cat), 0.)
         return uniform_names_cat
     
-    def make_catalog(self, cat=None, cat_path=None, make_selection_panel=False, color=[1., 1., 0.]) :
+    def make_catalog(self, cat=None, cat_path=None, make_selection_panel=False, color=[1., 1., 0.], mag_colnames=['magAB_F814W', 'magAB_F435W']) :
         if cat_path is not None :
             cat = self.open_cat(cat_path)
         uniform_names_cat = self.make_uniform_names_cat(cat)
         if self.qt_plot is None :
             self.plot_image()
-        return self.catalog(uniform_names_cat, self.image_data, self.qt_plot, make_selection_panel=make_selection_panel, image_widget_layout=self.image_widget_layout, color=color)
+        return self.catalog(uniform_names_cat, self.image_data, self.qt_plot, make_selection_panel=make_selection_panel, \
+                            image_widget_layout=self.image_widget_layout, color=color, mag_colnames=mag_colnames)
         
     ###########################################################################
     
@@ -438,7 +470,7 @@ class fits_image :
     
     
     class catalog :
-        def __init__(self, cat, image_data, qt_plot, window=None, make_selection_panel=False, image_widget_layout=None, color=[1., 1., 0.]) :
+        def __init__(self, cat, image_data, qt_plot, window=None, make_selection_panel=False, image_widget_layout=None, color=[1., 1., 0.], mag_colnames=['magAB_F814W', 'magAB_F435W']) :
             self.cat = cat
             self.image_data = image_data
             self.qt_plot = qt_plot
@@ -452,6 +484,7 @@ class fits_image :
             self.RS_widget = None
             self.x_axis_cleaned = np.full(len(cat), None)
             self.y_axis_cleaned = np.full(len(cat), None)
+            self.mag_colnames = mag_colnames
         
         def make_mask_naninf(self) :
             #mag_F444W = flux_muJy_to_magAB(self.cat['f444w_tot_0'])
@@ -459,10 +492,9 @@ class fits_image :
             #x_axis = mag_F444W
             #y_axis = mag_F090W - mag_F444W
             
-            #mag_F814W = self.cat['f814w_mag']
-            #mag_F435W = self.cat['f435w_mag']
-            mag_F814W = self.cat['magAB_F814W']
-            mag_F435W = self.cat['magAB_F435W']
+            mag_F814W = self.cat[self.mag_colnames[0]]
+            mag_F435W = self.cat[self.mag_colnames[1]]
+            
             x_axis = mag_F814W
             y_axis = mag_F435W - mag_F814W
             
