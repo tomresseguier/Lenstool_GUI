@@ -451,7 +451,7 @@ class fits_image :
         uniform_names_cat = self.make_uniform_names_cat(cat)
         if self.qt_plot is None :
             self.plot_image()
-        return self.catalog(uniform_names_cat, self.image_data, self.qt_plot, make_selection_panel=make_selection_panel, \
+        return self.catalog(uniform_names_cat, self.image_data, self.qt_plot, window=self.window, make_selection_panel=make_selection_panel, \
                             image_widget_layout=self.image_widget_layout, color=color, mag_colnames=mag_colnames)
         
     ###########################################################################
@@ -550,7 +550,8 @@ class fits_image :
                 
                 data=(self.x_axis_cleaned, self.y_axis_cleaned)
                 #self.selection_mask = np.full(len(self.mag_F444W_cleaned), False)
-                self.selectable_scatter = SelectableScatter(self.RS_widget, self.selection_ROI, data, self.selection_mask, qtItems=self.qtItems, color=list(np.array(self.color)*255))
+                self.selectable_scatter = SelectableScatter(self.RS_widget, self.selection_ROI, data, self.selection_mask, \
+                                                            qtItems=self.qtItems, color=list(np.array(self.color)*255))
                 
         def make_image_ROI(self) :
             center_y = self.image_data.shape[0]/2
@@ -558,6 +559,15 @@ class fits_image :
             self.image_ROI = ellipse_maker_ROI([center_x-200, center_y-100], [400, 200], self.qt_plot, self.window, self.cat)
             make_handles(self.image_ROI)
             self.qt_plot.addItem(self.image_ROI)
+            
+        def make_cleaner_ROI(self) :
+            new_image_widget = DragWidget(self.qt_plot)
+            new_image_widget.setLayout(self.image_widget_layout)
+            self.window.setCentralWidget(new_image_widget)
+            self.window.show()
+            
+            #self.selectable_scatter = SelectableScatter(self.RS_widget, self.selection_ROI, self.selection_mask, \
+            #                                            qtItems=self.qtItems, color=list(np.array(self.color)*255))
             
             
             

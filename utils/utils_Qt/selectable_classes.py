@@ -1,10 +1,19 @@
 from PyQt5.QtWidgets import QGraphicsEllipseItem, QGraphicsScene, QGraphicsView, QGraphicsSceneMouseEvent, QApplication
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer, QPointF
 from PyQt5.QtGui import QKeyEvent
+from PyQt5.QtWidgets import QWidget
 import PyQt5
 import pyqtgraph as pg
 import numpy as np
 from tqdm import tqdm
+
+import os
+import sys
+module_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(module_dir)
+
+sys.path.append(module_dir + "/utils")
+from utils_Qt.utils_general import *
 
 
 
@@ -148,62 +157,167 @@ class ellipse_maker_ROI(pg.EllipseROI) :
             
             self.cat.add_row([x, y, a, b, theta])
             
-        
-        
-    
-                
-                
-    #Add ellipse to catalog when enter is pressed or double click in the ellipse (then can use native sellectable ellipse function)
             
         
-            
-    #self.selection_ROI_image.sigRegionChangeFinished.connect(selection_ROI_image_changed)
+        
+class SelectSources() : #pg.PlotWidget()
+    def __init__(self, qt_plot, selection_ROI, selection_mask, qtItems=None, color=None, selection_color=[255, 0, 0]) :
+        self.selection_ROI = selection_ROI
+        self.selection_mask = selection_mask
+        self.selection_ROI.sigRegionChangeFinished.connect(self.selection_ROI_changed)
+        self.selection_scatter = None
+        self.qt_plot = qt_plot
+        
+        self.qtItems = qtItems
+        self.initial_color = color
+        self.selection_color = selection_color
     
+    def selection_ROI_changed(self) :
+        if self.selection_scatter is not None :
+            self.selection_scatter.setData([],[])
+        
+        x = self.data[0]
+        y = self.data[1]
+        
+        x0 = self.selection_ROI.getState()['pos'][0]
+        y0 = self.selection_ROI.getState()['pos'][1]
+        
+        a = self.selection_ROI.getState()['size'][0]
+        b = self.selection_ROI.getState()['size'][1]
+        
+        angle = ((self.selection_ROI.getState()['angle'])*np.pi/180)%(2*np.pi)
+        angle_bis = (np.pi/2-angle)#%(2*np.pi)
+        
+        if angle > np.pi/2 and angle < 3*np.pi/2 :
+            angle = angle - np.pi
+            angle_bis = (np.pi/2-angle)#%(2*np.pi)
+            x0 = x0 - (a*np.cos(angle) - b*np.sin(angle))
+            y0 = y0 - (a*np.sin(angle) + b*np.cos(angle))
+        mask_x = (x > x0 - (y-y0)/np.tan(angle_bis)) & (x < x0 - (y-y0)/np.tan(angle_bis) + a/np.cos(angle))
+        mask_y = (y > y0 + (x-x0)*np.tan(angle)) & (y < y0 + (x-x0)*np.tan(angle) + b/np.cos(angle))
+        full_mask = mask_x & mask_y
+        self.selection_mask[np.where(full_mask)] = True
+        self.selection_mask[np.where( np.logical_not(full_mask) )] = False
+        
+        self.selection_scatter = pg.ScatterPlotItem()
+        to_plot_x = self.data[0][self.selection_mask]
+        to_plot_y = self.data[1][self.selection_mask]
+        self.selection_scatter.setData(to_plot_x, to_plot_y, pen=(255, 0, 0), size=2)
+        
+        self.qt_plot.addItem(self.selection_scatter)
+        
+        
+        for i in tqdm(range(len(self.qtItems))) :
+            self.qtItems[i].setPen( pg.mkPen(self.initial_color + [255]) )
+            self.qtItems[i].setBrush( pg.mkBrush(self.initial_color + [127]) )
+        
+        for i in np.where(self.selection_mask)[0] :
+            self.qtItems[i].setPen( pg.mkPen(self.selection_color + [255]) )
+            self.qtItems[i].setBrush( pg.mkBrush(self.selection_color + [127]) )
+            
+
 
             
     
+
+class DragWidget(QWidget):
+    def __init__(self, qt_plot):
+        super().__init__()
+        self.initUI()
+        self.qt_plot = qt_plot
+        self.qt_plot.scene.sigMouseMoved.connect(self.mouse_moved)
+        self.drawing = False
+        self.current_roi = None
+
+    def initUI(self):
+        self.timer = QTimer()
+        self.timer.setInterval(1)  # Check every 10 ms
+        self.timer.timeout.connect(self.checkLongPress)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and event.modifiers() == Qt.ShiftModifier :
+            self.qt_plot.view.setMouseEnabled(x=False, y=False)
+            self.timer.start()
+            ###################################################################
+            self.start_pos = self.qt_plot.view.mapToView(event.pos() + QPointF(-21, -24))
+            self.current_roi = pg.RectROI([self.start_pos.x(), self.start_pos.y()], [0, 0], pen='r')
+            self.current_roi.removeHandle(self.current_roi.handles[0]['item'])
+            self.qt_plot.addItem(self.current_roi)
+            self.drawing = True
+
+    def checkLongPress(self):
+        if not (QApplication.mouseButtons() & Qt.LeftButton) :
+            self.drawing = False
+            if self.timer.isActive() :
+                self.timer.stop()
+                make_handles(self.current_roi)
+            self.qt_plot.view.setMouseEnabled(x=True, y=True)
+            
+    def mouse_moved(self, pos):
+        if self.drawing and self.current_roi is not None:
+            current_pos = self.qt_plot.view.mapToView(pos)
+            width = current_pos.x() - self.start_pos.x()
+            height = current_pos.y() - self.start_pos.y()
+            self.current_roi.setSize([width, height])
+            
+            
+            
+"""
+class DragWidget(QWidget):
+    def __init__(self, qt_plot):
+        super().__init__()
+        self.show()
+        self.qt_plot = qt_plot        
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_R :
+            print('R pressed')
+
+    def keyReleaseEvent(self, event):
+        if event.key() == Qt.Key_R :
+            print('R released')
+"""
+
+
     
     
     
     
-    
-    
-    
+"""
+def make_image_ROI(self) :
+    center_y = self.image_data.shape[0]/2
+    center_x = self.image_data.shape[1]/2
+    self.selection_ROI_image = pg.EllipseROI([center_x-200, center_y-100], [400, 200], removable=True)            
+    self.qt_plot.addItem(self.selection_ROI_image)
+        
+        
+        def selection_ROI_image_changed() :
+            x, y = self.selection_ROI_image.pos()
+            a, b = self.selection_ROI_image.size()
+            theta = self.selection_ROI_image.angle()
+            
+            color=list(np.array(self.color)*255)
+            color=list(np.array([1., 0., 1.])*255)
+            
+            test_ellipse = QGraphicsEllipseItem(x, y, a, b)
+            test_ellipse.setTransformOriginPoint( PyQt5.QtCore.QPointF(x, y) ) 
+            
+            test_ellipse.setRotation(theta)
+            test_ellipse.setPen( pg.mkPen(color + [255]) )
+            test_ellipse.setBrush( pg.mkBrush(color + [127]) )
+            
+            self.qt_plot.addItem(test_ellipse)
+            
+            
+            def mousePressEvent(self, event: QGraphicsSceneMouseEvent):
+                if event.button() == Qt.LeftButton:
+                    
+            #Draw ellipse
+            #Add ellipse to catalog when enter is pressed or double click in the ellipse (then can use native sellectable ellipse function)
+            
+            
+        self.selection_ROI_image.sigRegionChangeFinished.connect(selection_ROI_image_changed)
     """
-    def make_image_ROI(self) :
-        center_y = self.image_data.shape[0]/2
-        center_x = self.image_data.shape[1]/2
-        self.selection_ROI_image = pg.EllipseROI([center_x-200, center_y-100], [400, 200], removable=True)            
-        self.qt_plot.addItem(self.selection_ROI_image)
-            
-            
-            def selection_ROI_image_changed() :
-                x, y = self.selection_ROI_image.pos()
-                a, b = self.selection_ROI_image.size()
-                theta = self.selection_ROI_image.angle()
-                
-                color=list(np.array(self.color)*255)
-                color=list(np.array([1., 0., 1.])*255)
-                
-                test_ellipse = QGraphicsEllipseItem(x, y, a, b)
-                test_ellipse.setTransformOriginPoint( PyQt5.QtCore.QPointF(x, y) ) 
-                
-                test_ellipse.setRotation(theta)
-                test_ellipse.setPen( pg.mkPen(color + [255]) )
-                test_ellipse.setBrush( pg.mkBrush(color + [127]) )
-                
-                self.qt_plot.addItem(test_ellipse)
-                
-                
-                def mousePressEvent(self, event: QGraphicsSceneMouseEvent):
-                    if event.button() == Qt.LeftButton:
-                        
-                #Draw ellipse
-                #Add ellipse to catalog when enter is pressed or double click in the ellipse (then can use native sellectable ellipse function)
-                
-                
-            self.selection_ROI_image.sigRegionChangeFinished.connect(selection_ROI_image_changed)
-        """
             
             
             
