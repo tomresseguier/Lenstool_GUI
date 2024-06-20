@@ -36,7 +36,7 @@ sys.path.append(module_dir + "/utils")
 from utils_plots.plot_utils_general import *
 from utils_Qt.selectable_classes import *
 from utils_Qt.utils_general import *
-from utils_general.utils import flux_muJy_to_magAB
+#from utils_general.utils import flux_muJy_to_magAB
 ###############################################################################
 
 """
@@ -114,18 +114,21 @@ class fits_image :
         #to_plot = np.transpose(self.image_data, axes=[1,0,2])
         to_plot = np.flip(self.image_data, axis=0)
         
-        self.qt_plot = pg.image(to_plot)
+        #self.qt_plot = pg.image(to_plot)
         
-        ############### NEW CODE ###############
+        self.qt_plot = pg.ImageView()
+        self.qt_plot.setImage(to_plot)
+        self.qt_plot.autoLevels()
+        
+        self.image_widget_layout = QHBoxLayout()
+        self.image_widget_layout.addWidget(self.qt_plot)
+        
+        #self.image_widget = QWidget()
+        self.image_widget = DragWidget(self.qt_plot)
+        self.image_widget.setLayout(self.image_widget_layout)
+        
         self.window = QMainWindow()
         self.window.setWindowTitle(os.path.basename(self.image_path))
-        self.image_widget_layout = QHBoxLayout()
-        
-        self.image_widget_layout.addWidget(self.qt_plot)
-        #self.qt_plot.setSizePolicy(pg.QtWidgets.QSizePolicy.Fixed, pg.QtWidgets.QSizePolicy.Expanding)
-        
-        self.image_widget = QWidget()
-        self.image_widget.setLayout(self.image_widget_layout)
         self.window.setCentralWidget(self.image_widget)
         self.window.show()
         
@@ -452,7 +455,7 @@ class fits_image :
         if self.qt_plot is None :
             self.plot_image()
         return self.catalog(uniform_names_cat, self.image_data, self.qt_plot, window=self.window, make_selection_panel=make_selection_panel, \
-                            image_widget_layout=self.image_widget_layout, color=color, mag_colnames=mag_colnames)
+                            image_widget = self.image_widget, image_widget_layout=self.image_widget_layout, color=color, mag_colnames=mag_colnames)
         
     ###########################################################################
     
@@ -470,7 +473,7 @@ class fits_image :
     
     
     class catalog :
-        def __init__(self, cat, image_data, qt_plot, window=None, make_selection_panel=False, image_widget_layout=None, color=[1., 1., 0.], mag_colnames=['magAB_F814W', 'magAB_F435W']) :
+        def __init__(self, cat, image_data, qt_plot, window=None, make_selection_panel=False, image_widget=None, image_widget_layout=None, color=[1., 1., 0.], mag_colnames=['magAB_F814W', 'magAB_F435W']) :
             self.cat = cat
             self.image_data = image_data
             self.qt_plot = qt_plot
@@ -480,6 +483,7 @@ class fits_image :
             self.color = color
             self.selection_mask = np.full(len(cat), False)
             self.make_selection_panel = make_selection_panel
+            self.image_widget = image_widget
             self.image_widget_layout = image_widget_layout
             self.RS_widget = None
             self.x_axis_cleaned = np.full(len(cat), None)
@@ -561,10 +565,11 @@ class fits_image :
             self.qt_plot.addItem(self.image_ROI)
             
         def make_cleaner_ROI(self) :
-            new_image_widget = DragWidget(self.qt_plot)
-            new_image_widget.setLayout(self.image_widget_layout)
-            self.window.setCentralWidget(new_image_widget)
-            self.window.show()
+            self.select_sources = SelectSources(self.cat, self.qt_plot, self.image_widget.current_ROI, self.selection_mask, window=self.window, \
+                                                qtItems=self.qtItems, color=list(np.array(self.color)*255))
+            
+            #self.image_widget.current_ROI.getState()
+            
             
             #self.selectable_scatter = SelectableScatter(self.RS_widget, self.selection_ROI, self.selection_mask, \
             #                                            qtItems=self.qtItems, color=list(np.array(self.color)*255))
