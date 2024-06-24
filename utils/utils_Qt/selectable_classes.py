@@ -1,5 +1,5 @@
 from PyQt5.QtWidgets import QGraphicsEllipseItem, QGraphicsScene, QGraphicsView, QGraphicsSceneMouseEvent, QApplication
-from PyQt5.QtCore import Qt, QTimer, QPointF
+from PyQt5.QtCore import Qt, QTimer, QPointF, QObject, QEvent
 from PyQt5.QtGui import QKeyEvent
 from PyQt5.QtWidgets import QWidget
 import PyQt5
@@ -118,6 +118,143 @@ class SelectableScatter() : #pg.PlotWidget()
         
         
         
+class SelectSources() : #pg.PlotWidget()
+    def __init__(self, cat, qt_plot, selection_ROI, selection_mask, window=None, qtItems=None, color=None, selection_color=[255, 0, 0]) :
+        self.cat = cat
+        self.selection_ROI = selection_ROI
+        self.selection_mask = selection_mask
+        self.selection_mask_temp = np.full(len(cat), False)
+        self.selection_ROI.sigRegionChangeFinished.connect(self.selection_ROI_changed)
+        self.selection_scatter = None
+        self.qt_plot = qt_plot
+        self.qtItems = qtItems
+        self.initial_color = color
+        self.selection_color = selection_color
+        self.confirm_selection_filter = KeyPressFilter(self.selection_ROI, self.selection_mask, self.selection_mask_temp)
+        #self.window = window
+        window.installEventFilter(self.confirm_selection_filter)
+        
+    
+    def selection_ROI_changed(self) :
+        size_y = self.qt_plot.image.shape[0]
+        
+        x = self.cat['x']
+        y = size_y - self.cat['y']
+        
+        x0 = self.selection_ROI.getState()['pos'][0]
+        y0 = self.selection_ROI.getState()['pos'][1]
+        
+        a = self.selection_ROI.getState()['size'][0]
+        b = self.selection_ROI.getState()['size'][1]
+        
+        angle = ((self.selection_ROI.getState()['angle'])*np.pi/180)%(2*np.pi)
+        angle_bis = (np.pi/2-angle)#%(2*np.pi)
+        
+        if a < 0. :
+            a = -a
+            x0 = x0 - a*np.cos(-angle)
+            y0 = y0 + a*np.sin(-angle)
+        if b < 0. :
+            b = -b
+            x0 = x0 - b*np.sin(-angle)
+            y0 = y0 - b*np.cos(-angle)
+        
+        if angle > np.pi/2 and angle < 3*np.pi/2 :
+            angle = angle - np.pi
+            angle_bis = (np.pi/2-angle)#%(2*np.pi)
+            x0 = x0 - (a*np.cos(angle) - b*np.sin(angle))
+            y0 = y0 - (a*np.sin(angle) + b*np.cos(angle))
+            
+        mask_x = (x > x0 - (y-y0)/np.tan(angle_bis)) & (x < x0 - (y-y0)/np.tan(angle_bis) + a/np.cos(angle))
+        mask_y = (y > y0 + (x-x0)*np.tan(angle)) & (y < y0 + (x-x0)*np.tan(angle) + b/np.cos(angle))
+        full_mask = mask_x & mask_y
+        self.selection_mask_temp[np.where(full_mask)] = True
+        self.selection_mask_temp[np.where( np.logical_not(full_mask) )] = False
+        
+        
+        for qtItem in self.qtItems[~self.selection_mask] :
+            qtItem.setPen( pg.mkPen(self.initial_color + [255]) )
+            qtItem.setBrush( pg.mkBrush(self.initial_color + [127]) )
+        
+        for i in np.where(self.selection_mask_temp)[0] :
+            self.qtItems[i].setPen( pg.mkPen(self.selection_color + [255]) )
+            self.qtItems[i].setBrush( pg.mkBrush(self.selection_color + [127]) )
+    
+            
+    
+
+class KeyPressFilter(QObject) :
+    def __init__(self, ROI, selection_mask, selection_mask_temp) :
+        super().__init__()
+        self.ROI = ROI
+        self.selection_mask = selection_mask
+        self.selection_mask_temp = selection_mask_temp
+        print('initialization!')
+
+    def eventFilter(self, obj, event) :
+        if event.type() == QEvent.KeyPress :
+            key = event.key()
+            if key in [Qt.Key_Enter, Qt.Key_Return, Qt.Key_Space] :
+                print('hw!')
+                self.selection_mask[self.selection_mask_temp] = True
+            #if key == Qt.Key_Backspace :
+            #    self.ROI.clear()
+            return True  # Event has been handled
+        return False  # Pass the event to the parent
+
+
+
+            
+    
+
+class DragWidget(QWidget):
+    def __init__(self, qt_plot):#, cat, selection_mask):
+        super().__init__()
+        self.initUI()
+        self.qt_plot = qt_plot
+        self.qt_plot.scene.sigMouseMoved.connect(self.mouse_moved)
+        self.drawing = False
+        self.current_ROI = pg.RectROI([-100, -100], [0, 0], pen='r', invertible=True)
+        #self.selection_mask = selection_mask
+        #self.cat = cat
+
+    def initUI(self):
+        self.timer = QTimer()
+        self.timer.setInterval(1)  # Check every 10 ms
+        self.timer.timeout.connect(self.checkLongPress)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and event.modifiers() == Qt.ShiftModifier :
+            self.qt_plot.view.setMouseEnabled(x=False, y=False)
+            self.timer.start()
+            ###################################################################
+            self.start_pos = self.qt_plot.view.mapToView(event.pos() + QPointF(-13, -14))
+            self.current_ROI = pg.RectROI([self.start_pos.x(), self.start_pos.y()], [0, 0], pen='r', invertible=True)
+            for handle in self.current_ROI.handles :
+                self.current_ROI.removeHandle(handle['item'])
+            self.qt_plot.addItem(self.current_ROI)
+            self.drawing = True
+
+    def checkLongPress(self):
+        if not (QApplication.mouseButtons() & Qt.LeftButton) :
+            self.drawing = False
+            if self.timer.isActive() :
+                self.timer.stop()
+                make_handles(self.current_ROI)
+            self.qt_plot.view.setMouseEnabled(x=True, y=True)
+            
+    def mouse_moved(self, pos):
+        if self.drawing and self.current_ROI is not None:
+            current_pos = self.qt_plot.view.mapToView(pos)
+            width = current_pos.x() - self.start_pos.x()
+            height = current_pos.y() - self.start_pos.y()
+            self.current_ROI.setSize([width, height])
+            
+    
+            
+    
+    
+    
 class ellipse_maker_ROI(pg.EllipseROI) :
     def __init__(self, pos, size, qt_plot, window, cat, color=[1, 1, 0]) :
         super(ellipse_maker_ROI, self).__init__(pos, size, removable=True)
@@ -156,118 +293,13 @@ class ellipse_maker_ROI(pg.EllipseROI) :
             y = y + r*np.sin(beta)
             
             self.cat.add_row([x, y, a, b, theta])
-            
-            
-        
-        
-class SelectSources() : #pg.PlotWidget()
-    def __init__(self, cat, qt_plot, selection_ROI, selection_mask, window=None, qtItems=None, color=None, selection_color=[255, 0, 0]) :
-        self.cat = cat
-        self.selection_ROI = selection_ROI
-        self.selection_mask = selection_mask
-        self.selection_mask_temp = np.full(len(cat), False)
-        self.selection_ROI.sigRegionChangeFinished.connect(self.selection_ROI_changed)
-        self.selection_scatter = None
-        self.qt_plot = qt_plot
-        self.qtItems = qtItems
-        self.initial_color = color
-        self.selection_color = selection_color
-        window.keyPressEvent = self.keyPressEvent.__get__(window, window)
-    
-    def selection_ROI_changed(self) :
-        size_y = self.qt_plot.image.shape[0]
-        
-        x = self.cat['x']
-        y = size_y - self.cat['y']
-        
-        x0 = self.selection_ROI.getState()['pos'][0]
-        y0 = self.selection_ROI.getState()['pos'][1]
-        
-        a = self.selection_ROI.getState()['size'][0]
-        b = self.selection_ROI.getState()['size'][1]
-        
-        angle = ((self.selection_ROI.getState()['angle'])*np.pi/180)%(2*np.pi)
-        angle_bis = (np.pi/2-angle)#%(2*np.pi)
-        
-        if angle > np.pi/2 and angle < 3*np.pi/2 :
-            angle = angle - np.pi
-            angle_bis = (np.pi/2-angle)#%(2*np.pi)
-            x0 = x0 - (a*np.cos(angle) - b*np.sin(angle))
-            y0 = y0 - (a*np.sin(angle) + b*np.cos(angle))
-            
-        mask_x = (x > x0 - (y-y0)/np.tan(angle_bis)) & (x < x0 - (y-y0)/np.tan(angle_bis) + a/np.cos(angle))
-        mask_y = (y > y0 + (x-x0)*np.tan(angle)) & (y < y0 + (x-x0)*np.tan(angle) + b/np.cos(angle))
-        full_mask = mask_x & mask_y
-        self.selection_mask_temp[np.where(full_mask)] = True
-        self.selection_mask_temp[np.where( np.logical_not(full_mask) )] = False
-        
-        
-        for qtItem in self.qtItems[~self.selection_mask] :
-            qtItem.setPen( pg.mkPen(self.initial_color + [255]) )
-            qtItem.setBrush( pg.mkBrush(self.initial_color + [127]) )
-        
-        for i in np.where(self.selection_mask_temp)[0] :
-            self.qtItems[i].setPen( pg.mkPen(self.selection_color + [255]) )
-            self.qtItems[i].setBrush( pg.mkBrush(self.selection_color + [127]) )
     
     
-    def keyPressEvent(self, event) :
-        print(self.pos())
-        print('Hello!')
-        if event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter :
-            self.selection_mask[self.selection_mask_temp] = True
-            
-            
-
-
-            
     
-
-class DragWidget(QWidget):
-    def __init__(self, qt_plot):#, cat, selection_mask):
-        super().__init__()
-        self.initUI()
-        self.qt_plot = qt_plot
-        self.qt_plot.scene.sigMouseMoved.connect(self.mouse_moved)
-        self.drawing = False
-        self.current_ROI = None
-        #self.selection_mask = selection_mask
-        #self.cat = cat
-
-    def initUI(self):
-        self.timer = QTimer()
-        self.timer.setInterval(1)  # Check every 10 ms
-        self.timer.timeout.connect(self.checkLongPress)
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton and event.modifiers() == Qt.ShiftModifier :
-            self.qt_plot.view.setMouseEnabled(x=False, y=False)
-            self.timer.start()
-            ###################################################################
-            self.start_pos = self.qt_plot.view.mapToView(event.pos() + QPointF(-13, -14))
-            self.current_ROI = pg.RectROI([self.start_pos.x(), self.start_pos.y()], [0, 0], pen='r', invertible=True)
-            for handle in self.current_ROI.handles :
-                self.current_ROI.removeHandle(handle['item'])
-            self.qt_plot.addItem(self.current_ROI)
-            self.drawing = True
-
-    def checkLongPress(self):
-        if not (QApplication.mouseButtons() & Qt.LeftButton) :
-            self.drawing = False
-            if self.timer.isActive() :
-                self.timer.stop()
-                make_handles(self.current_ROI)
-            self.qt_plot.view.setMouseEnabled(x=True, y=True)
-            
-    def mouse_moved(self, pos):
-        if self.drawing and self.current_ROI is not None:
-            current_pos = self.qt_plot.view.mapToView(pos)
-            width = current_pos.x() - self.start_pos.x()
-            height = current_pos.y() - self.start_pos.y()
-            self.current_ROI.setSize([width, height])
-            
     
-            
+    
+    
+    
             
 """
 class DragWidget(QWidget):
