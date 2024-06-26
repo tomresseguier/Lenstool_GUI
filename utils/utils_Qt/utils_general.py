@@ -50,3 +50,37 @@ def plot_panel(x, y, image_widget_layout, qt_plot) :
 
 
 
+def transform_rectangle(x0, y0, a, b, angle) :
+    angle = (angle*np.pi/180)%(2*np.pi)
+    
+    if a < 0. :
+        a = -a
+        x0 = x0 - a*np.cos(-angle)
+        y0 = y0 + a*np.sin(-angle)
+    if b < 0. :
+        b = -b
+        x0 = x0 - b*np.sin(-angle)
+        y0 = y0 - b*np.cos(-angle)
+        
+    if angle > np.pi/2 and angle < 3*np.pi/2 :
+        angle = angle - np.pi
+        x0 = x0 - (a*np.cos(angle) - b*np.sin(angle))
+        y0 = y0 - (a*np.sin(angle) + b*np.cos(angle))
+    return x0, y0, a, b, angle
+
+
+
+def InRectangle(x_array, y_array, rect_params) :
+    x0, y0, a, b, angle = rect_params
+    angle_bis = (np.pi/2-angle)#%(2*np.pi)
+    
+    mask_x = (x_array > x0 - (y_array-y0)/np.tan(angle_bis)) & (x_array < x0 - (y_array-y0)/np.tan(angle_bis) + a/np.cos(angle))
+    mask_y = (y_array > y0 + (x_array-x0)*np.tan(angle)) & (y_array < y0 + (x_array-x0)*np.tan(angle) + b/np.cos(angle))
+    full_mask = mask_x & mask_y
+    return full_mask
+
+
+
+
+
+

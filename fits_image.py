@@ -325,29 +325,21 @@ class fits_image :
             cat = Table.from_pandas(cat_df)
         return cat
     
-    def import_catalog(self, cat_path=None, cat=None, color=[1., 1., 0], mag_colnames=['magAB_F814W', 'magAB_F435W']) :
-        if cat is None :
-            if isinstance(cat_path, list) :
-                run_match(cat_path[0], cat_path[1])
-                for i in range(len(cat_path)-3) :
-                    run_match('matched_A_B.fits', cat_path[i+2])
-                matched_cat = run_match('matched_A_B.fits', cat_path[-1])
-                cat = Table(matched_cat[1].data)
-                os.remove('matched_A_B.fits')
-                
-                #cat = []
-                #for path in cat_path :
-                #    cat.append(self.open_cat(cat_path))
-            else :
-                cat = self.open_cat(cat_path)
-        
-        #if isinstance(cat, list) :
-        #    matched_cat = cat[0]
-        #    for i in range(len(cat)-1) :
-        #        matched_cat = run_match(matched_cat, cat[i+1])
-        #    cat = matched_cat
-        
-        self.imported_cat = self.make_catalog(cat=cat, make_selection_panel=True, color=color, mag_colnames=mag_colnames)
+    def import_catalog(self, cat, color=[1., 1., 0], mag_colnames=['magAB_F814W', 'magAB_F435W']) :
+        ref_path = None
+        if isinstance(cat, str) :
+            ref_path = cat
+            cat = self.open_cat(cat)
+        elif isinstance(cat, list) :
+            ref_path = os.path.dirname(cat[0])
+            run_match(cat[0], cat[1])
+            for i in range(len(cat)-3) :
+                run_match('matched_A_B.fits', cat[i+2])
+            matched_cat = run_match('matched_A_B.fits', cat[-1])
+            cat = Table(matched_cat[1].data)
+            os.remove('matched_A_B.fits')
+            
+        self.imported_cat = self.make_catalog(cat=cat, make_selection_panel=True, color=color, mag_colnames=mag_colnames, ref_path=ref_path)
         return self.imported_cat.cat
     
     ################## Transform catalog into catalog class ###################
@@ -448,14 +440,15 @@ class fits_image :
             uniform_names_cat['theta'] = np.full(len(uniform_names_cat), 0.)
         return uniform_names_cat
     
-    def make_catalog(self, cat=None, cat_path=None, make_selection_panel=False, color=[1., 1., 0.], mag_colnames=['magAB_F814W', 'magAB_F435W']) :
+    def make_catalog(self, cat=None, cat_path=None, make_selection_panel=False, color=[1., 1., 0.], mag_colnames=['magAB_F814W', 'magAB_F435W'], ref_path=None) :
         if cat_path is not None :
             cat = self.open_cat(cat_path)
         uniform_names_cat = self.make_uniform_names_cat(cat)
         if self.qt_plot is None :
             self.plot_image()
         return self.catalog(uniform_names_cat, self.image_data, self.qt_plot, window=self.window, make_selection_panel=make_selection_panel, \
-                            image_widget = self.image_widget, image_widget_layout=self.image_widget_layout, color=color, mag_colnames=mag_colnames)
+                            image_path=self.image_path, image_widget = self.image_widget, image_widget_layout=self.image_widget_layout, \
+                            color=color, mag_colnames=mag_colnames, ref_path=ref_path)
         
     ###########################################################################
     
@@ -473,7 +466,8 @@ class fits_image :
     
     
     class catalog :
-        def __init__(self, cat, image_data, qt_plot, window=None, make_selection_panel=False, image_widget=None, image_widget_layout=None, color=[1., 1., 0.], mag_colnames=['magAB_F814W', 'magAB_F435W']) :
+        def __init__(self, cat, image_data, qt_plot, window=None, make_selection_panel=False, image_path=None, image_widget=None, image_widget_layout=None, \
+                     color=[1., 1., 0.], mag_colnames=['magAB_F814W', 'magAB_F435W'], ref_path=None) :
             self.cat = cat
             self.image_data = image_data
             self.qt_plot = qt_plot
@@ -482,13 +476,16 @@ class fits_image :
             #self.qtItems = np.empty(len(cat), dtype=utils.utils_classes.selectable_ellipse.SelectableEllipse)
             self.color = color
             self.selection_mask = np.full(len(cat), False)
+            self.selection_regions = []
             self.make_selection_panel = make_selection_panel
+            self.image_path = image_path
             self.image_widget = image_widget
             self.image_widget_layout = image_widget_layout
             self.RS_widget = None
             self.x_axis_cleaned = np.full(len(cat), None)
             self.y_axis_cleaned = np.full(len(cat), None)
             self.mag_colnames = mag_colnames
+            self.ref_path = ref_path
         
         def make_mask_naninf(self) :
             #mag_F444W = flux_muJy_to_magAB(self.cat['f444w_tot_0'])
@@ -528,6 +525,12 @@ class fits_image :
             for i in tqdm( range(len(self.qtItems)) ) :
                 self.qt_plot.removeItem(self.qtItems[i])
         
+        def clear_selection(self) :
+            self.selection_mask[np.full(len(self.cat), True)] = False
+            self.selection_regions.clear()
+            self.clear()
+            self.plot()
+        
         def plot_one_object(self, x, y, semi_major, semi_minor, angle, idx, color=None) :
             if color is None :
                 color = list(np.array(self.color)*255)
@@ -565,72 +568,40 @@ class fits_image :
             self.qt_plot.addItem(self.image_ROI)
             
         def make_cleaner_ROI(self) :
-            self.select_sources = SelectSources(self.cat, self.qt_plot, self.image_widget.current_ROI, self.selection_mask, window=self.window, \
-                                                qtItems=self.qtItems, color=list(np.array(self.color)*255))
+            self.image_widget.cat = self
+            self.select_sources = SelectSources(self.cat, self.qt_plot, self.image_widget.current_ROI, self.selection_mask, self.selection_regions, \
+                                                window=self.window, qtItems=self.qtItems, color=list(np.array(self.color)*255))
             
-            #self.image_widget.current_ROI.getState()
+        def save_selection_mask(self, path=None) :
+            self.selection_mask_path = self.make_path(path, self.ref_path, 'selection_mask.npy')
+            np.save(self.selection_mask_path, self.selection_mask)
+            
+        def load_selection_mask(self, path=None) :
+            self.selection_mask_path = self.make_path(path, self.ref_path, 'selection_mask.npy')
+            self.selection_mask = np.load(self.selection_mask_path)
+            
+        def save_selection_regions(self, path=None) :
+            self.selection_regions_path = self.make_path(path, self.image_path, 'selection_regions.npy')
+            np.save(self.selection_regions_path, self.selection_regions)
+            
+        def load_selection_regions(self, path=None) :
+            self.selection_regions_path = self.make_path(path, self.image_path, 'selection_regions.npy')
+            self.selection_regions = np.load(self.selection_regions_path)
+            
+        def make_path(self, path, ref_path, name) :
+            if path is None :#and self.ref_path is not None :
+                #to_return = os.path.join(os.path.dirname(ref_path), name)
+                to_return = os.path.join(os.path.dirname(ref_path), os.path.basename(ref_path).split('.')[0] + '_' + name)
+            elif os.path.isdir(path) :
+                to_return = os.path.join(path, name)
+            elif os.path.isdir(os.path.dirname(path)) :
+                to_return = path
+            return to_return
             
             
-            #self.selectable_scatter = SelectableScatter(self.RS_widget, self.selection_ROI, self.selection_mask, \
-            #                                            qtItems=self.qtItems, color=list(np.array(self.color)*255))
+        
             
-            
-            
-            #def selection_ROI_image_changed() :
-                
-            """
-            def mousePressEvent(self, event: QGraphicsSceneMouseEvent):
-                if event.button() == Qt.RightButton:
-                    x, y = self.selection_ROI_image.pos()
-                    a, b = self.selection_ROI_image.size()
-                    theta = self.selection_ROI_image.angle()
-                    
-                    color=list(np.array(self.color)*255)
-                    color=list(np.array([1., 0., 1.])*255)
-                    
-                    ellipse = QGraphicsEllipseItem(x, y, a, b)
-                    ellipse.setTransformOriginPoint( PyQt5.QtCore.QPointF(x, y) ) 
-                    
-                    ellipse.setRotation(theta)
-                    ellipse.setPen( pg.mkPen(color + [255]) )
-                    ellipse.setBrush( pg.mkBrush(color + [127]) )
-                    
-                    self.qt_plot.addItem(test_ellipse)
-                            
-                    #Draw ellipse
-                    #Add ellipse to catalog when enter is pressed or double click in the ellipse (then can use native sellectable ellipse function)
-                    
-                    
-            #self.selection_ROI_image.sigRegionChangeFinished.connect(selection_ROI_image_changed)
-            """
-
-            
-                
-            
-        #def select(self) :
-        #    class MouseClickHandler(QtCore.QObject) :
-        #        clicked = QtCore.Signal(float, float)
-        #        def __init__(self, plot_item):
-        #            super(MouseClickHandler, self).__init__()
-        #            self.plot_item = plot_item
-        #            self.plot_item.scene().sigMouseClicked.connect(self.mouse_click_event)
-        #        def mouse_click_event(self, event):
-        #            if event.double():
-        #                # Ignore double-click events
-        #                return
-        #            # Map the mouse click position to the plot coordinates
-        #            pos = self.plot_item.vb.mapSceneToView(event.scenePos())
-        #            x, y = pos.x(), pos.y()
-        #            # Emit the clicked signal with the coordinates
-        #            self.clicked.emit(x, y)            
-        #    # Create a handler for mouse clicks
-        #    click_handler = MouseClickHandler(self.qt_plot)
-        #    
-        #    def on_mouse_click(x, y):
-        #        print(f"Mouse clicked at ({x}, {y})")
-        #    
-        #    # Connect the handler's signal to a custom slot
-        #    click_handler.clicked.connect(on_mouse_click)
+        
     
     
     
