@@ -36,6 +36,7 @@ sys.path.append(module_dir + "/utils")
 from utils_plots.plot_utils_general import *
 from utils_Qt.selectable_classes import *
 from utils_Qt.utils_general import *
+from utils_general.utils_general import find_close_coord
 #from utils_general.utils import flux_muJy_to_magAB
 ###############################################################################
 
@@ -77,6 +78,7 @@ class fits_image :
                              'imported_cat': None,
                              'multiple_images': None}
         self.ax = None
+        self.redshift = None
     
     def open_image(self) :
         with fits.open(self.image_path) as hdus :
@@ -166,6 +168,14 @@ class fits_image :
         """
         
         return self.qt_plot
+    
+    def plot_image_mpl(self, wcs_projection=True, units='pixel', pos=111, make_axes_labels=True, make_grid=True, crop=None, replace_image=True) :
+        fig, ax = plot_image_mpl(self.image_data, wcs=self.wcs, wcs_projection=wcs_projection, units=units, pos=pos, \
+                                          make_axes_labels=make_axes_labels, make_grid=make_grid, crop=crop)
+        plot_NE_arrows(ax, self.wcs)
+        if replace_image :
+            self.fig, self.ax = fig, ax
+        return fig, ax
     
     def set_weight(self, weight_path) :
         self.weight_path = weight_path
@@ -285,7 +295,8 @@ class fits_image :
         
         self.multiple_images = self.make_catalog(multiple_images)
         
-        def plot_multiple_images(self, which='all', size=80, alpha=0.7, marker='o', filled_markers=False, mpl=False, colors=None) :
+        def plot_multiple_images(self, which='all', size=80, alpha=0.7, marker='o', filled_markers=False, mpl=False, colors=None, \
+                                 make_thumbnails=False, square_size=150, margin=50, distance=200, savefig=False, square_thumbnails=True) :
             if which=='all' :
                 families = np.unique( [self.cat[i]['id'][0] for i in range(len(self.cat))] )
                 which = families
@@ -300,11 +311,13 @@ class fits_image :
             else :
                 facecolor = [[0,0,0,0] for i in range(len(which))]
             
+            cat_contains_ellipse_params = len(np.unique(self.cat['a']))==1
+            colors_dict = {}
             count = 0
             for i, mask in enumerate(to_plot_mask) :
                 for multiple_image in self.cat[mask] :
                     # Remove the *1000
-                    if len(np.unique(self.cat['a']))==1 :
+                    if cat_contains_ellipse_params :
                         a, b = 75, 75
                     else :
                         a, b = multiple_image['a'], multiple_image['b']
@@ -313,10 +326,63 @@ class fits_image :
                     self.qtItems[count] = ellipse
                     count += 1
                     
-                    if mpl :
-                        self.plot_one_galaxy_mpl(multiple_image['x'], multiple_image['y'], a, b, \
-                                                 multiple_image['theta'], color=colors[i][:3], text=multiple_image['id'])
-        
+                    if mpl :                        
+                        self.plot_one_galaxy_mpl(multiple_image['x'], multiple_image['y'], a, b, multiple_image['theta'], \
+                                                 color=colors[i][:3], text=multiple_image['id'])
+                    colors_dict[multiple_image['id']] = colors[i][:3]
+                    
+            if make_thumbnails :
+                group_list = find_close_coord(self.cat, distance)
+                for group in group_list :
+                    
+                    x_array = [self.cat[np.where(self.cat['id']==name)[0][0]]['x'] for name in group]
+                    y_array = [self.cat[np.where(self.cat['id']==name)[0][0]]['y'] for name in group]
+                    
+                    x_pix = (np.max(x_array) + np.min(x_array)) / 2
+                    y_pix = (np.max(y_array) + np.min(y_array)) / 2
+                    
+                    half_side = square_size // 2
+                    
+                    x_min = round( max( min( np.min(x_array) - margin, x_pix - half_side ), 0) )
+                    x_max = round( min( max( np.max(x_array) + margin, x_pix + half_side ), self.image_data.shape[1]) )
+                    y_min = round( max( min( np.min(y_array) - margin, y_pix - half_side ), 0) )
+                    y_max = round( min( max( np.max(y_array) + margin, y_pix + half_side ), self.image_data.shape[0]) )
+                    
+                    if square_thumbnails :
+                        x_side_size = x_max - x_min
+                        y_side_size = y_max - y_min
+                        if x_side_size!=y_side_size :
+                            demi_taille_unique = round( max(x_side_size, y_side_size)/2 )
+                            x_pix = round( (x_max + x_min)/2 )
+                            y_pix = round( (y_max + y_min)/2 )
+                            x_min = x_pix - demi_taille_unique
+                            x_max = x_pix + demi_taille_unique
+                            y_min = y_pix - demi_taille_unique
+                            y_max = y_pix + demi_taille_unique
+                            
+                    fig, ax = plot_image_mpl(self.image_data, wcs=None, wcs_projection=False, units='pixel', \
+                                             pos=111, make_axes_labels=False, make_grid=False, crop=[x_min, x_max, y_min, y_max])
+                        
+                    for multiple_image_id in group :
+                        multiple_image = self.cat[np.where(self.cat['id']==multiple_image_id)[0][0]]
+                        color = colors_dict[multiple_image_id]
+                        if cat_contains_ellipse_params :
+                            a, b = 75, 75
+                        else :
+                            a, b = multiple_image['a'], multiple_image['b']
+                        self.plot_one_galaxy_mpl(multiple_image['x']-x_min, multiple_image['y']-y_min, a, b, multiple_image['theta'], \
+                                                 color=color, text=multiple_image['id'], ax=ax)
+                    
+                    ax.axis('off')
+                    #plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
+                    
+                    fig.show()
+                        
+                    plot_scale_bar(ax, pix_deg_scale=self.pix_deg_scale, unit='arcsec', \
+                                   length=1 , color='white', linewidth=2, text_offset=0.01)
+                    if savefig :
+                        fig.savefig(os.path.join(os.path.dirname(self.image_path), 'mult_' + group[0]), bbox_inches='tight', pad_inches=0)
+                        
         self.multiple_images.plot = types.MethodType(plot_multiple_images, self.multiple_images)
         
         #self.multiple_images = multiple_images
@@ -470,7 +536,7 @@ class fits_image :
             self.plot_image()
         return self.catalog(uniform_names_cat, self.image_data, self.qt_plot, window=self.window, make_selection_panel=make_selection_panel, \
                             image_path=self.image_path, image_widget = self.image_widget, image_widget_layout=self.image_widget_layout, \
-                            color=color, mag_colnames=mag_colnames, ref_path=ref_path, mpl_ax=self.ax)
+                            color=color, mag_colnames=mag_colnames, ref_path=ref_path, mpl_fig=self.fig, mpl_ax=self.ax, pix_deg_scale=self.pix_deg_scale)
         
     ###########################################################################
     
@@ -489,7 +555,7 @@ class fits_image :
     
     class catalog :
         def __init__(self, cat, image_data, qt_plot, window=None, make_selection_panel=False, image_path=None, image_widget=None, image_widget_layout=None, \
-                     color=[1., 1., 0.], mag_colnames=['magAB_F814W', 'magAB_F435W'], ref_path=None, mpl_ax=None) :
+                     color=[1., 1., 0.], mag_colnames=['magAB_F814W', 'magAB_F435W'], ref_path=None, mpl_fig=None, mpl_ax=None, pix_deg_scale=None) :
             self.cat = cat
             self.image_data = image_data
             self.qt_plot = qt_plot
@@ -509,6 +575,8 @@ class fits_image :
             self.mag_colnames = mag_colnames
             self.ref_path = ref_path
             self.mpl_ax = mpl_ax
+            self.mpl_fig = mpl_fig
+            self.pix_deg_scale = pix_deg_scale
         
         def make_mask_naninf(self) :
             #mag_F444W = flux_muJy_to_magAB(self.cat['f444w_tot_0'])
@@ -622,16 +690,34 @@ class fits_image :
             return to_return
             
             
-        def plot_one_galaxy_mpl(self, x, y, a, b, theta, color=[1,1,1], text=None) :
+        def plot_one_galaxy_mpl(self, x, y, a, b, theta, color=[1,1,1], text=None, ax=None) :
             edgecolor = list(color).copy()
             edgecolor.append(1)
             facecolor = edgecolor.copy()
             facecolor[-1] = 0
             ellipse = Ellipse( (x, y), a, b, angle=theta, facecolor=facecolor, edgecolor=edgecolor )
-            self.mpl_ax.add_artist(ellipse)
-            if text is not None :
-                self.mpl_ax.text(x-1.5*b*np.abs(np.sin(theta)), y-1.5*b*np.abs(np.cos(theta)), text, color=edgecolor[:3], \
-                                 horizontalalignment='right', verticalalignment='top')
+            if ax is None :
+                self.mpl_ax.add_artist(ellipse)
+                if text is not None :
+                    self.mpl_ax.text(x-1.5*b*np.abs(np.sin(theta)), y-1.5*b*np.abs(np.cos(theta)), text, color=edgecolor[:3], \
+                                     ha='right', va='top')
+            else :
+                ax.add_artist(ellipse)
+                if text is not None :
+                    offset = 0.85
+                    theta_modulo = theta%180 * np.pi/180
+                    if theta_modulo<np.pi/2 :
+                        x_text, y_text = x+offset*b*np.abs(np.sin(theta_modulo)), y-offset*b*np.abs(np.cos(theta_modulo))
+                        horizontalalignment, verticalalignment = 'left', 'top'
+                    else :
+                        x_text, y_text = x-offset*b*np.abs(np.sin(theta_modulo)), y-offset*b*np.abs(np.cos(theta_modulo))
+                        horizontalalignment, verticalalignment = 'right', 'top'
+                    #ax.text(x_text, y_text, text, color=edgecolor[:3], \
+                    #        ha=horizontalalignment, va=verticalalignment)
+                    ax.text( x_text, y_text, text, c='white', \
+                             ha=horizontalalignment, va=verticalalignment, \
+                             alpha=1, fontsize=15, bbox=dict(facecolor=edgecolor[:3], alpha=0.8, edgecolor='none') )
+
         
     
     
@@ -787,56 +873,6 @@ class fits_image :
     
     
     
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    def plot_image_mpl(self, wcs_projection=True, units='pixel', pos=111, make_axes_labels=True, make_grid=True, crop=False) :
-        if self.ax is None :
-            self.fig = plt.figure()
-        if wcs_projection :
-            self.ax = self.fig.add_subplot(pos, projection=self.wcs)
-            if make_grid :
-                self.ax.coords.grid(True, color='white', ls='dotted')
-        else :
-            self.ax = self.fig.add_subplot(pos)
-            if units=='pixel' or units=='pixels' or units=='image' :
-                scaling = 1
-            if units=='arcsec' :
-                scaling = pix_deg_scale*60*60
-            if units=='arcmin' :
-                scaling = pix_deg_scale*60
-        if make_axes_labels and wcs_projection :
-            self.ax.coords[0].set_axislabel('Right ascension')
-            self.ax.coords[1].set_axislabel('Declination')
-        elif make_axes_labels and not wcs_projection :
-            self.ax.set_xlabel('x (' + units + ')')
-            self.ax.set_ylabel('y (' + units + ')')
-        elif not make_axes_labels and wcs_projection :
-            self.ax.coords[0].set_axislabel(' ')
-            self.ax.coords[1].set_axislabel(' ')
-        else :
-            self.ax.set_xlabel(' ')
-            self.ax.set_ylabel(' ')
-        if crop :
-            to_plot = self.image_data[int(self.image_data.shape[1]/4):int(self.image_data.shape[1]*3/4), \
-                                      int(self.image_data.shape[0]/4):int(self.image_data.shape[0]*3/4), :]
-        else :
-            to_plot = self.image_data
-        if wcs_projection :
-            self.ax.imshow(to_plot, origin="lower")
-        if not wcs_projection :
-            self.ax.imshow(to_plot, origin='lower', extent=[0, to_plot.shape[1]*scaling, 0, to_plot.shape[0]*scaling])
-        #ax.figure.tight_layout()
-        return self.fig, self.ax
-    
     """
     def plot_sources_mpl(self, color='blue', alpha=0.5, scale=1., facecolor=None) :
         if self.sources is None :
@@ -887,7 +923,7 @@ class fits_image :
             axs[i].imshow(region, origin='lower')
             axs[i].axis('off')
             
-        return fig, axs    
+        return fig, axs
         
         
         
