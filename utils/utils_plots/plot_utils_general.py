@@ -70,8 +70,7 @@ def plot_image_mpl(image_data, wcs=None, pix_deg_scale=None, wcs_projection=True
         ax.set_xlabel(' ')
         ax.set_ylabel(' ')
     if crop is not None :
-        to_plot = image_data[crop[2]:crop[3], \
-                             crop[0]:crop[1], :]
+        to_plot = image_data[crop[2]:crop[3], crop[0]:crop[1], :]
     #if crop :
     #    to_plot = self.image_data[int(self.image_data.shape[1]/4):int(self.image_data.shape[1]*3/4), \
     #                              int(self.image_data.shape[0]/4):int(self.image_data.shape[0]*3/4), :]
@@ -85,7 +84,7 @@ def plot_image_mpl(image_data, wcs=None, pix_deg_scale=None, wcs_projection=True
     return fig, ax
 
 
-def plot_scale_bar(ax, pix_deg_scale=None, redshift=None, unit='arcmin', length=1 , color='white', linewidth=2, text_offset=0.02) :
+def plot_scale_bar(ax, pix_deg_scale=None, redshift=None, unit='arcmin', length=1 , color='white', linewidth=2, text_offset=0.01) :
     """
     Plots a white bar scale indicating the length of an arcminute on a given image.
     
@@ -106,13 +105,15 @@ def plot_scale_bar(ax, pix_deg_scale=None, redshift=None, unit='arcmin', length=
         length_deg = length / 60.
         unit = "\'"
         
-    if unit!='kpc' :
-        bar_length_pix = length_deg / pix_deg_scale
-    else :
+    if unit=='kpc' :
         ang_diam_dist = cosmo.angular_diameter_distance(redshift).to('kpc').value
         length_rad = length / ang_diam_dist
         length_deg = np.rad2deg(length_rad)
-        
+        length_arcmin = length_deg * 60.
+        length_arcsec = length_deg * 3600.
+    
+    bar_length_pix = length_deg / pix_deg_scale
+    
     x_lim = ax.get_xlim()
     y_lim = ax.get_ylim()
         
@@ -125,9 +126,17 @@ def plot_scale_bar(ax, pix_deg_scale=None, redshift=None, unit='arcmin', length=
     text_x = (start_x + end_x) / 2
     text_y = start_y + text_offset * np.abs(y_lim[1] - y_lim[0])
     
-    ax.text(text_x, text_y + text_offset * np.abs(y_lim[1] - y_lim[0]), f'{length}{unit}', \
+    ax.text(text_x, text_y, f'{length}{unit}', \
             color=color, ha='center', va='bottom', fontsize=12)
-    
+    if unit=='kpc' :
+        text_y_below = start_y - text_offset * np.abs(y_lim[1] - y_lim[0])
+        if length_arcmin>=1. :
+            ax.text(text_x, text_y_below, f"{length_arcmin:.2f}\'", \
+                    color=color, ha='center', va='top', fontsize=12)
+        else :
+            ax.text(text_x, text_y_below, f'{length_arcsec:.2f}\"', \
+                    color=color, ha='center', va='top', fontsize=12)
+        
     ax.set_xlim(x_lim)
     ax.set_ylim(y_lim)
 
@@ -135,8 +144,9 @@ def plot_scale_bar(ax, pix_deg_scale=None, redshift=None, unit='arcmin', length=
 def plot_NE_arrows(ax, wcs, arrow_length=0.1, color='white', fontsize=12):
     arrowprops = dict(facecolor=color, edgecolor=color, width=0.5, headwidth=4, headlength=5)
     
-    center_pixel = np.array([(ax.get_xlim()[1] - ax.get_xlim()[0]) / 2, 
-                             (ax.get_ylim()[1] - ax.get_ylim()[0]) / 2])
+    #center_pixel = np.array([(ax.get_xlim()[1] - ax.get_xlim()[0]) / 2, 
+    #                         (ax.get_ylim()[1] - ax.get_ylim()[0]) / 2])
+    center_pixel = wcs.wcs.crpix
     
     # Convert the center pixel to world coordinates
     center_world = wcs.pixel_to_world(center_pixel[0], center_pixel[1])
@@ -158,25 +168,36 @@ def plot_NE_arrows(ax, wcs, arrow_length=0.1, color='white', fontsize=12):
     east_vector /= np.linalg.norm(east_vector)
     
     # Calculate the end points of the arrows
-    north_end = center_pixel + arrow_length * north_vector * np.array([ax.get_xlim()[1] - ax.get_xlim()[0], 
-                                                                       ax.get_ylim()[1] - ax.get_ylim()[0]])
-    east_end = center_pixel + arrow_length * east_vector * np.array([ax.get_xlim()[1] - ax.get_xlim()[0], 
-                                                                     ax.get_ylim()[1] - ax.get_ylim()[0]])
+    fig_scale_factor = max( ax.get_xlim()[1] - ax.get_xlim()[0], ax.get_ylim()[1] - ax.get_ylim()[0] )
+    north_end = center_pixel + arrow_length * north_vector * fig_scale_factor
+    east_end = center_pixel + arrow_length * east_vector * fig_scale_factor
     
-    start_x = 0.9
-    start_y = 0.1
+    start_x = 0.95
+    start_y = 0.09
     
     xy = (start_x + (north_end[0] - center_pixel[0]) / (ax.get_xlim()[1] - ax.get_xlim()[0]),
           start_y + (north_end[1] - center_pixel[1]) / (ax.get_ylim()[1] - ax.get_ylim()[0]))
     ax.annotate('', xy=xy, xytext=(start_x, start_y), arrowprops=arrowprops, xycoords='axes fraction')
-    ax.text(xy[0], xy[1]+0.02, 'N', color=color, fontsize=fontsize,
+    ax.text(xy[0], xy[1]+0.01, 'N', color=color, fontsize=fontsize,
             ha='center', va='bottom', transform=ax.transAxes)
     
     xy = (start_x + (east_end[0] - center_pixel[0]) / (ax.get_xlim()[1] - ax.get_xlim()[0]),
           start_y + (east_end[1] - center_pixel[1]) / (ax.get_ylim()[1] - ax.get_ylim()[0]))
     ax.annotate('', xy=xy, xytext=(start_x, start_y), arrowprops=arrowprops, xycoords='axes fraction')
-    ax.text(xy[0]-0.02, xy[1], 'E', color=color, fontsize=fontsize,
+    ax.text(xy[0]-0.01, xy[1], 'E', color=color, fontsize=fontsize,
             ha='right', va='center', transform=ax.transAxes)
+
+
+def adjust_luminosity(image, factor):
+    adjusted_image = image * factor
+    adjusted_image = np.clip(adjusted_image, 0, 255).astype(np.uint8)
+    return adjusted_image
+
+def adjust_contrast(image, factor, pivot=1.):
+    mean = np.mean(image, axis=(0, 1))
+    adjusted_image = (image - mean*pivot) * factor + mean*pivot
+    adjusted_image = np.clip(adjusted_image, 0, 255).astype(np.uint8)
+    return adjusted_image
 
 
 

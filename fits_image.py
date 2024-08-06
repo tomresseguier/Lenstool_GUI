@@ -37,6 +37,7 @@ from utils_plots.plot_utils_general import *
 from utils_Qt.selectable_classes import *
 from utils_Qt.utils_general import *
 from utils_general.utils_general import find_close_coord
+from utils_plots.plt_framework import plt_framework
 #from utils_general.utils import flux_muJy_to_magAB
 ###############################################################################
 
@@ -295,8 +296,9 @@ class fits_image :
         
         self.multiple_images = self.make_catalog(multiple_images)
         
-        def plot_multiple_images(self, which='all', size=80, alpha=0.7, marker='o', filled_markers=False, mpl=False, colors=None, \
-                                 make_thumbnails=False, square_size=150, margin=50, distance=200, savefig=False, square_thumbnails=True) :
+        def plot_multiple_images(self, which='all', size=80, alpha=0.7, marker='o', filled_markers=False, colors=None, mpl=False, fontsize=9, \
+                                 make_thumbnails=False, square_size=150, margin=50, distance=200, savefig=False, square_thumbnails=True, \
+                                 boost=[2,1.5,1], linewidth=1.7, text_color='white', text_alpha=0.5) :
             if which=='all' :
                 families = np.unique( [self.cat[i]['id'][0] for i in range(len(self.cat))] )
                 which = families
@@ -326,12 +328,21 @@ class fits_image :
                     self.qtItems[count] = ellipse
                     count += 1
                     
-                    if mpl :                        
-                        self.plot_one_galaxy_mpl(multiple_image['x'], multiple_image['y'], a, b, multiple_image['theta'], \
-                                                 color=colors[i][:3], text=multiple_image['id'])
+                    if mpl :
+                        font = {'size':fontsize, 'family':'DejaVu Sans'}
+                        plt.rc('font', **font)
+                        self.plot_one_galaxy_mpl(multiple_image['x'], multiple_image['y'], a, b, multiple_image['theta'], color=colors[i][:3], \
+                                                 text=multiple_image['id'], linewidth=linewidth, text_color=text_color, text_alpha=text_alpha)
+                        #self.plot_one_galaxy_mpl(multiple_image['x'], multiple_image['y'], a, b, multiple_image['theta'], color=colors[i][:3], text=multiple_image['id'])
                     colors_dict[multiple_image['id']] = colors[i][:3]
                     
             if make_thumbnails :
+                if boost is not None :
+                    adjusted_image = adjust_contrast(self.image_data, boost[0], pivot=boost[1])
+                    adjusted_image = adjust_luminosity(adjusted_image, boost[2])
+                else :
+                    adjusted_image = self.image_data
+                
                 group_list = find_close_coord(self.cat, distance)
                 for group in group_list :
                     
@@ -359,10 +370,16 @@ class fits_image :
                             x_max = x_pix + demi_taille_unique
                             y_min = y_pix - demi_taille_unique
                             y_max = y_pix + demi_taille_unique
-                            
-                    fig, ax = plot_image_mpl(self.image_data, wcs=None, wcs_projection=False, units='pixel', \
+                    
+                    plt_framework(image=True, figsize=3, drawscaler=1.2)
+                    font = {'size':9, 'family':'DejaVu Sans'}
+                    plt.rc('font', **font)
+                    
+                    
+                    #cropped_image = self.image_data[y_min:y_max, x_min:x_max, :]
+                    fig, ax = plot_image_mpl(adjusted_image, wcs=None, wcs_projection=False, units='pixel', \
                                              pos=111, make_axes_labels=False, make_grid=False, crop=[x_min, x_max, y_min, y_max])
-                        
+                    
                     for multiple_image_id in group :
                         multiple_image = self.cat[np.where(self.cat['id']==multiple_image_id)[0][0]]
                         color = colors_dict[multiple_image_id]
@@ -371,7 +388,7 @@ class fits_image :
                         else :
                             a, b = multiple_image['a'], multiple_image['b']
                         self.plot_one_galaxy_mpl(multiple_image['x']-x_min, multiple_image['y']-y_min, a, b, multiple_image['theta'], \
-                                                 color=color, text=multiple_image['id'], ax=ax)
+                                                 color=color, text=multiple_image['id'], ax=ax, linewidth=linewidth, text_color=text_color, text_alpha=text_alpha)
                     
                     ax.axis('off')
                     #plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
@@ -383,6 +400,8 @@ class fits_image :
                     if savefig :
                         fig.savefig(os.path.join(os.path.dirname(self.image_path), 'mult_' + group[0]), bbox_inches='tight', pad_inches=0)
                         
+                    plt_framework(full_tick_framework=True, ticks='out', image=True, width='full', drawscaler=0.8, tickscaler=0.5, minor_ticks=False)
+                    
         self.multiple_images.plot = types.MethodType(plot_multiple_images, self.multiple_images)
         
         #self.multiple_images = multiple_images
@@ -690,17 +709,28 @@ class fits_image :
             return to_return
             
             
-        def plot_one_galaxy_mpl(self, x, y, a, b, theta, color=[1,1,1], text=None, ax=None) :
+        def plot_one_galaxy_mpl(self, x, y, a, b, theta, color=[1,1,1], text=None, ax=None, linewidth=1., text_color='white', text_alpha=0.5) :
             edgecolor = list(color).copy()
             edgecolor.append(1)
             facecolor = edgecolor.copy()
             facecolor[-1] = 0
-            ellipse = Ellipse( (x, y), a, b, angle=theta, facecolor=facecolor, edgecolor=edgecolor )
+            ellipse = Ellipse( (x, y), a, b, angle=theta, facecolor=facecolor, edgecolor=edgecolor, lw=linewidth )
             if ax is None :
                 self.mpl_ax.add_artist(ellipse)
                 if text is not None :
-                    self.mpl_ax.text(x-1.5*b*np.abs(np.sin(theta)), y-1.5*b*np.abs(np.cos(theta)), text, color=edgecolor[:3], \
-                                     ha='right', va='top')
+                    #self.mpl_ax.text(x-1.5*b*np.abs(np.sin(theta)), y-1.5*b*np.abs(np.cos(theta)), text, color=edgecolor[:3], \
+                    #                 ha='right', va='top')
+                    offset = 0.85
+                    theta_modulo = theta%180 * np.pi/180
+                    if theta_modulo<np.pi/2 :
+                        x_text, y_text = x+offset*b*np.abs(np.sin(theta_modulo)), y-offset*b*np.abs(np.cos(theta_modulo))
+                        horizontalalignment, verticalalignment = 'left', 'top'
+                    else :
+                        x_text, y_text = x-offset*b*np.abs(np.sin(theta_modulo)), y-offset*b*np.abs(np.cos(theta_modulo))
+                        horizontalalignment, verticalalignment = 'right', 'top'
+                    self.mpl_ax.text( x_text, y_text, text, c=text_color, alpha=1, fontsize=15, \
+                                      ha=horizontalalignment, va=verticalalignment, \
+                                      bbox=dict(facecolor=edgecolor[:3], alpha=text_alpha, edgecolor='none') )
             else :
                 ax.add_artist(ellipse)
                 if text is not None :
@@ -714,9 +744,9 @@ class fits_image :
                         horizontalalignment, verticalalignment = 'right', 'top'
                     #ax.text(x_text, y_text, text, color=edgecolor[:3], \
                     #        ha=horizontalalignment, va=verticalalignment)
-                    ax.text( x_text, y_text, text, c='white', \
+                    ax.text( x_text, y_text, text, c=text_color, alpha=1, fontsize=15, \
                              ha=horizontalalignment, va=verticalalignment, \
-                             alpha=1, fontsize=15, bbox=dict(facecolor=edgecolor[:3], alpha=0.8, edgecolor='none') )
+                             bbox=dict(facecolor=edgecolor[:3], alpha=text_alpha, edgecolor='none') )
 
         
     
