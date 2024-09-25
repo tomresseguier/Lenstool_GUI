@@ -22,7 +22,6 @@ from PyQt5.QtWidgets import QGraphicsEllipseItem, QGraphicsScene, QGraphicsView,
 #from PyQt5.QtCore import Qt
 from pyqtgraph.Qt import QtCore
 from astropy.table import Table
-import lenstool
 import pandas as pd
 
 ###############################################################################
@@ -38,6 +37,7 @@ from utils_Qt.selectable_classes import *
 from utils_Qt.utils_general import *
 from utils_general.utils_general import find_close_coord
 from utils_plots.plt_framework import plt_framework
+from utils_Lenstool.param_extractors import make_source_z_dict, find_param_file, read_bayes_file
 #from utils_general.utils import flux_muJy_to_magAB
 ###############################################################################
 
@@ -194,7 +194,8 @@ class fits_image :
         out_path = os.path.join( out_dir, outfile_name )
         if os.path.isfile(out_path) and not rerun :
             print('Previous SExtractor catalog found.')
-            self.sources_all = Table( fits.open(out_path)[1].data )
+            with fits.open(out_path) as hdu :
+                self.sources_all = Table(hdu[1].data)
         elif DIM_ref_path is None :
             self.sources_all = source_extract(image_path, weight_path=weight_path, pixel_scale=self.pix_deg_scale*3600, zero_point=None, out_dir=out_dir,
                                               outfile_name=outfile_name, return_sources=True)
@@ -277,8 +278,7 @@ class fits_image :
     def select_multiple_images(self) :
         return 'in progress'
     
-    def import_multiple_images(self, mult_file_path) :
-        #lt = lenstool.Lenstool()
+    def import_multiple_images(self, mult_file_path, unit_is_pixel=False) :
         multiple_images = Table(names=['id','ra','dec','a','b','theta','z','mag'], dtype=['str',*['float',]*7])
         with open(mult_file_path, 'r') as mult_file:
             for line in mult_file:
@@ -294,7 +294,7 @@ class fits_image :
         #lt.set_sources(multiple_images)
         multiple_images['theta'] = multiple_images['theta'] - self.orientation
         
-        self.multiple_images = self.make_catalog(multiple_images)
+        self.multiple_images = self.make_catalog(multiple_images, unit_is_pixel=unit_is_pixel)
         
         def plot_multiple_images(self, which='all', size=80, alpha=0.7, marker='o', filled_markers=False, colors=None, mpl=False, fontsize=9, \
                                  make_thumbnails=False, square_size=150, margin=50, distance=200, savefig=False, square_thumbnails=True, \
@@ -506,7 +506,7 @@ class fits_image :
             names_dict = names_dict_default
         return names_dict
     
-    def make_uniform_names_cat(self, cat, use_default_names=True) :
+    def make_uniform_names_cat(self, cat, use_default_names=True, unit_is_pixel=False) :
         uniform_names_cat = cat.copy()
         colnames_dict = self.make_colnames_dict(cat, use_default_names=use_default_names)
         
@@ -524,7 +524,8 @@ class fits_image :
                     
                 
         if colnames_dict['a'] != 'A_IMAGE' and colnames_dict['b'] != 'B_IMAGE' :
-            yesno = input("ellipticity parameters " + str(colnames_dict['a']) + " and " + str(colnames_dict['b']) + " in pixels? [y][arcsec][deg]")
+            yesno = 'y' if unit_is_pixel else input("ellipticity parameters " + str(colnames_dict['a']) \
+                                                        + " and " + str(colnames_dict['b']) + " in pixels? [y][arcsec][deg]")
             if yesno == 'deg' :
                 uniform_names_cat.replace_column( 'a', uniform_names_cat['a']/(self.pix_deg_scale) )
                 uniform_names_cat.replace_column( 'b', uniform_names_cat['b']/(self.pix_deg_scale) )
@@ -547,10 +548,11 @@ class fits_image :
             uniform_names_cat['theta'] = np.full(len(uniform_names_cat), 0.)
         return uniform_names_cat
     
-    def make_catalog(self, cat=None, cat_path=None, make_selection_panel=False, color=[1., 1., 0.], mag_colnames=['magAB_F814W', 'magAB_F435W'], ref_path=None) :
+    def make_catalog(self, cat=None, cat_path=None, make_selection_panel=False, color=[1., 1., 0.], \
+                     mag_colnames=['magAB_F814W', 'magAB_F435W'], ref_path=None, unit_is_pixel=False) :
         if cat_path is not None :
             cat = self.open_cat(cat_path)
-        uniform_names_cat = self.make_uniform_names_cat(cat)
+        uniform_names_cat = self.make_uniform_names_cat(cat, unit_is_pixel=unit_is_pixel)
         if self.qt_plot is None :
             self.plot_image()
         return self.catalog(uniform_names_cat, self.image_data, self.qt_plot, window=self.window, make_selection_panel=make_selection_panel, \
@@ -756,19 +758,12 @@ class fits_image :
     
     
     
-    
-    
-    
     def world_to_image(self, ra, dec, unit='deg') :
         coord = SkyCoord(ra, dec, unit=unit)
         image_coord = WCS.world_to_pixel(self.wcs, coord)
         if len(image_coord[0].shape)==0 :
             image_coord = (image_coord[0]*1., image_coord[1]*1.)
         return image_coord
-    
-    
-    
-    
     
     def clear_Items(self) :
         for key in self.qtItems_dict.keys() :
@@ -780,10 +775,48 @@ class fits_image :
     
     
     
+    def import_lenstool(self, model_dir) :
+        self.lt_dir = model_dir
+        
+        ### Add correct optimized/fixed redshifts ###
+        if self.multiple_images is not None :
+            source_z_dict = make_source_z_dict(model_dir, use_family_name_only=True)
+            for i in range(len(self.multiple_images.cat)) :
+                self.multiple_images.cat['z'][i] = source_z_dict[ self.multiple_images.cat['id'][i][0] ]
+            
+            magnification_dir = os.path.join(model_dir, 'magnifications')
+            if os.path.isdir(magnification_dir) :
+                if 'magnification' not in self.multiple_images.cat.colnames :
+                    
+                    magnification_files = os.listdir(magnification_dir)
+                    magnification_dict = {}
+                    for name in source_z_dict.keys() :
+                        idx = np.where( np.array([ magnification_file[:-len('.fits')-1][-1] \
+                                                   for magnification_file in magnification_files ]) == name)[0][0]
+                        
+                        magnification_path = os.path.join( magnification_dir, magnification_files[idx])
+                        with fits.open(magnification_path) as magnification_fits :
+                            magnification_dict[name] = magnification_fits[0].data, WCS(magnification_fits[0].header)
+                    
+                    magnification_column = np.zeros(len(self.multiple_images.cat))
+                    for i in range(len(self.multiple_images.cat)) :
+                        family_name = self.multiple_images.cat['id'][i][0]
+                        world_coord = SkyCoord( self.multiple_images.cat[i]['ra'], self.multiple_images.cat[i]['dec'], unit='deg' )
+                        pix_coord_array = WCS.world_to_pixel(magnification_dict[family_name][1], world_coord)
+                        pix_coord = ( round(pix_coord_array[0]*1.), round(pix_coord_array[1]*1.) )
+                        magnification = magnification_dict[family_name][0][pix_coord[1], pix_coord[0]]
+                        magnification_column[i] = magnification
+                        
+                    self.multiple_images.cat.add_column(magnification_column, name='magnification')
+                
+        
+        df = read_bayes_file( os.path.join(model_dir, 'bayes.dat') )
+        param_latex_table(df)
+        
+        self.lt_bayes = df
     
     
-    
-    
+                        
     
     
     

@@ -4,6 +4,7 @@ from matplotlib.colors import hsv_to_rgb
 from matplotlib.patches import FancyArrow
 from astropy.cosmology import Planck18 as cosmo
 from astropy.wcs import WCS
+import corner
 
 #import sys
 #import os
@@ -199,7 +200,20 @@ def adjust_contrast(image, factor, pivot=1.):
     adjusted_image = np.clip(adjusted_image, 0, 255).astype(np.uint8)
     return adjusted_image
 
+def plot_corner(df):
+    # Extract the numeric columns (skip non-numeric like 'Chi2' or similar if needed)
+    data = df.select_dtypes(include='number')
+    
+    figure = corner.corner( data,
+                            labels=data.columns,  # Use column names from the DataFrame
+                            quantiles=[0.16, 0.5, 0.84],  # Plot the 1, 2, and 3 sigma contours
+                            show_titles=True,  # Show titles with mean and std
+                            title_fmt=".2f",  # Format the numbers to 2 decimal places
+                            title_kwargs={"fontsize": 12},  # Customize title font size
+                            levels=(1 - 0.6827, 1 - 0.9545, 1 - 0.9973),  # 1, 2, 3 sigma
+                            plot_contours=True )  # Enable contours
 
+    plt.show()
 
 
 
