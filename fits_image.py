@@ -26,19 +26,22 @@ import pandas as pd
 
 ###############################################################################
 import sys
-module_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(module_dir)
+#module_dir = os.path.dirname(os.path.abspath(__file__))
+#sys.path.append(module_dir)
 
-from source_extraction.source_extract import source_extract, source_extract_DIM
-from source_extraction.match_cat import run_match
-sys.path.append(module_dir + "/utils")
-from utils_plots.plot_utils_general import *
-from utils_Qt.selectable_classes import *
-from utils_Qt.utils_general import *
-from utils_general.utils_general import find_close_coord
-from utils_plots.plt_framework import plt_framework
-from utils_Lenstool.param_extractors import make_source_z_dict, find_param_file, read_bayes_file
+from .source_extraction.source_extract import source_extract, source_extract_DIM
+from .source_extraction.match_cat import run_match
+#sys.path.append(module_dir + "/utils")
+from .utils.utils_plots.plot_utils_general import *
+from .utils.utils_Qt.selectable_classes import *
+from .utils.utils_Qt.utils_general import *
+from .utils.utils_general.utils_general import find_close_coord
+from .utils.utils_plots.plt_framework import plt_framework
+from .utils.utils_Lenstool.redshift_extractors import make_source_z_dict, find_param_file
+from .utils.utils_Lenstool.param_extractors import read_bayes_file, make_param_latex_table
 #from utils_general.utils import flux_muJy_to_magAB
+from .utils.utils_astro.set_cosmology import set_cosmo
+cosmo = set_cosmo()
 ###############################################################################
 
 """
@@ -599,17 +602,20 @@ class fits_image :
             self.mpl_fig = mpl_fig
             self.pix_deg_scale = pix_deg_scale
         
-        def make_mask_naninf(self) :
+        def make_mask_naninf(self, xy_axes=None) :
             #mag_F444W = flux_muJy_to_magAB(self.cat['f444w_tot_0'])
             #mag_F090W = flux_muJy_to_magAB(self.cat['f090w_tot_0'])
             #x_axis = mag_F444W
             #y_axis = mag_F090W - mag_F444W
             
-            mag_F814W = self.cat[self.mag_colnames[0]]
-            mag_F435W = self.cat[self.mag_colnames[1]]
-            
-            x_axis = mag_F814W
-            y_axis = mag_F435W - mag_F814W
+            if xy_axes is None :
+                mag_F814W = self.cat[self.mag_colnames[0]]
+                mag_F435W = self.cat[self.mag_colnames[1]]
+                x_axis = mag_F814W
+                y_axis = mag_F435W - mag_F814W
+            else :
+                x_axis = self.cat[xy_axes[0]]
+                y_axis = self.cat[xy_axes[1]]
             
             nan_mask = np.logical_not(np.isnan(x_axis)) & np.logical_not(np.isnan(y_axis))
             inf_mask = (x_axis!=np.inf) & (y_axis!=np.inf)
@@ -661,9 +667,9 @@ class fits_image :
             self.qt_plot.addItem(ellipse)
             return ellipse
         
-        def plot_selection_panel(self) :
+        def plot_selection_panel(self, xy_axes=None) :
             if self.make_selection_panel :
-                self.make_mask_naninf()
+                self.make_mask_naninf(xy_axes=xy_axes)
                 
                 self.RS_widget, self.selection_ROI = plot_panel(self.x_axis_cleaned, self.y_axis_cleaned, self.image_widget_layout, self.qt_plot)
                 
@@ -809,14 +815,16 @@ class fits_image :
                         
                     self.multiple_images.cat.add_column(magnification_column, name='magnification')
                 
-        
-        df = read_bayes_file( os.path.join(model_dir, 'bayes.dat') )
-        param_latex_table(df)
-        
-        self.lt_bayes = df
+        if self.redshift is None :
+            self.redshift = float(input("Please specify the redshift of the lens: "))
+        self.lt_bayes = read_bayes_file( os.path.join(model_dir, 'bayes.dat'), convert_to_kpc=True, z=self.redshift )
+        self.lt_latex_table_str = make_param_latex_table(model_dir, convert_to_kpc=True, z=self.redshift)
+        def print_lt_latex_table() :
+            print(self.lt_latex_table_str)
+        self.lt_latex_table = print_lt_latex_table
     
     
-                        
+    
     
     
     

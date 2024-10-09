@@ -3,14 +3,14 @@ source_extract.py from David Harvey's pyRRG
 """
 
 #from pyextract import pysex
-from source_extraction.pysex import pysex
 from astropy.io import fits
 from astropy.table import Table
+from .pysex import pysex
 
 import numpy as np
 import os as os
 import sys
-from source_extraction.match_cat import run_match
+from .match_cat import run_match
 from numpy.lib.recfunctions import append_fields as append_rec
 
 module_dir = os.path.dirname(os.path.abspath(__file__))

@@ -12,10 +12,10 @@ from tqdm import tqdm
 
 import sys
 import os
-module_dir = os.path.dirname(os.path.abspath(__file__))
-main_dir = os.path.dirname(module_dir)
-sys.path.append(main_dir)
-sys.path.append(module_dir)
+#module_dir = os.path.dirname(os.path.abspath(__file__))
+#main_dir = os.path.dirname(module_dir)
+#sys.path.append(main_dir)
+#sys.path.append(module_dir)
 
 #os.chdir(main_dir)
 

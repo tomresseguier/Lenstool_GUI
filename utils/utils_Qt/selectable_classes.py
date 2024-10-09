@@ -9,11 +9,11 @@ from tqdm import tqdm
 
 import os
 import sys
-module_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(module_dir)
+#module_dir = os.path.dirname(os.path.abspath(__file__))
+#sys.path.append(module_dir)
 
-sys.path.append(module_dir + "/utils")
-from utils_Qt.utils_general import *
+#sys.path.append(module_dir + "/utils")
+from .utils_general import *
 
 
 
