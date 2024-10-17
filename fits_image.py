@@ -1,7 +1,7 @@
 import os
 import numpy as np
 from matplotlib import pyplot as plt
-from matplotlib.patches import Ellipse, Polygon, Circle
+from matplotlib.patches import Ellipse, Polygon, Circle, Rectangle
 from astropy.io import fits
 from astropy.wcs import WCS
 import astropy.units as u
@@ -702,10 +702,35 @@ class fits_image :
             self.selection_regions_path = self.make_path(path, self.image_path, 'selection_regions.npy')
             np.save(self.selection_regions_path, self.selection_regions)
             
-        def load_selection_regions(self, path=None) :
-            self.selection_regions_path = self.make_path(path, self.image_path, 'selection_regions.npy')
-            self.selection_regions = np.load(self.selection_regions_path)
+        def load_selection_regions(self, path=None, name='selection_regions.npy') :
+            self.selection_regions_path = self.make_path(path, self.image_path, name)
+            self.selection_regions = np.load(self.selection_regions_path).tolist()
             
+            size_y = self.qt_plot.image.shape[0]
+            for rect_params in self.selection_regions :
+                indiv_mask = InRectangle(self.cat['x'], size_y - self.cat['y'], rect_params)
+                self.selection_mask[indiv_mask] = True
+            
+            fig, ax = plt.subplots()
+            ax.axis('equal')
+            size = max(self.qt_plot.image.shape[0], self.qt_plot.image.shape[1])
+            #ax.invert_yaxis()
+            ax.set_ylim([size+2000, -2000])
+            ax.set_xlim([-4000, size+4000])
+            
+            for i, rect_params in enumerate(self.selection_regions) :
+                x0, y0, a, b, angle = rect_params
+                #x1, y1 = x0, y0
+                #x2, y2 = x0 + a*np.cos(angle), y0 + a*np.sin(angle)
+                #x3, y3 = x0 + a*np.cos(angle) - b*np.sin(angle),  y0 + a*np.sin(angle) + b*np.cos(angle)
+                #x4, y4 = x0 - b*np.sin(angle), y0 + b*np.cos(angle)
+                #ax.plot([x1, x2, x3, x4, x1], size_y-np.array([y1, y2, y3, y4, y1]), c='b')
+                #ax.axis('equal')
+                ax.add_patch( Rectangle((x0, y0), a, b, angle=angle*180/np.pi, alpha=0.4 ))
+                ax.text(x0, y0, str(i))
+                fig.show()
+                plt.pause(0.05)
+                
         def make_path(self, path, ref_path, name) :
             if path is None :#and self.ref_path is not None :
                 #to_return = os.path.join(os.path.dirname(ref_path), name)

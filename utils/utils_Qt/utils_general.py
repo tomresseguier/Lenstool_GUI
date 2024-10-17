@@ -51,7 +51,11 @@ def plot_panel(x, y, image_widget_layout, qt_plot) :
 
 
 def transform_rectangle(x0, y0, a, b, angle) :
-    angle = (angle*np.pi/180)%(2*np.pi)
+    '''
+    Transforms the params from the selection rectangle (base corner is where user clicked first)
+    to standardized params to be used to make the selection and be saved.
+    '''
+    angle = angle%(2*np.pi)
     
     if a < 0. :
         a = -a

@@ -85,7 +85,7 @@ class SelectableScatter() : #pg.PlotWidget()
         b = self.selection_ROI.getState()['size'][1]
         angle = self.selection_ROI.getState()['angle']
         
-        rect_params = transform_rectangle(x0, y0, a, b, angle)
+        rect_params = transform_rectangle(x0, y0, a, b, angle*np.pi/180)
         full_mask = InRectangle(x, y, rect_params)
         
         
@@ -160,7 +160,7 @@ class SelectSources() : #pg.PlotWidget()
         b = self.selection_ROI.getState()['size'][1]
         angle = self.selection_ROI.getState()['angle']
         
-        rect_params = transform_rectangle(x0, y0, a, b, angle)
+        rect_params = transform_rectangle(x0, y0, a, b, angle*np.pi/180)
         full_mask = InRectangle(x, y, rect_params)
         
         self.selection_mask_temp[np.where(full_mask)] = True
@@ -203,8 +203,8 @@ class KeyPressFilter(QObject) :
                 y0 = self.ROI.getState()['pos'][1]
                 a = self.ROI.getState()['size'][0]
                 b = self.ROI.getState()['size'][1]
-                angle = ((self.ROI.getState()['angle'])*np.pi/180)%(2*np.pi)
-                rect_params = transform_rectangle(x0, y0, a, b, angle)
+                angle = self.ROI.getState()['angle']
+                rect_params = transform_rectangle(x0, y0, a, b, angle*np.pi/180)
                 self.selection_regions.append(rect_params)
                 
             if key in [Qt.Key_Backspace, Qt.Key_Escape, Qt.Key_D] and self.ROI in self.qt_plot.getView().allChildren() :
