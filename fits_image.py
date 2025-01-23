@@ -38,7 +38,7 @@ from .utils.utils_Qt.utils_general import *
 from .utils.utils_general.utils_general import find_close_coord
 from .utils.utils_plots.plt_framework import plt_framework
 from .utils.utils_Lenstool.redshift_extractors import make_source_z_dict, find_param_file
-from .utils.utils_Lenstool.param_extractors import read_bayes_file, make_param_latex_table
+from .utils.utils_Lenstool.param_extractors import read_potfile, read_bayes_file, make_param_latex_table
 #from utils_general.utils import flux_muJy_to_magAB
 from .utils.utils_astro.set_cosmology import set_cosmo
 cosmo = set_cosmo()
@@ -86,50 +86,98 @@ class fits_image :
     
     def open_image(self) :
         with fits.open(self.image_path) as hdus :
-            for hdu in hdus :
-                if isinstance(hdu.header, fits.header.Header) :
-                    header = hdu.header
-                    break
-            wcs = WCS(hdus[0].header)
-            header = hdus[0].header
+            if isinstance(hdus, fits.hdu.hdulist.HDUList) :
+                image_hdus = []
+                for hdu in hdus :
+                    if hdu.is_image and isinstance(hdu.data, np.ndarray) :
+                        image_hdus.append(hdu)
+                print(f"{len(image_hdus)} image hdus found.")
+                
+                if len(image_hdus)==0 :
+                    print('No image found in FITS file.')
+                
+                true_image_hdus = []
+                for i, image_hdu in enumerate(image_hdus):
+                    if image_hdu.data is not None and len(image_hdu.data.shape) >= 2:
+                        print(f"HDU {i} contains image data with shape {hdu.data.shape}")
+                        true_image_hdus.append(image_hdu)
+                print(f"{len(true_image_hdus)} non empty images found.")
+                
+                
+                keyword = None
+                if True in np.unique(['EXTNAME' in true_image_hdu.header for true_image_hdu in true_image_hdus]) :
+                    keyword = 'EXTNAME'
+                elif True in np.unique(['FILETYPE' in true_image_hdu.header for true_image_hdu in true_image_hdus]) :
+                    keyword = 'FILETYPE'
+                if keyword is None :
+                    print("No 'SCI' extname found.")
+                    selected_hdus = true_image_hdus
+                else :
+                    #sci_hdus = []
+                    selected_hdus = []
+                    wht_hdus = []
+                    for true_image_hdu in true_image_hdus :
+                        if keyword in true_image_hdu.header :
+                            if true_image_hdu.header[keyword]=='SCI' :
+                                #sci_hdus.append(true_image_hdu)
+                                selected_hdus.append(true_image_hdu)
+                                print('Science image found.')
+                            if true_image_hdu.header[keyword]=='WHT' :
+                                wht_hdus.append(true_image_hdu)
+                                print('Weight image found.')
+                
+                
+                
+                if len(selected_hdus)==3 :
+                    x_sizes = [selected_hdu.data.shape[0] for selected_hdu in selected_hdus]
+                    y_sizes = [selected_hdu.data.shape[1] for selected_hdu in selected_hdus]
+                    if len(np.unique(x_sizes))==1 and len(np.unique(y_sizes))==1 :
+                        print("Assuming RGB data.")
+                    data_red = selected_hdus[0].data
+                    data_green = selected_hdus[1].data
+                    data_blue = selected_hdus[2].data
+                    image = np.dstack((data_red, data_green, data_blue))
+                else :
+                    print("Using first hdu.")
+                    image = selected_hdus[0].data
+                
+                
+                wcs = WCS(selected_hdus[0].header)
+                header = selected_hdus[0].header
+                
+                if 'ORIENTAT' in header :
+                    orientation = header['ORIENTAT']
+                elif 'CD1_1' in header and 'CD1_2' in header and 'CD2_1' in header and 'CD2_2' in header :
+                    cd = np.array([[header['CD1_1'], header['CD1_2']], [header['CD2_1'], header['CD2_2']]])
+                    #det = np.linalg.det(cd)
+                    #sign = np.sign(det)
+                    orientation = np.arctan2(cd[1,0], cd[1,1])
+                elif 'PC1_1' in header and 'PC1_2' in header and 'PC2_1' in header and 'PC2_2' in header :
+                    cd = np.array([[header['PC1_1'], header['PC1_2']], [header['PC2_1'], header['PC2_2']]])
+                    #det = np.linalg.det(cd)
+                    #sign = np.sign(det)
+                    orientation = np.arctan2(cd[1,0], cd[1,1])
+                else :
+                    orientation = None
+                
+                ### Finding the pixel scale ###
+                #if 'CD1_1' in hdus[0].header.keys() :
+                #    CD1_1 = hdus[0].header['CD1_1']
+                #    CD1_2 = hdus[0].header['CD1_2']
+                #    pix_deg_scale = np.sqrt(CD1_1**2+CD1_2**2)
+                #elif 'CDELT1' in hdus[0].header.keys() :
+                #    pix_deg_scale = abs(hdus[0].header['CDELT1'])
+                #else :
+                #    pix_deg_scale = input('Pixel scale not found in header. Please provide manually in degrees:')
+                pix_deg_scale = np.sqrt(wcs.pixel_scale_matrix[0, 0]**2+wcs.pixel_scale_matrix[0, 1]**2)
+                
+                return image, pix_deg_scale, np.rad2deg(orientation), wcs, header
             
-            if 'ORIENTAT' in header :
-                orientation = header['ORIENTAT']
-            elif 'CD1_1' in header and 'CD1_2' in header and 'CD2_1' in header and 'CD2_2' in header :
-                cd = np.array([[header['CD1_1'], header['CD1_2']], [header['CD2_1'], header['CD2_2']]])
-                #det = np.linalg.det(cd)
-                #sign = np.sign(det)
-                orientation = np.arctan2(cd[1,0], cd[1,1])
-            elif 'PC1_1' in header and 'PC1_2' in header and 'PC2_1' in header and 'PC2_2' in header :
-                cd = np.array([[header['PC1_1'], header['PC1_2']], [header['PC2_1'], header['PC2_2']]])
-                #det = np.linalg.det(cd)
-                #sign = np.sign(det)
-                orientation = np.arctan2(cd[1,0], cd[1,1])
             else :
-                orientation = None
-            
-            ### Finding the pixel scale ###
-            #if 'CD1_1' in hdus[0].header.keys() :
-            #    CD1_1 = hdus[0].header['CD1_1']
-            #    CD1_2 = hdus[0].header['CD1_2']
-            #    pix_deg_scale = np.sqrt(CD1_1**2+CD1_2**2)
-            #elif 'CDELT1' in hdus[0].header.keys() :
-            #    pix_deg_scale = abs(hdus[0].header['CDELT1'])
-            #else :
-            #    pix_deg_scale = input('Pixel scale not found in header. Please provide manually in degrees:')
-            pix_deg_scale = np.sqrt(wcs.pixel_scale_matrix[0, 0]**2+wcs.pixel_scale_matrix[0, 1]**2)
-            data = []
-            for hdu in hdus :
-                if isinstance(hdu.data, np.ndarray) :
-                    data.append(hdu.data)
-            if len(data)<=2 :
-                image = data[0]
-            if len(data)>=3 :
-                data_red = data[0]
-                data_green = data[1]
-                data_blue = data[2]
-                image = np.dstack((data_red, data_green, data_blue))
-        return image, pix_deg_scale, np.rad2deg(orientation), wcs, header
+                print('Unable to extract image data from FITS file')
+                return None
+                
+        
     
     def plot_image(self) :
         #if self.qt_plot is None :
@@ -173,9 +221,9 @@ class fits_image :
         
         return self.qt_plot
     
-    def plot_image_mpl(self, wcs_projection=True, units='pixel', pos=111, make_axes_labels=True, make_grid=True, crop=None, replace_image=True) :
+    def plot_image_mpl(self, wcs_projection=True, units='pixel', pos=111, make_axes_labels=True, make_grid=True, crop=None, replace_image=True, extra_pad=None) :
         fig, ax = plot_image_mpl(self.image_data, wcs=self.wcs, wcs_projection=wcs_projection, units=units, pos=pos, \
-                                          make_axes_labels=make_axes_labels, make_grid=make_grid, crop=crop)
+                                 make_axes_labels=make_axes_labels, make_grid=make_grid, crop=crop, extra_pad=extra_pad)
         plot_NE_arrows(ax, self.wcs)
         if replace_image :
             self.fig, self.ax = fig, ax
@@ -281,7 +329,26 @@ class fits_image :
     def select_multiple_images(self) :
         return 'in progress'
     
-    def import_multiple_images(self, mult_file_path, unit_is_pixel=False) :
+    def import_multiple_images(self, mult_file_path, unit_is_pixel=False):
+        
+        def make_masks_and_colors(cat, which='all', filled_markers=False) :
+            if which=='all':
+                families = np.unique([cat[i]['id'][0] for i in range(len(cat))])
+                which = families
+            to_plot_mask = []
+            for symbol in which:
+                to_plot_mask.append([cat[i]['id'].startswith(symbol) for i in range(len(cat))])
+            if filled_markers:
+                colors = make_palette(len(which), 1, alpha=0.5)
+            else:
+                colors = make_palette(len(which), 1, alpha=0)
+            colors_dict = {}
+            for i, mask in enumerate(to_plot_mask):
+                for multiple_image in cat[mask]:
+                    colors_dict[multiple_image['id']] = colors[i]
+            return to_plot_mask, colors_dict, colors
+        
+        
         multiple_images = Table(names=['id','ra','dec','a','b','theta','z','mag'], dtype=['str',*['float',]*7])
         with open(mult_file_path, 'r') as mult_file:
             for line in mult_file:
@@ -291,54 +358,46 @@ class fits_image :
                     row = [split_line[0]]
                     for element in split_line[1:8] :
                         row.append(float(element))
-        #            if row[-2]==0. :
-        #                row[-2] = -0.01 #set a non zero redshift to keep the Lenstool wrapper happy
                     multiple_images.add_row(row)
-        #lt.set_sources(multiple_images)
+        
         multiple_images['theta'] = multiple_images['theta'] - self.orientation
         
-        self.multiple_images = self.make_catalog(multiple_images, unit_is_pixel=unit_is_pixel)
-        
-        def plot_multiple_images(self, which='all', size=80, alpha=0.7, marker='o', filled_markers=False, colors=None, mpl=False, fontsize=9, \
-                                 make_thumbnails=False, square_size=150, margin=50, distance=200, savefig=False, square_thumbnails=True, \
-                                 boost=[2,1.5,1], linewidth=1.7, text_color='white', text_alpha=0.5) :
-            if which=='all' :
-                families = np.unique( [self.cat[i]['id'][0] for i in range(len(self.cat))] )
-                which = families
-            to_plot_mask = []
-            for symbol in which :
-                to_plot_mask.append( [self.cat[i]['id'].startswith(symbol) for i in range(len(self.cat))] )
+        def plot_multiple_images(self, which='all', size=40, marker='o', filled_markers=False, colors=None, mpl=False, fontsize=9,
+                               make_thumbnails=False, square_size=150, margin=50, distance=200, savefig=False, square_thumbnails=True,
+                               boost=[2,1.5,1], linewidth=1.7, text_color='white', text_alpha=0.5):
             
-            if colors is None :
-                colors = make_palette(len(which), 1, alpha=1)
-            if filled_markers :
-                facecolors = make_palette(len(which), 1, alpha=0.3)
+            # Get colors for each family
+            to_plot_mask, colors_dict, default_colors = make_masks_and_colors(self.cat, which, filled_markers)
+            if colors is not None:
+                # Override default colors if custom colors provided
+                colors_dict = {}
+                for i, mask in enumerate(to_plot_mask):
+                    for multiple_image in self.cat[mask]:
+                        colors_dict[multiple_image['id']] = colors[i]
             else :
-                facecolor = [[0,0,0,0] for i in range(len(which))]
+                colors = default_colors
             
-            cat_contains_ellipse_params = len(np.unique(self.cat['a']))==1
-            colors_dict = {}
+            cat_contains_ellipse_params = len(np.unique(self.cat['a']))!=1
             count = 0
             for i, mask in enumerate(to_plot_mask) :
                 for multiple_image in self.cat[mask] :
                     # Remove the *1000
-                    if cat_contains_ellipse_params :
-                        a, b = 75, 75
+                    if not cat_contains_ellipse_params :
+                        a, b = size, size
                     else :
                         a, b = multiple_image['a'], multiple_image['b']
-                    ellipse = self.plot_one_object(multiple_image['x'], multiple_image['y'], a, b, \
-                                                   multiple_image['theta'], count, color=colors[i][:3])
+                    ellipse = self.plot_one_object(multiple_image['x'], multiple_image['y'], a, b,
+                                                   multiple_image['theta'], count, color=colors[i])
                     self.qtItems[count] = ellipse
                     count += 1
                     
                     if mpl :
                         font = {'size':fontsize, 'family':'DejaVu Sans'}
                         plt.rc('font', **font)
-                        self.plot_one_galaxy_mpl(multiple_image['x'], multiple_image['y'], a, b, multiple_image['theta'], color=colors[i][:3], \
+                        self.plot_one_galaxy_mpl(multiple_image['x'], multiple_image['y'], a, b, multiple_image['theta'], color=colors[i][:3],
                                                  text=multiple_image['id'], linewidth=linewidth, text_color=text_color, text_alpha=text_alpha)
                         #self.plot_one_galaxy_mpl(multiple_image['x'], multiple_image['y'], a, b, multiple_image['theta'], color=colors[i][:3], text=multiple_image['id'])
-                    colors_dict[multiple_image['id']] = colors[i][:3]
-                    
+            
             if make_thumbnails :
                 if boost is not None :
                     adjusted_image = adjust_contrast(self.image_data, boost[0], pivot=boost[1])
@@ -380,45 +439,75 @@ class fits_image :
                     
                     
                     #cropped_image = self.image_data[y_min:y_max, x_min:x_max, :]
-                    fig, ax = plot_image_mpl(adjusted_image, wcs=None, wcs_projection=False, units='pixel', \
+                    fig, ax = plot_image_mpl(adjusted_image, wcs=None, wcs_projection=False, units='pixel',
                                              pos=111, make_axes_labels=False, make_grid=False, crop=[x_min, x_max, y_min, y_max])
                     
                     for multiple_image_id in group :
                         multiple_image = self.cat[np.where(self.cat['id']==multiple_image_id)[0][0]]
                         color = colors_dict[multiple_image_id]
-                        if cat_contains_ellipse_params :
+                        if not cat_contains_ellipse_params :
                             a, b = 75, 75
                         else :
                             a, b = multiple_image['a'], multiple_image['b']
-                        self.plot_one_galaxy_mpl(multiple_image['x']-x_min, multiple_image['y']-y_min, a, b, multiple_image['theta'], \
-                                                 color=color, text=multiple_image['id'], ax=ax, linewidth=linewidth, text_color=text_color, text_alpha=text_alpha)
+                        self.plot_one_galaxy_mpl(multiple_image['x']-x_min, multiple_image['y']-y_min, a, b, multiple_image['theta'],
+                                                 color=color[:3], text=multiple_image['id'], ax=ax, linewidth=linewidth, text_color=text_color, text_alpha=text_alpha)
                     
                     ax.axis('off')
                     #plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
                     
                     fig.show()
                         
-                    plot_scale_bar(ax, pix_deg_scale=self.pix_deg_scale, unit='arcsec', \
+                    plot_scale_bar(ax, deg_per_pix=self.pix_deg_scale, unit='arcsec',
                                    length=1 , color='white', linewidth=2, text_offset=0.01)
                     if savefig :
                         fig.savefig(os.path.join(os.path.dirname(self.image_path), 'mult_' + group[0]), bbox_inches='tight', pad_inches=0)
                         
                     plt_framework(full_tick_framework=True, ticks='out', image=True, width='full', drawscaler=0.8, tickscaler=0.5, minor_ticks=False)
-                    
-        self.multiple_images.plot = types.MethodType(plot_multiple_images, self.multiple_images)
         
-        #self.multiple_images = multiple_images
+        def plot_multiple_images_column(self, text_column, which='all'):
+            if text_column not in self.cat.colnames:
+                print(f"Column '{text_column}' not found in catalog")
+                return
+            if not hasattr(self, 'text_items'):
+                self.text_items = []
+            for text_item in self.text_items:
+                self.qt_plot.removeItem(text_item)
+            self.text_items.clear()
+            
+            to_plot_mask, colors_dict, default_colors = make_masks_and_colors(self.cat, which='all')
+            colors = []
+            for default_color in default_colors :
+                colors.append(list(np.array(default_color)*255)[:3])
+            print(colors)
+            
+            for i, mask in enumerate(to_plot_mask) :
+                for multiple_image in self.cat[mask] :
+                    
+                    text = str(multiple_image[text_column])
+                    text_item = pg.TextItem(text, color=colors[i])
+                    
+                    x = multiple_image['x']
+                    y = self.image_data.shape[0] - multiple_image['y']  # Flip y to match PyQtGraph convention
+                    semi_major = multiple_image['a']
+                    semi_minor = multiple_image['b']
+                    offset = max(semi_major, semi_minor)
+                    text_item.setPos(x + offset/2, y - offset/2)
+                    
+                    font = PyQt5.QtGui.QFont()
+                    font.setPointSize(15)
+                    text_item.setFont(font)
+                    
+                    self.qt_plot.addItem(text_item)
+                    self.text_items.append(text_item)
+        
+        
+        self.multiple_images = self.make_catalog(multiple_images, unit_is_pixel=unit_is_pixel)
+        self.multiple_images.plot = types.MethodType(plot_multiple_images, self.multiple_images)
+        self.multiple_images.plot_column = types.MethodType(plot_multiple_images_column, self.multiple_images)
         return self.multiple_images.cat
     
     def load_potfile(self, potfile_path) :
-        with open(potfile_path, 'r') as file :
-            lines = file.readlines()
-        potfile_cat = Table(names=['id','ra','dec','a','b','theta','mag','lum'], dtype=['int', *['float',]*7])
-        for line in lines :
-            columns = line.split()
-            if columns[0].isdigit() :
-                potfile_cat.add_row( [col for col in columns] )
-        
+        potfile_cat = read_potfile(potfile_path)
         self.potfile = self.make_catalog(cat=potfile_cat)
         return self.potfile.cat
     
@@ -629,7 +718,7 @@ class fits_image :
             self.qtItems = np.empty(len(self.cat), dtype=PyQt5.QtWidgets.QGraphicsEllipseItem)
             self.selection_mask = np.full(len(self.cat), False)
         
-        def plot(self, scale=1., color=None) :
+        def plot(self, scale=1., color=None, text_column=None) :
             x = self.cat['x']
             y = self.cat['y']
             semi_major = self.cat['a'] * scale
@@ -638,10 +727,24 @@ class fits_image :
             for i in tqdm(range(len(semi_major))) :
                 ellipse = self.plot_one_object(x[i], y[i], semi_major[i], semi_minor[i], angle[i], i, color=color)
                 self.qtItems[i] = ellipse
+            
+            # Add text labels if requested
+            if text_column is not None:
+                self.plot_column(text_column, color=color)
         
         def clear(self) :
+            # Clear ellipses
             for i in tqdm( range(len(self.qtItems)) ) :
                 self.qt_plot.removeItem(self.qtItems[i])
+            
+            # Clear text items if they exist
+            if hasattr(self, 'text_items'):
+                self.clear_column()
+        
+        def clear_column(self) :
+            for text_item in self.text_items:
+                self.qt_plot.removeItem(text_item)
+            self.text_items.clear()
         
         def clear_selection(self) :
             self.selection_mask[np.full(len(self.cat), True)] = False
@@ -660,9 +763,7 @@ class fits_image :
             #####################################################################
             ellipse = SelectableEllipse(x-semi_major/2, y-semi_minor/2, semi_major, semi_minor, idx, self.selection_mask, \
                                         self.qtItems, color, scatter_pos=(self.x_axis_cleaned[idx], self.y_axis_cleaned[idx]), RS_widget=self.RS_widget)
-            #ellipse = PyQt5.QtWidgets.QGraphicsEllipseItem(x-semi_major/2, y-semi_minor/2, semi_major, semi_minor)
             ellipse.setTransformOriginPoint( PyQt5.QtCore.QPointF(x, y) )
-            #ellipse.setTransform( PyQt5.QtGui.QTransform().rotate(angle[i]) )
             ellipse.setRotation(angle)
             self.qt_plot.addItem(ellipse)
             return ellipse
@@ -780,11 +881,78 @@ class fits_image :
                     ax.text( x_text, y_text, text, c=text_color, alpha=1, fontsize=15, \
                              ha=horizontalalignment, va=verticalalignment, \
                              bbox=dict(facecolor=edgecolor[:3], alpha=text_alpha, edgecolor='none') )
-
         
-    
-    
-    
+        def export_to_mult_file(self, file_path=None) :
+            if file_path is None :
+                file_path = os.path.join(os.path.dirname(self.image_path), 'mult.lenstool')
+            
+            sub_cat = self.cat[self.selection_mask]
+            
+            header = "#REFERENCE 0\n## id   RA      Dec        a         b         theta     z         mag\n"
+            with open(file_path, 'w') as f :
+                f.write(header)
+                for index, row in enumerate(sub_cat) :
+                    if 'THETA_WORLD' in sub_cat.colnames :
+                        line = (f"{row['id']:<3}  {row['ra']:10.6f}  {row['dec']:10.6f}  "
+                                f"{row['a']:8.6f}  {row['b']:8.6f}  {row['THETA_WORLD']:8.6f}  "
+                                f"{row['zb']:8.6f}  {row['f814w_mag']:8.6f}\n")
+                    else :
+                        line = (f"{row['id']:<3}  {row['ra']:10.6f}  {row['dec']:10.6f}  "
+                                "0.0  0.0  0.0  0.0  0.0\n")
+                    f.write(line)
+        
+        def plot_column(self, text_column, color=None):
+            """
+            Add text labels from a specified column to existing plotted ellipses.
+            
+            Parameters:
+            -----------
+            text_column : str
+                Name of the column in the catalog to use for labels
+            color : list or None
+                RGB color for the text. If None, uses the same color as the ellipses
+            """
+            if text_column not in self.cat.colnames:
+                print(f"Column '{text_column}' not found in catalog")
+                return
+        
+            if color is None:
+                color = list(np.array(self.color[:3])*255)
+            else:
+                color = list(np.array(color[:3])*255)
+        
+            # Store text items to prevent garbage collection
+            if not hasattr(self, 'text_items'):
+                self.text_items = []
+        
+            # Clear existing text items if any
+            for text_item in self.text_items:
+                self.qt_plot.removeItem(text_item)
+            self.text_items.clear()
+        
+            # Add new text labels
+            for i in range(len(self.cat)):
+                text = str(self.cat[text_column][i])
+                text_item = pg.TextItem(text, color=color)
+        
+                # Get ellipse position and size for offset calculation
+                x = self.cat['x'][i]
+                y = self.image_data.shape[0] - self.cat['y'][i]  # Flip y to match PyQtGraph convention
+                semi_major = self.cat['a'][i]
+                semi_minor = self.cat['b'][i]
+        
+                # Position text slightly offset from the ellipse
+                offset = max(semi_major, semi_minor)
+                text_item.setPos(x + offset/2, y - offset/2)
+        
+                # Set font
+                font = PyQt5.QtGui.QFont()
+                font.setPointSize(15)
+                text_item.setFont(font)
+
+                self.qt_plot.addItem(text_item)
+                self.text_items.append(text_item)
+
     
     
     
@@ -847,6 +1015,17 @@ class fits_image :
         def print_lt_latex_table() :
             print(self.lt_latex_table_str)
         self.lt_latex_table = print_lt_latex_table
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     
     
     
@@ -1020,6 +1199,7 @@ class fits_image :
             axs[i].axis('off')
             
         return fig, axs
+        
         
         
         

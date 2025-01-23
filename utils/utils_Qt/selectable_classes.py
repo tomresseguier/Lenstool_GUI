@@ -18,16 +18,23 @@ from .utils_general import *
 
 
 class SelectableEllipse(QGraphicsEllipseItem) :
-    def __init__(self, x, y, width, height, idx, selection_mask, qtItems, initial_color, selection_color=[255, 255, 255], scatter_pos=None, RS_widget=None):
+    def __init__(self, x, y, width, height, idx, selection_mask, qtItems, initial_color, selection_color=[255, 255, 255], 
+                 scatter_pos=None, RS_widget=None, alpha=127):
         super(SelectableEllipse, self).__init__(x, y, width, height)
         self.idx = idx
         self.selection_mask = selection_mask
         self.qtItems = qtItems
-        self.selection_color = selection_color
         self.setFlag(QGraphicsEllipseItem.ItemIsSelectable, True)
+        
+        self.alpha = alpha
+        if len(initial_color)==4 :
+            self.alpha = initial_color[-1]
+            initial_color = initial_color[0:3]
+        
+        self.selection_color = selection_color
         self.initial_color = initial_color
         self.setPen( pg.mkPen(initial_color + [255]) )
-        self.setBrush( pg.mkBrush(initial_color + [127]) )
+        self.setBrush( pg.mkBrush(initial_color + [self.alpha]) )
         
         self.scatter_pos = scatter_pos
         self.RS_widget = RS_widget
@@ -41,10 +48,10 @@ class SelectableEllipse(QGraphicsEllipseItem) :
             self.selection_mask[self.idx] = not self.selection_mask[self.idx]
             if self.selection_mask[self.idx] :
                 self.qtItems[self.idx].setPen( pg.mkPen(self.selection_color + [255]) )
-                self.qtItems[self.idx].setBrush( pg.mkBrush(self.selection_color + [127]) )
+                self.qtItems[self.idx].setBrush( pg.mkBrush(self.selection_color + [self.alpha]) )
             else :
                 self.qtItems[self.idx].setPen( pg.mkPen(self.initial_color + [255]) )
-                self.qtItems[self.idx].setBrush( pg.mkBrush(self.initial_color + [127]) )
+                self.qtItems[self.idx].setBrush( pg.mkBrush(self.initial_color + [self.alpha]) )
             
             
             if self.RS_widget is not None :

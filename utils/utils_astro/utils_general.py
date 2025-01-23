@@ -4,7 +4,6 @@ from astropy.wcs import WCS
 import astropy.units as u
 from astropy.coordinates import SkyCoord
 from astropy.table import Table
-from astropy.cosmology import WMAP9, FlatLambdaCDM
 from astropy import constants as astro_constants
 #import pysynphot
 import matplotlib.pyplot as plt
@@ -13,16 +12,16 @@ from tqdm import tqdm
 import sys
 import os
 #module_dir = os.path.dirname(os.path.abspath(__file__))
-#main_dir = os.path.dirname(module_dir)
-#sys.path.append(main_dir)
+#utils_dir = os.path.dirname(os.path.dirname(module_dir))
+#sys.path.append(utils_dir)
 #sys.path.append(module_dir)
 
-#os.chdir(main_dir)
+from .set_cosmology import set_cosmo
+cosmo = set_cosmo()
 
 
-DATA_dir = "../DATA/"
-spt0615_image_path = DATA_dir + 'v7/color/spt0615_color_rgb.fits'
 
+spt0615_image_path = "temp"
 
 
 def mosaic_pixel_to_relative(x, y, reference=(93.9656102, -57.7801998)) :
@@ -141,13 +140,13 @@ def rearrange_points(x, y) :
 
 def arcsec_to_kpc(arcsec, redshift) :
     separation_rad = arcsec * u.arcsec.to(u.rad)
-    distance = WMAP9.comoving_distance(redshift)
+    distance = cosmo.comoving_distance(redshift)
     separation_kpc = separation_rad * distance.to(u.kpc) 
     return separation_kpc
 
 
 def kpc_to_arcsec(separation_kpc, redshift) :
-    distance = WMAP9.comoving_distance(redshift)
+    distance = cosmo.comoving_distance(redshift)
     separation_rad = separation_kpc * u.kpc / distance.to(u.kpc)
     arcsec = separation_rad * u.rad.to(u.arcsec)
     return arcsec
@@ -187,7 +186,6 @@ def flux_muJy_to_magAB(flux_muJy) :
 
 # This function does not give the correct luminosity
 def flux_to_luminosity(flux, z=0.972) :
-    cosmo = FlatLambdaCDM(H0=70, Om0=0.3)
     distance = cosmo.luminosity_distance(z)
     distance = cosmo.comoving_distance(z)
     
@@ -196,7 +194,6 @@ def flux_to_luminosity(flux, z=0.972) :
 
 
 def apparent_to_absolute(apparent_mag, z=0.972) :
-    cosmo = FlatLambdaCDM(H0=70, Om0=0.3)
     distance = cosmo.luminosity_distance(z)
     absolute_magnitude = apparent_mag - 5*np.log10( (distance.to(u.parsec) / (10*u.parsec)).value )
     return absolute_magnitude
@@ -211,15 +208,13 @@ def abs_mag_to_luminosity(abs_mag) :
 
 def angle_to_sky_distance(angle_arcsec, z=0.972):
     angle_rad = angle_arcsec * (1/3600) * (np.pi/180)
-    cosmology = FlatLambdaCDM(H0=70, Om0=0.3)
-    comoving_dist = cosmology.comoving_distance(z)
+    comoving_dist = cosmo.comoving_distance(z)
     distance_kpc = comoving_dist * angle_rad
     return distance_kpc.to('kpc')
 
 
 def angular_diameter_distance(z) :
-    cosmology = FlatLambdaCDM(H0=70, Om0=0.3)
-    return cosmology.angular_diameter_distance(z)
+    return cosmo.angular_diameter_distance(z)
 
 
 def v_disp(galaxy, z=0.972) :
@@ -233,47 +228,6 @@ def v_disp(galaxy, z=0.972) :
     v_disp = np.sqrt( (astro_constants.G * mass * astro_constants.M_sun) / radius_kpc.to('meter') ).to('km s^-1')
     return v_disp
     
-
-def remove_png_margins(im) :
-    x_shape = im.shape[0]
-    y_shape = im.shape[1]
-    
-    threshold = 3000.
-    
-    i=0
-    check = False
-    while not check :
-        i+=1
-        check = not np.sum(im[0:i,:,:])>i*y_shape*4.-threshold
-        if check :
-            print(np.sum(im[0:i,:,:]), i*y_shape*4.)
-    left_x_margin = i-1
-    
-    i=0
-    check = False
-    while not check :
-        i+=1
-        check = not np.sum(im[-i-1:-1,:,:])>i*y_shape*4.-threshold
-    right_x_margin = -i-1
-    
-    i=0
-    check = False
-    while not check :
-        i+=1
-        check = not np.sum(im[:,0:i,:])>i*x_shape*4.-threshold
-    bottom_y_margin = i-1
-    
-    i=0
-    check = False
-    while not check :
-        i+=1
-        check = not np.sum(im[:,-i-1:-1,:])>i*x_shape*4.-threshold
-    top_y_margin = -i-1
-    
-    im_cropped = im[left_x_margin:right_x_margin, bottom_y_margin:top_y_margin, :]
-    
-    return im_cropped
-
 
 def pot_mass(a, s, sigma) :
     a = (a * u.kpc).to('m').value
@@ -308,7 +262,6 @@ def density_frac(mass, radius) :
     mass : in M_sun
     radius : in kpc
     """
-    #cosmo = FlatLambdaCDM(H0=70, Om0=0.3)
     #rho_c = 8 * np.pi * astro_constants.G.value / (3 * ( H )**2)
     h=0.7
     rho_c = 2.7754E11 * h**2  * 1E-9

@@ -1,16 +1,17 @@
 import numpy as np
+import sys
 from matplotlib import pyplot as plt
 from matplotlib.colors import hsv_to_rgb
 from matplotlib.patches import FancyArrow
-from astropy.cosmology import Planck18 as cosmo
 from astropy.wcs import WCS
 import corner
 
-#import sys
-#import os
-#module_dir = os.path.dirname(os.path.abspath(__file__))
-#sys.path.append(module_dir)
-
+import sys
+import os
+utils_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if utils_dir not in sys.path : sys.path.append(utils_dir)
+from utils_astro.set_cosmology import set_cosmo
+cosmo = set_cosmo()
 
 
 def make_palette(hue_range, sat_range, alpha=1) :
@@ -41,8 +42,8 @@ def make_palette_dict(alpha=1) :
     return colors
 
 
-def plot_image_mpl(image_data, wcs=None, pix_deg_scale=None, wcs_projection=True, units='pixel', pos=111, \
-                            make_axes_labels=True, make_grid=True, crop=None) :
+def plot_image_mpl(image_data, wcs=None, deg_per_pix=None, wcs_projection=True, units='pixel', pos=111, \
+                            make_axes_labels=True, make_grid=True, crop=None, extra_pad=None) :
     #if self.ax is None :
     #    self.fig = plt.figure()
     fig = plt.figure()
@@ -55,9 +56,9 @@ def plot_image_mpl(image_data, wcs=None, pix_deg_scale=None, wcs_projection=True
         if units=='pixel' or units=='pixels' or units=='image' :
             scaling = 1
         if units=='arcsec' :
-            scaling = pix_deg_scale*60*60
+            scaling = deg_per_pix*60*60
         if units=='arcmin' :
-            scaling = pix_deg_scale*60
+            scaling = deg_per_pix*60
     if make_axes_labels and wcs_projection :
         ax.coords[0].set_axislabel('Right ascension')
         ax.coords[1].set_axislabel('Declination')
@@ -72,6 +73,10 @@ def plot_image_mpl(image_data, wcs=None, pix_deg_scale=None, wcs_projection=True
         ax.set_ylabel(' ')
     if crop is not None :
         to_plot = image_data[crop[2]:crop[3], crop[0]:crop[1], :]
+    elif extra_pad is not None :
+        new_shape = (image_data.shape[0]+2*extra_pad, image_data.shape[1]+2*extra_pad, image_data.shape[2])
+        to_plot = np.full(new_shape, 0)
+        to_plot[extra_pad:-extra_pad, extra_pad:-extra_pad, :] = image_data
     #if crop :
     #    to_plot = self.image_data[int(self.image_data.shape[1]/4):int(self.image_data.shape[1]*3/4), \
     #                              int(self.image_data.shape[0]/4):int(self.image_data.shape[0]*3/4), :]
@@ -85,7 +90,7 @@ def plot_image_mpl(image_data, wcs=None, pix_deg_scale=None, wcs_projection=True
     return fig, ax
 
 
-def plot_scale_bar(ax, pix_deg_scale=None, redshift=None, unit='arcmin', length=1 , color='white', linewidth=2, text_offset=0.01) :
+def plot_scale_bar(ax, deg_per_pix=None, redshift=None, unit='arcmin', length=1 , color='white', linewidth=2, text_offset=0.01) :
     """
     Plots a white bar scale indicating the length of an arcminute on a given image.
     
@@ -98,7 +103,7 @@ def plot_scale_bar(ax, pix_deg_scale=None, redshift=None, unit='arcmin', length=
     - linewidth: Width of the scale bar line. Default is 2.
     - text_offset: Offset for the text label above the bar. Default is 0.05.
     """
-    
+    print(cosmo)
     if unit=='arcsec' :
         length_deg = length / 3600.
         unit = '\"'
@@ -113,7 +118,7 @@ def plot_scale_bar(ax, pix_deg_scale=None, redshift=None, unit='arcmin', length=
         length_arcmin = length_deg * 60.
         length_arcsec = length_deg * 3600.
     
-    bar_length_pix = length_deg / pix_deg_scale
+    bar_length_pix = length_deg / deg_per_pix
     
     x_lim = ax.get_xlim()
     y_lim = ax.get_ylim()

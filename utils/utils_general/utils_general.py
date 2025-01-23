@@ -53,5 +53,43 @@ def find_close_coord(cat, d):
     return result
 
 
-
+def remove_png_margins(im) :
+    x_shape = im.shape[0]
+    y_shape = im.shape[1]
+    
+    threshold = 3000.
+    
+    i=0
+    check = False
+    while not check :
+        i+=1
+        check = not np.sum(im[0:i,:,:])>i*y_shape*4.-threshold
+        if check :
+            print(np.sum(im[0:i,:,:]), i*y_shape*4.)
+    left_x_margin = i-1
+    
+    i=0
+    check = False
+    while not check :
+        i+=1
+        check = not np.sum(im[-i-1:-1,:,:])>i*y_shape*4.-threshold
+    right_x_margin = -i-1
+    
+    i=0
+    check = False
+    while not check :
+        i+=1
+        check = not np.sum(im[:,0:i,:])>i*x_shape*4.-threshold
+    bottom_y_margin = i-1
+    
+    i=0
+    check = False
+    while not check :
+        i+=1
+        check = not np.sum(im[:,-i-1:-1,:])>i*x_shape*4.-threshold
+    top_y_margin = -i-1
+    
+    im_cropped = im[left_x_margin:right_x_margin, bottom_y_margin:top_y_margin, :]
+    
+    return im_cropped
 
