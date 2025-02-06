@@ -93,3 +93,59 @@ def remove_png_margins(im) :
     
     return im_cropped
 
+
+def make_colnames_dict(catalog, use_default_names=True):
+    """
+    Extracts column names for positions and shape parameters from an Astropy table.
+    Parameters:
+    - catalog: Astropy Table
+        Input catalog containing astronomical data.
+    Returns:
+    - column_names: list
+        List of column names for positions and shape parameters present in the catalog.
+    """
+    
+    to_test_names_dict = {}
+    to_test_names_dict['ra'] = ['ra', 'ALPHA_J2000', 'X_WORLD']
+    to_test_names_dict['dec'] = ['dec', 'DELTA_J2000', 'Y_WORLD']
+    #to_test_names_dict['x'] = ['X_IMAGE', 'x']
+    #to_test_names_dict['y'] = ['Y_IMAGE', 'y']
+    to_test_names_dict['a'] = ['a', 'A_IMAGE']
+    to_test_names_dict['b'] = ['b', 'B_IMAGE']
+    to_test_names_dict['theta'] = ['angle', 'theta', 'THETA_IMAGE']
+    
+    names_list = list(to_test_names_dict.keys())
+    #names_list = ['ra', 'dec', 'x', 'y', 'a', 'b']
+    names_dict = {}
+    names_dict_default = {}
+    for name in names_list :
+        names_dict[name] = []
+        names_dict_default[name] = None
+    for name in names_list :
+        for to_test_name in to_test_names_dict[name] :
+            cat_colnames_lower = [col.lower() for col in catalog.colnames]
+            
+            #if 'colnames' in dir(catalog) :
+            #    cat_colnames_lower = [col.lower() for col in catalog.colnames]
+            #else :
+            #    cat_colnames_lower = [col.lower() for col in catalog.columns.names]
+            
+            if to_test_name.lower() in cat_colnames_lower :
+                col_idx = np.where( np.array(cat_colnames_lower) == to_test_name.lower() )[0][0]
+                names_dict[name].append(catalog.colnames[col_idx])
+                names_dict_default[name] = catalog.colnames[col_idx]
+    
+    print('Columns found in catalog: \n' + str(names_dict))
+    yesno = 'y' if use_default_names else input('Columns to be used: \n' + str(names_dict_default) + \
+                                                '\nKeep these names? (if no, user prompted to select other columns) [y][n]')
+    if yesno == 'n' :
+        for name in names_list :
+            if len(names_dict[name]) > 1 :
+                selected_name = input("Several columns found for name " + name + ": " + str(names_dict[name]) + ". Which one should be kept (if unit, should be image pixels)?")
+                names_dict[name] = selected_name
+            else :
+                names_dict[name] = names_dict[name][0]
+    else :
+        names_dict = names_dict_default
+    return names_dict
+

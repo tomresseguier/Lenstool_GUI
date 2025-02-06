@@ -1,4 +1,5 @@
 import os
+import glob
 import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib.patches import Ellipse, Polygon, Circle, Rectangle
@@ -29,13 +30,15 @@ import sys
 #module_dir = os.path.dirname(os.path.abspath(__file__))
 #sys.path.append(module_dir)
 
+from .catalog import catalog
+from .lenstool_model import lenstool_model
 from .source_extraction.source_extract import source_extract, source_extract_DIM
 from .source_extraction.match_cat import run_match
 #sys.path.append(module_dir + "/utils")
 from .utils.utils_plots.plot_utils_general import *
 from .utils.utils_Qt.selectable_classes import *
 from .utils.utils_Qt.utils_general import *
-from .utils.utils_general.utils_general import find_close_coord
+from .utils.utils_general.utils_general import find_close_coord, make_colnames_dict
 from .utils.utils_plots.plt_framework import plt_framework
 from .utils.utils_Lenstool.redshift_extractors import make_source_z_dict, find_param_file
 from .utils.utils_Lenstool.param_extractors import read_potfile, read_bayes_file, make_param_latex_table
@@ -177,8 +180,6 @@ class fits_image :
                 print('Unable to extract image data from FITS file')
                 return None
                 
-        
-    
     def plot_image(self) :
         #if self.qt_plot is None :
         #to_plot = self.image_data
@@ -506,455 +507,28 @@ class fits_image :
         self.multiple_images.plot_column = types.MethodType(plot_multiple_images_column, self.multiple_images)
         return self.multiple_images.cat
     
-    def load_potfile(self, potfile_path) :
-        potfile_cat = read_potfile(potfile_path)
-        self.potfile = self.make_catalog(cat=potfile_cat)
-        return self.potfile.cat
+    #def load_potfile(self, potfile_path) :
+    #    potfile_cat = read_potfile(potfile_path)
+    #    self.potfile = self.make_catalog(cat=potfile_cat)
+    #    return self.potfile.cat
     
-    def open_cat(self, cat_path) :
-        if '.fits' in cat_path :
-            cat = Table.read(cat_path, format='fits')
-        else :
-            with open(cat_path, 'r') as raw_cat :
-                first_line = raw_cat.readlines()[0]
-            if len(first_line.split()) > len(first_line.split(',')) :
-                cat_df = pd.read_csv(cat_path, delim_whitespace=True)[1:].apply(pd.to_numeric, errors='coerce')
-            else :
-                cat_df = pd.read_csv(cat_path)[1:].apply(pd.to_numeric, errors='coerce')
-            cat = Table.from_pandas(cat_df)
-        return cat
     
-    def import_catalog(self, cat, color=[1., 1., 0], mag_colnames=['magAB_F814W', 'magAB_F435W']) :
-        ref_path = None
-        if isinstance(cat, str) :
-            ref_path = cat
-            cat = self.open_cat(cat)
-        elif isinstance(cat, list) :
-            ref_path = os.path.dirname(cat[0])
-            run_match(cat[0], cat[1])
-            for i in range(len(cat)-3) :
-                run_match('matched_A_B.fits', cat[i+2])
-            matched_cat = run_match('matched_A_B.fits', cat[-1])
-            cat = Table(matched_cat[1].data)
-            os.remove('matched_A_B.fits')
-            
-        self.imported_cat = self.make_catalog(cat=cat, make_selection_panel=True, color=color, mag_colnames=mag_colnames, ref_path=ref_path)
-        return self.imported_cat.cat
     
-    ################## Transform catalog into catalog class ###################
-    
-    def make_colnames_dict(self, catalog, use_default_names=True):
-        """
-        Extracts column names for positions and shape parameters from an Astropy table.
-        Parameters:
-        - catalog: Astropy Table
-            Input catalog containing astronomical data.
-        Returns:
-        - column_names: list
-            List of column names for positions and shape parameters present in the catalog.
-        """
-        
-        to_test_names_dict = {}
-        to_test_names_dict['ra'] = ['ra', 'ALPHA_J2000', 'X_WORLD']
-        to_test_names_dict['dec'] = ['dec', 'DELTA_J2000', 'Y_WORLD']
-        #to_test_names_dict['x'] = ['X_IMAGE', 'x']
-        #to_test_names_dict['y'] = ['Y_IMAGE', 'y']
-        to_test_names_dict['a'] = ['a', 'A_IMAGE']
-        to_test_names_dict['b'] = ['b', 'B_IMAGE']
-        to_test_names_dict['theta'] = ['angle', 'theta', 'THETA_IMAGE']
-        
-        names_list = list(to_test_names_dict.keys())
-        #names_list = ['ra', 'dec', 'x', 'y', 'a', 'b']
-        names_dict = {}
-        names_dict_default = {}
-        for name in names_list :
-            names_dict[name] = []
-            names_dict_default[name] = None
-        for name in names_list :
-            for to_test_name in to_test_names_dict[name] :
-                cat_colnames_lower = [col.lower() for col in catalog.colnames]
-                
-                #if 'colnames' in dir(catalog) :
-                #    cat_colnames_lower = [col.lower() for col in catalog.colnames]
-                #else :
-                #    cat_colnames_lower = [col.lower() for col in catalog.columns.names]
-                
-                if to_test_name.lower() in cat_colnames_lower :
-                    col_idx = np.where( np.array(cat_colnames_lower) == to_test_name.lower() )[0][0]
-                    names_dict[name].append(catalog.colnames[col_idx])
-                    names_dict_default[name] = catalog.colnames[col_idx]
-        
-        print('Columns found in catalog: \n' + str(names_dict))
-        yesno = 'y' if use_default_names else input('Columns to be used: \n' + str(names_dict_default) + \
-                                                    '\nKeep these names? (if no, user prompted to select other columns) [y][n]')
-        if yesno == 'n' :
-            for name in names_list :
-                if len(names_dict[name]) > 1 :
-                    selected_name = input("Several columns found for name " + name + ": " + str(names_dict[name]) + ". Which one should be kept (if unit, should be image pixels)?")
-                    names_dict[name] = selected_name
-                else :
-                    names_dict[name] = names_dict[name][0]
-        else :
-            names_dict = names_dict_default
-        return names_dict
-    
-    def make_uniform_names_cat(self, cat, use_default_names=True, unit_is_pixel=False) :
-        uniform_names_cat = cat.copy()
-        colnames_dict = self.make_colnames_dict(cat, use_default_names=use_default_names)
-        
-        print('Column names to be used:')
-        print(colnames_dict)
-        
-        for colname in colnames_dict.keys() :
-            if colnames_dict[colname] is not None :
-                
-                if colname in uniform_names_cat.columns :
-                    uniform_names_cat[colname] = uniform_names_cat[colnames_dict[colname]]
-                else :
-                    #uniform_names_cat.rename_column(colnames_dict[colname], colname)
-                    uniform_names_cat.add_column( uniform_names_cat[colnames_dict[colname]], name=colname )
-                    
-                
-        if colnames_dict['a'] != 'A_IMAGE' and colnames_dict['b'] != 'B_IMAGE' :
-            yesno = 'y' if unit_is_pixel else input("ellipticity parameters " + str(colnames_dict['a']) \
-                                                        + " and " + str(colnames_dict['b']) + " in pixels? [y][arcsec][deg]")
-            if yesno == 'deg' :
-                uniform_names_cat.replace_column( 'a', uniform_names_cat['a']/(self.pix_deg_scale) )
-                uniform_names_cat.replace_column( 'b', uniform_names_cat['b']/(self.pix_deg_scale) )
-            if yesno == 'arcsec' :
-                uniform_names_cat.replace_column( 'a', uniform_names_cat['a']/(self.pix_deg_scale*3600) )
-                uniform_names_cat.replace_column( 'b', uniform_names_cat['b']/(self.pix_deg_scale*3600) )
-        
-        #if colnames_dict['x']==None :
-        x, y = self.world_to_image(uniform_names_cat['ra'], uniform_names_cat['dec'], unit='deg')
-        uniform_names_cat['x'] = x
-        uniform_names_cat['y'] = y
-        
-        yesno = 'y'
-        if colnames_dict['a'] is not None and not use_default_names :
-            yesno = input("'a', 'b' and 'theta' columns found in catalog. Use them as ellipticity parameters (if not, sources will be shown as circles)? [y] or [n]")
-        if colnames_dict['a'] is None or yesno != 'y' :
-            size = 40.
-            uniform_names_cat['a'] = np.full(len(uniform_names_cat), size)
-            uniform_names_cat['b'] = np.full(len(uniform_names_cat), size)
-            uniform_names_cat['theta'] = np.full(len(uniform_names_cat), 0.)
-        return uniform_names_cat
-    
-    def make_catalog(self, cat=None, cat_path=None, make_selection_panel=False, color=[1., 1., 0.], \
-                     mag_colnames=['magAB_F814W', 'magAB_F435W'], ref_path=None, unit_is_pixel=False) :
-        if cat_path is not None :
-            cat = self.open_cat(cat_path)
-        uniform_names_cat = self.make_uniform_names_cat(cat, unit_is_pixel=unit_is_pixel)
+    def make_catalog(self, cat, color=[1., 1., 0], mag_colnames=['magAB_F814W', 'magAB_F435W'], unit_is_pixel=False) :
         if self.qt_plot is None :
             self.plot_image()
-        return self.catalog(uniform_names_cat, self.image_data, self.qt_plot, window=self.window, make_selection_panel=make_selection_panel, \
-                            image_path=self.image_path, image_widget = self.image_widget, image_widget_layout=self.image_widget_layout, \
-                            color=color, mag_colnames=mag_colnames, ref_path=ref_path, mpl_fig=self.fig, mpl_ax=self.ax, pix_deg_scale=self.pix_deg_scale)
+        #to_return = catalog(cat, self.image_data, self.wcs, self.qt_plot, window=self.window, image_path=self.image_path, 
+        #                            image_widget = self.image_widget, image_widget_layout=self.image_widget_layout, color=color, 
+        #                            mag_colnames=mag_colnames, mpl_fig=self.fig, mpl_ax=self.ax, 
+        #                            pix_deg_scale=self.pix_deg_scale, unit_is_pixel=unit_is_pixel)
+        to_return = catalog(cat, self, color=color, mag_colnames=mag_colnames, unit_is_pixel=unit_is_pixel)
+        return to_return
+    
+    def import_catalog(self, cat, color=[1., 1., 0], mag_colnames=['magAB_F814W', 'magAB_F435W'], unit_is_pixel=True) :
+        self.imported_cat = self.make_catalog(cat, color=color, mag_colnames=mag_colnames, unit_is_pixel=unit_is_pixel)
+        #print(self.imported_cat)
         
     ###########################################################################
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    class catalog :
-        def __init__(self, cat, image_data, qt_plot, window=None, make_selection_panel=False, image_path=None, image_widget=None, image_widget_layout=None, \
-                     color=[1., 1., 0.], mag_colnames=['magAB_F814W', 'magAB_F435W'], ref_path=None, mpl_fig=None, mpl_ax=None, pix_deg_scale=None) :
-            self.cat = cat
-            self.image_data = image_data
-            self.qt_plot = qt_plot
-            self.window = window
-            self.qtItems = np.empty(len(cat), dtype=PyQt5.QtWidgets.QGraphicsEllipseItem)
-            #self.qtItems = np.empty(len(cat), dtype=utils.utils_classes.selectable_ellipse.SelectableEllipse)
-            self.color = color
-            self.selection_mask = np.full(len(cat), False)
-            self.selection_regions = []
-            self.make_selection_panel = make_selection_panel
-            self.image_path = image_path
-            self.image_widget = image_widget
-            self.image_widget_layout = image_widget_layout
-            self.RS_widget = None
-            self.x_axis_cleaned = np.full(len(cat), None)
-            self.y_axis_cleaned = np.full(len(cat), None)
-            self.mag_colnames = mag_colnames
-            self.ref_path = ref_path
-            self.mpl_ax = mpl_ax
-            self.mpl_fig = mpl_fig
-            self.pix_deg_scale = pix_deg_scale
-        
-        def make_mask_naninf(self, xy_axes=None) :
-            #mag_F444W = flux_muJy_to_magAB(self.cat['f444w_tot_0'])
-            #mag_F090W = flux_muJy_to_magAB(self.cat['f090w_tot_0'])
-            #x_axis = mag_F444W
-            #y_axis = mag_F090W - mag_F444W
-            
-            if xy_axes is None :
-                mag_F814W = self.cat[self.mag_colnames[0]]
-                mag_F435W = self.cat[self.mag_colnames[1]]
-                x_axis = mag_F814W
-                y_axis = mag_F435W - mag_F814W
-            else :
-                x_axis = self.cat[xy_axes[0]]
-                y_axis = self.cat[xy_axes[1]]
-            
-            nan_mask = np.logical_not(np.isnan(x_axis)) & np.logical_not(np.isnan(y_axis))
-            inf_mask = (x_axis!=np.inf) & (y_axis!=np.inf)
-            #extremes_mask = (x_axis>0) & (x_axis<50)
-            self.mask_naninf = nan_mask & inf_mask
-            self.x_axis_cleaned = x_axis[self.mask_naninf]
-            self.y_axis_cleaned = y_axis[self.mask_naninf]
-            
-            self.clear()
-            self.cat = self.cat[self.mask_naninf]
-            self.qtItems = np.empty(len(self.cat), dtype=PyQt5.QtWidgets.QGraphicsEllipseItem)
-            self.selection_mask = np.full(len(self.cat), False)
-        
-        def plot(self, scale=1., color=None, text_column=None) :
-            x = self.cat['x']
-            y = self.cat['y']
-            semi_major = self.cat['a'] * scale
-            semi_minor = self.cat['b'] * scale
-            angle = self.cat['theta']
-            for i in tqdm(range(len(semi_major))) :
-                ellipse = self.plot_one_object(x[i], y[i], semi_major[i], semi_minor[i], angle[i], i, color=color)
-                self.qtItems[i] = ellipse
-            
-            # Add text labels if requested
-            if text_column is not None:
-                self.plot_column(text_column, color=color)
-        
-        def clear(self) :
-            # Clear ellipses
-            for i in tqdm( range(len(self.qtItems)) ) :
-                self.qt_plot.removeItem(self.qtItems[i])
-            
-            # Clear text items if they exist
-            if hasattr(self, 'text_items'):
-                self.clear_column()
-        
-        def clear_column(self) :
-            for text_item in self.text_items:
-                self.qt_plot.removeItem(text_item)
-            self.text_items.clear()
-        
-        def clear_selection(self) :
-            self.selection_mask[np.full(len(self.cat), True)] = False
-            self.selection_regions.clear()
-            self.clear()
-            self.plot()
-        
-        def plot_one_object(self, x, y, semi_major, semi_minor, angle, idx, color=None) :
-            if color is None :
-                color = list(np.array(self.color)*255)
-            else :
-                color = list(np.array(color)*255)
-            #make the flip to accomosate pyqtgraph's strange plotting conventions
-            y = self.image_data.shape[0] - y
-            angle = -angle
-            #####################################################################
-            ellipse = SelectableEllipse(x-semi_major/2, y-semi_minor/2, semi_major, semi_minor, idx, self.selection_mask, \
-                                        self.qtItems, color, scatter_pos=(self.x_axis_cleaned[idx], self.y_axis_cleaned[idx]), RS_widget=self.RS_widget)
-            ellipse.setTransformOriginPoint( PyQt5.QtCore.QPointF(x, y) )
-            ellipse.setRotation(angle)
-            self.qt_plot.addItem(ellipse)
-            return ellipse
-        
-        def plot_selection_panel(self, xy_axes=None) :
-            if self.make_selection_panel :
-                self.make_mask_naninf(xy_axes=xy_axes)
-                
-                self.RS_widget, self.selection_ROI = plot_panel(self.x_axis_cleaned, self.y_axis_cleaned, self.image_widget_layout, self.qt_plot)
-                
-                data=(self.x_axis_cleaned, self.y_axis_cleaned)
-                #self.selection_mask = np.full(len(self.mag_F444W_cleaned), False)
-                self.selectable_scatter = SelectableScatter(self.RS_widget, self.selection_ROI, data, self.selection_mask, \
-                                                            qtItems=self.qtItems, color=list(np.array(self.color)*255))
-                
-        def make_image_ROI(self) :
-            center_y = self.image_data.shape[0]/2
-            center_x = self.image_data.shape[1]/2
-            self.image_ROI = ellipse_maker_ROI([center_x-200, center_y-100], [400, 200], self.qt_plot, self.window, self.cat)
-            make_handles(self.image_ROI)
-            self.qt_plot.addItem(self.image_ROI)
-            
-        def make_cleaner_ROI(self) :
-            self.image_widget.cat = self
-            self.select_sources = SelectSources(self.cat, self.qt_plot, self.image_widget.current_ROI, self.selection_mask, self.selection_regions, \
-                                                window=self.window, qtItems=self.qtItems, color=list(np.array(self.color)*255))
-            
-        def save_selection_mask(self, path=None) :
-            self.selection_mask_path = self.make_path(path, self.ref_path, 'selection_mask.npy')
-            np.save(self.selection_mask_path, self.selection_mask)
-            
-        def load_selection_mask(self, path=None) :
-            self.selection_mask_path = self.make_path(path, self.ref_path, 'selection_mask.npy')
-            self.selection_mask = np.load(self.selection_mask_path)
-            
-        def save_selection_regions(self, path=None) :
-            self.selection_regions_path = self.make_path(path, self.image_path, 'selection_regions.npy')
-            np.save(self.selection_regions_path, self.selection_regions)
-            
-        def load_selection_regions(self, path=None, name='selection_regions.npy') :
-            self.selection_regions_path = self.make_path(path, self.image_path, name)
-            self.selection_regions = np.load(self.selection_regions_path).tolist()
-            
-            size_y = self.qt_plot.image.shape[0]
-            for rect_params in self.selection_regions :
-                indiv_mask = InRectangle(self.cat['x'], size_y - self.cat['y'], rect_params)
-                self.selection_mask[indiv_mask] = True
-            
-            fig, ax = plt.subplots()
-            ax.axis('equal')
-            size = max(self.qt_plot.image.shape[0], self.qt_plot.image.shape[1])
-            #ax.invert_yaxis()
-            ax.set_ylim([size+2000, -2000])
-            ax.set_xlim([-4000, size+4000])
-            
-            for i, rect_params in enumerate(self.selection_regions) :
-                x0, y0, a, b, angle = rect_params
-                #x1, y1 = x0, y0
-                #x2, y2 = x0 + a*np.cos(angle), y0 + a*np.sin(angle)
-                #x3, y3 = x0 + a*np.cos(angle) - b*np.sin(angle),  y0 + a*np.sin(angle) + b*np.cos(angle)
-                #x4, y4 = x0 - b*np.sin(angle), y0 + b*np.cos(angle)
-                #ax.plot([x1, x2, x3, x4, x1], size_y-np.array([y1, y2, y3, y4, y1]), c='b')
-                #ax.axis('equal')
-                ax.add_patch( Rectangle((x0, y0), a, b, angle=angle*180/np.pi, alpha=0.4 ))
-                ax.text(x0, y0, str(i))
-                fig.show()
-                plt.pause(0.05)
-                
-        def make_path(self, path, ref_path, name) :
-            if path is None :#and self.ref_path is not None :
-                #to_return = os.path.join(os.path.dirname(ref_path), name)
-                to_return = os.path.join(os.path.dirname(ref_path), os.path.basename(ref_path).split('.')[0] + '_' + name)
-            elif os.path.isdir(path) :
-                to_return = os.path.join(path, name)
-            elif os.path.isdir(os.path.dirname(path)) :
-                to_return = path
-            return to_return
-            
-            
-        def plot_one_galaxy_mpl(self, x, y, a, b, theta, color=[1,1,1], text=None, ax=None, linewidth=1., text_color='white', text_alpha=0.5) :
-            edgecolor = list(color).copy()
-            edgecolor.append(1)
-            facecolor = edgecolor.copy()
-            facecolor[-1] = 0
-            ellipse = Ellipse( (x, y), a, b, angle=theta, facecolor=facecolor, edgecolor=edgecolor, lw=linewidth )
-            if ax is None :
-                self.mpl_ax.add_artist(ellipse)
-                if text is not None :
-                    #self.mpl_ax.text(x-1.5*b*np.abs(np.sin(theta)), y-1.5*b*np.abs(np.cos(theta)), text, color=edgecolor[:3], \
-                    #                 ha='right', va='top')
-                    offset = 0.85
-                    theta_modulo = theta%180 * np.pi/180
-                    if theta_modulo<np.pi/2 :
-                        x_text, y_text = x+offset*b*np.abs(np.sin(theta_modulo)), y-offset*b*np.abs(np.cos(theta_modulo))
-                        horizontalalignment, verticalalignment = 'left', 'top'
-                    else :
-                        x_text, y_text = x-offset*b*np.abs(np.sin(theta_modulo)), y-offset*b*np.abs(np.cos(theta_modulo))
-                        horizontalalignment, verticalalignment = 'right', 'top'
-                    self.mpl_ax.text( x_text, y_text, text, c=text_color, alpha=1, fontsize=15, \
-                                      ha=horizontalalignment, va=verticalalignment, \
-                                      bbox=dict(facecolor=edgecolor[:3], alpha=text_alpha, edgecolor='none') )
-            else :
-                ax.add_artist(ellipse)
-                if text is not None :
-                    offset = 0.85
-                    theta_modulo = theta%180 * np.pi/180
-                    if theta_modulo<np.pi/2 :
-                        x_text, y_text = x+offset*b*np.abs(np.sin(theta_modulo)), y-offset*b*np.abs(np.cos(theta_modulo))
-                        horizontalalignment, verticalalignment = 'left', 'top'
-                    else :
-                        x_text, y_text = x-offset*b*np.abs(np.sin(theta_modulo)), y-offset*b*np.abs(np.cos(theta_modulo))
-                        horizontalalignment, verticalalignment = 'right', 'top'
-                    #ax.text(x_text, y_text, text, color=edgecolor[:3], \
-                    #        ha=horizontalalignment, va=verticalalignment)
-                    ax.text( x_text, y_text, text, c=text_color, alpha=1, fontsize=15, \
-                             ha=horizontalalignment, va=verticalalignment, \
-                             bbox=dict(facecolor=edgecolor[:3], alpha=text_alpha, edgecolor='none') )
-        
-        def export_to_mult_file(self, file_path=None) :
-            if file_path is None :
-                file_path = os.path.join(os.path.dirname(self.image_path), 'mult.lenstool')
-            
-            sub_cat = self.cat[self.selection_mask]
-            
-            header = "#REFERENCE 0\n## id   RA      Dec        a         b         theta     z         mag\n"
-            with open(file_path, 'w') as f :
-                f.write(header)
-                for index, row in enumerate(sub_cat) :
-                    if 'THETA_WORLD' in sub_cat.colnames :
-                        line = (f"{row['id']:<3}  {row['ra']:10.6f}  {row['dec']:10.6f}  "
-                                f"{row['a']:8.6f}  {row['b']:8.6f}  {row['THETA_WORLD']:8.6f}  "
-                                f"{row['zb']:8.6f}  {row['f814w_mag']:8.6f}\n")
-                    else :
-                        line = (f"{row['id']:<3}  {row['ra']:10.6f}  {row['dec']:10.6f}  "
-                                "0.0  0.0  0.0  0.0  0.0\n")
-                    f.write(line)
-        
-        def plot_column(self, text_column, color=None):
-            """
-            Add text labels from a specified column to existing plotted ellipses.
-            
-            Parameters:
-            -----------
-            text_column : str
-                Name of the column in the catalog to use for labels
-            color : list or None
-                RGB color for the text. If None, uses the same color as the ellipses
-            """
-            if text_column not in self.cat.colnames:
-                print(f"Column '{text_column}' not found in catalog")
-                return
-        
-            if color is None:
-                color = list(np.array(self.color[:3])*255)
-            else:
-                color = list(np.array(color[:3])*255)
-        
-            # Store text items to prevent garbage collection
-            if not hasattr(self, 'text_items'):
-                self.text_items = []
-        
-            # Clear existing text items if any
-            for text_item in self.text_items:
-                self.qt_plot.removeItem(text_item)
-            self.text_items.clear()
-        
-            # Add new text labels
-            for i in range(len(self.cat)):
-                text = str(self.cat[text_column][i])
-                text_item = pg.TextItem(text, color=color)
-        
-                # Get ellipse position and size for offset calculation
-                x = self.cat['x'][i]
-                y = self.image_data.shape[0] - self.cat['y'][i]  # Flip y to match PyQtGraph convention
-                semi_major = self.cat['a'][i]
-                semi_minor = self.cat['b'][i]
-        
-                # Position text slightly offset from the ellipse
-                offset = max(semi_major, semi_minor)
-                text_item.setPos(x + offset/2, y - offset/2)
-        
-                # Set font
-                font = PyQt5.QtGui.QFont()
-                font.setPointSize(15)
-                text_item.setFont(font)
-
-                self.qt_plot.addItem(text_item)
-                self.text_items.append(text_item)
-
-    
-    
     
     
     def world_to_image(self, ra, dec, unit='deg') :
@@ -973,10 +547,21 @@ class fits_image :
     
     
     
-    
-    def import_lenstool(self, model_dir) :
-        self.lt_dir = model_dir
+
+            
         
+        
+        
+        
+        
+        
+        
+        
+        
+    def import_lenstool(self, model_dir) :
+        #self.lt_dir = model_dir
+        self.lt = lenstool_model(model_dir, self)
+        """
         ### Add correct optimized/fixed redshifts ###
         if self.multiple_images is not None :
             source_z_dict = make_source_z_dict(model_dir, use_family_name_only=True)
@@ -1015,7 +600,7 @@ class fits_image :
         def print_lt_latex_table() :
             print(self.lt_latex_table_str)
         self.lt_latex_table = print_lt_latex_table
-    
+    """
     
     
     
