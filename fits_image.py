@@ -76,7 +76,6 @@ class fits_image :
         self.ax = None
         self.multiple_images = None
         self.galaxy_selection = None
-        self.potfile = None
         self.imported_cat = None
         self.qt_plot = None
         #self.qt_plot = self.plot_image()
@@ -327,205 +326,19 @@ class fits_image :
             cat.add_column(magST, name='magST')
         return 'Magnitudes calculated'
     
-    def select_multiple_images(self) :
-        return 'in progress'
     
-    def import_multiple_images(self, mult_file_path, unit_is_pixel=False):
-        
-        def make_masks_and_colors(cat, which='all', filled_markers=False) :
-            if which=='all':
-                families = np.unique([cat[i]['id'][0] for i in range(len(cat))])
-                which = families
-            to_plot_mask = []
-            for symbol in which:
-                to_plot_mask.append([cat[i]['id'].startswith(symbol) for i in range(len(cat))])
-            if filled_markers:
-                colors = make_palette(len(which), 1, alpha=0.5)
-            else:
-                colors = make_palette(len(which), 1, alpha=0)
-            colors_dict = {}
-            for i, mask in enumerate(to_plot_mask):
-                for multiple_image in cat[mask]:
-                    colors_dict[multiple_image['id']] = colors[i]
-            return to_plot_mask, colors_dict, colors
-        
-        
-        multiple_images = Table(names=['id','ra','dec','a','b','theta','z','mag'], dtype=['str',*['float',]*7])
-        with open(mult_file_path, 'r') as mult_file:
-            for line in mult_file:
-                cleaned_line = line.strip()
-                if not cleaned_line.startswith("#") and len(cleaned_line)>0 :
-                    split_line = cleaned_line.split()
-                    row = [split_line[0]]
-                    for element in split_line[1:8] :
-                        row.append(float(element))
-                    multiple_images.add_row(row)
-        
-        multiple_images['theta'] = multiple_images['theta'] - self.orientation
-        
-        def plot_multiple_images(self, which='all', size=40, marker='o', filled_markers=False, colors=None, mpl=False, fontsize=9,
-                               make_thumbnails=False, square_size=150, margin=50, distance=200, savefig=False, square_thumbnails=True,
-                               boost=[2,1.5,1], linewidth=1.7, text_color='white', text_alpha=0.5):
-            
-            # Get colors for each family
-            to_plot_mask, colors_dict, default_colors = make_masks_and_colors(self.cat, which, filled_markers)
-            if colors is not None:
-                # Override default colors if custom colors provided
-                colors_dict = {}
-                for i, mask in enumerate(to_plot_mask):
-                    for multiple_image in self.cat[mask]:
-                        colors_dict[multiple_image['id']] = colors[i]
-            else :
-                colors = default_colors
-            
-            cat_contains_ellipse_params = len(np.unique(self.cat['a']))!=1
-            count = 0
-            for i, mask in enumerate(to_plot_mask) :
-                for multiple_image in self.cat[mask] :
-                    # Remove the *1000
-                    if not cat_contains_ellipse_params :
-                        a, b = size, size
-                    else :
-                        a, b = multiple_image['a'], multiple_image['b']
-                    ellipse = self.plot_one_object(multiple_image['x'], multiple_image['y'], a, b,
-                                                   multiple_image['theta'], count, color=colors[i])
-                    self.qtItems[count] = ellipse
-                    count += 1
-                    
-                    if mpl :
-                        font = {'size':fontsize, 'family':'DejaVu Sans'}
-                        plt.rc('font', **font)
-                        self.plot_one_galaxy_mpl(multiple_image['x'], multiple_image['y'], a, b, multiple_image['theta'], color=colors[i][:3],
-                                                 text=multiple_image['id'], linewidth=linewidth, text_color=text_color, text_alpha=text_alpha)
-                        #self.plot_one_galaxy_mpl(multiple_image['x'], multiple_image['y'], a, b, multiple_image['theta'], color=colors[i][:3], text=multiple_image['id'])
-            
-            if make_thumbnails :
-                if boost is not None :
-                    adjusted_image = adjust_contrast(self.image_data, boost[0], pivot=boost[1])
-                    adjusted_image = adjust_luminosity(adjusted_image, boost[2])
-                else :
-                    adjusted_image = self.image_data
-                
-                group_list = find_close_coord(self.cat, distance)
-                for group in group_list :
-                    
-                    x_array = [self.cat[np.where(self.cat['id']==name)[0][0]]['x'] for name in group]
-                    y_array = [self.cat[np.where(self.cat['id']==name)[0][0]]['y'] for name in group]
-                    
-                    x_pix = (np.max(x_array) + np.min(x_array)) / 2
-                    y_pix = (np.max(y_array) + np.min(y_array)) / 2
-                    
-                    half_side = square_size // 2
-                    
-                    x_min = round( max( min( np.min(x_array) - margin, x_pix - half_side ), 0) )
-                    x_max = round( min( max( np.max(x_array) + margin, x_pix + half_side ), self.image_data.shape[1]) )
-                    y_min = round( max( min( np.min(y_array) - margin, y_pix - half_side ), 0) )
-                    y_max = round( min( max( np.max(y_array) + margin, y_pix + half_side ), self.image_data.shape[0]) )
-                    
-                    if square_thumbnails :
-                        x_side_size = x_max - x_min
-                        y_side_size = y_max - y_min
-                        if x_side_size!=y_side_size :
-                            demi_taille_unique = round( max(x_side_size, y_side_size)/2 )
-                            x_pix = round( (x_max + x_min)/2 )
-                            y_pix = round( (y_max + y_min)/2 )
-                            x_min = x_pix - demi_taille_unique
-                            x_max = x_pix + demi_taille_unique
-                            y_min = y_pix - demi_taille_unique
-                            y_max = y_pix + demi_taille_unique
-                    
-                    plt_framework(image=True, figsize=3, drawscaler=1.2)
-                    font = {'size':9, 'family':'DejaVu Sans'}
-                    plt.rc('font', **font)
-                    
-                    
-                    #cropped_image = self.image_data[y_min:y_max, x_min:x_max, :]
-                    fig, ax = plot_image_mpl(adjusted_image, wcs=None, wcs_projection=False, units='pixel',
-                                             pos=111, make_axes_labels=False, make_grid=False, crop=[x_min, x_max, y_min, y_max])
-                    
-                    for multiple_image_id in group :
-                        multiple_image = self.cat[np.where(self.cat['id']==multiple_image_id)[0][0]]
-                        color = colors_dict[multiple_image_id]
-                        if not cat_contains_ellipse_params :
-                            a, b = 75, 75
-                        else :
-                            a, b = multiple_image['a'], multiple_image['b']
-                        self.plot_one_galaxy_mpl(multiple_image['x']-x_min, multiple_image['y']-y_min, a, b, multiple_image['theta'],
-                                                 color=color[:3], text=multiple_image['id'], ax=ax, linewidth=linewidth, text_color=text_color, text_alpha=text_alpha)
-                    
-                    ax.axis('off')
-                    #plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
-                    
-                    fig.show()
-                        
-                    plot_scale_bar(ax, deg_per_pix=self.pix_deg_scale, unit='arcsec',
-                                   length=1 , color='white', linewidth=2, text_offset=0.01)
-                    if savefig :
-                        fig.savefig(os.path.join(os.path.dirname(self.image_path), 'mult_' + group[0]), bbox_inches='tight', pad_inches=0)
-                        
-                    plt_framework(full_tick_framework=True, ticks='out', image=True, width='full', drawscaler=0.8, tickscaler=0.5, minor_ticks=False)
-        
-        def plot_multiple_images_column(self, text_column, which='all'):
-            if text_column not in self.cat.colnames:
-                print(f"Column '{text_column}' not found in catalog")
-                return
-            if not hasattr(self, 'text_items'):
-                self.text_items = []
-            for text_item in self.text_items:
-                self.qt_plot.removeItem(text_item)
-            self.text_items.clear()
-            
-            to_plot_mask, colors_dict, default_colors = make_masks_and_colors(self.cat, which='all')
-            colors = []
-            for default_color in default_colors :
-                colors.append(list(np.array(default_color)*255)[:3])
-            print(colors)
-            
-            for i, mask in enumerate(to_plot_mask) :
-                for multiple_image in self.cat[mask] :
-                    
-                    text = str(multiple_image[text_column])
-                    text_item = pg.TextItem(text, color=colors[i])
-                    
-                    x = multiple_image['x']
-                    y = self.image_data.shape[0] - multiple_image['y']  # Flip y to match PyQtGraph convention
-                    semi_major = multiple_image['a']
-                    semi_minor = multiple_image['b']
-                    offset = max(semi_major, semi_minor)
-                    text_item.setPos(x + offset/2, y - offset/2)
-                    
-                    font = PyQt5.QtGui.QFont()
-                    font.setPointSize(15)
-                    text_item.setFont(font)
-                    
-                    self.qt_plot.addItem(text_item)
-                    self.text_items.append(text_item)
-        
-        
-        self.multiple_images = self.make_catalog(multiple_images, unit_is_pixel=unit_is_pixel)
-        self.multiple_images.plot = types.MethodType(plot_multiple_images, self.multiple_images)
-        self.multiple_images.plot_column = types.MethodType(plot_multiple_images_column, self.multiple_images)
-        return self.multiple_images.cat
-    
-    #def load_potfile(self, potfile_path) :
-    #    potfile_cat = read_potfile(potfile_path)
-    #    self.potfile = self.make_catalog(cat=potfile_cat)
-    #    return self.potfile.cat
-    
-    
-    
-    def make_catalog(self, cat, color=[1., 1., 0], mag_colnames=['magAB_F814W', 'magAB_F435W'], unit_is_pixel=False) :
+    def make_catalog(self, cat, color=[1., 1., 0], mag_colnames=['magAB_F814W', 'magAB_F435W'], units=None) :
         if self.qt_plot is None :
             self.plot_image()
         #to_return = catalog(cat, self.image_data, self.wcs, self.qt_plot, window=self.window, image_path=self.image_path, 
         #                            image_widget = self.image_widget, image_widget_layout=self.image_widget_layout, color=color, 
         #                            mag_colnames=mag_colnames, mpl_fig=self.fig, mpl_ax=self.ax, 
-        #                            pix_deg_scale=self.pix_deg_scale, unit_is_pixel=unit_is_pixel)
-        to_return = catalog(cat, self, color=color, mag_colnames=mag_colnames, unit_is_pixel=unit_is_pixel)
+        #                            pix_deg_scale=self.pix_deg_scale, units=units)
+        to_return = catalog(cat, self, color=color, mag_colnames=mag_colnames, units=units)
         return to_return
     
-    def import_catalog(self, cat, color=[1., 1., 0], mag_colnames=['magAB_F814W', 'magAB_F435W'], unit_is_pixel=True) :
-        self.imported_cat = self.make_catalog(cat, color=color, mag_colnames=mag_colnames, unit_is_pixel=unit_is_pixel)
+    def import_catalog(self, cat, color=[1., 1., 0], mag_colnames=['magAB_F814W', 'magAB_F435W'], units='pixel') :
+        self.imported_cat = self.make_catalog(cat, color=color, mag_colnames=mag_colnames, units=units)
         #print(self.imported_cat)
         
     ###########################################################################
@@ -545,18 +358,6 @@ class fits_image :
                     self.qt_plot.removeItem(self.qtItems_dict[key][i])
     
     
-    
-    
-
-            
-        
-        
-        
-        
-        
-        
-        
-        
         
     def import_lenstool(self, model_dir) :
         #self.lt_dir = model_dir

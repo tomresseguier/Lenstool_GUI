@@ -81,12 +81,13 @@ def make_uniform_names_cat(cat, self) :
                 
             
     if colnames_dict['a'] != 'A_IMAGE' and colnames_dict['b'] != 'B_IMAGE' :
-        yesno = 'y' if self.unit_is_pixel else input("ellipticity parameters " + str(colnames_dict['a']) \
-                                                    + " and " + str(colnames_dict['b']) + " in pixels? [y][arcsec][deg]")
-        if yesno == 'deg' :
+        if self.units is None :
+            self.units = input("ellipticity parameters " + str(colnames_dict['a']) \
+                               + " and " + str(colnames_dict['b']) + " in pixels? [y][arcsec][deg]")
+        if self.units == 'deg' :
             uniform_names_cat.replace_column( 'a', uniform_names_cat['a']/(self.pix_deg_scale) )
             uniform_names_cat.replace_column( 'b', uniform_names_cat['b']/(self.pix_deg_scale) )
-        if yesno == 'arcsec' :
+        if self.units == 'arcsec' :
             uniform_names_cat.replace_column( 'a', uniform_names_cat['a']/(self.pix_deg_scale*3600) )
             uniform_names_cat.replace_column( 'b', uniform_names_cat['b']/(self.pix_deg_scale*3600) )
     
@@ -133,7 +134,7 @@ def initialize_catalog(cat, self) :
 
 
 class catalog :
-    def __init__(self, cat, fits_image, color=[1., 1., 0.], mag_colnames=['magAB_F814W', 'magAB_F435W'], use_default_names=True, unit_is_pixel=False) :
+    def __init__(self, cat, fits_image, color=[1., 1., 0.], mag_colnames=['magAB_F814W', 'magAB_F435W'], use_default_names=True, units=None) :
         self.image_data = fits_image.image_data
         self.image_wcs = fits_image.wcs
         self.qt_plot = fits_image.qt_plot
@@ -148,7 +149,7 @@ class catalog :
         
         self.mag_colnames = mag_colnames
         self.use_default_names = use_default_names
-        self.unit_is_pixel = unit_is_pixel
+        self.units = units
         
         self.cat, self.ref_path = initialize_catalog(cat, self)
         
