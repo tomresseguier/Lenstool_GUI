@@ -40,6 +40,9 @@ from .utils.utils_general.utils_general import find_close_coord, make_colnames_d
 from .utils.utils_plots.plt_framework import plt_framework
 from .utils.utils_Lenstool.redshift_extractors import make_source_z_dict, find_param_file
 from .utils.utils_Lenstool.param_extractors import read_potfile, read_bayes_file, make_param_latex_table
+
+from .utils.utils_Lenstool.file_makers import best_files_maker, make_magnifications_and_curves                  # This import is problematic. The two functions run Lenstool
+                                                                                                                # and are therefore dependent on my own install.
 from .utils.utils_astro.utils_general import relative_to_world
 #from utils_general.utils import flux_muJy_to_magAB
 from .utils.utils_astro.set_cosmology import set_cosmo
@@ -50,29 +53,38 @@ cosmo = set_cosmo()
 
 
 
-
-
-
-def import_multiple_images(self, mult_file_path, fits_image, units=None, AttrName='mult', filled_markers=False):
+def make_which_colors(self, filled_markers=False) :
+    which = self.families if self.which=='all' else self.which
     
-    def make_masks_and_colors(cat, which='all', filled_markers=False) :
-        if which=='all':
-            families = np.unique([cat[i]['id'][0] for i in range(len(cat))])
-            which = families
-        to_plot_mask = []
-        for symbol in which:
-            to_plot_mask.append([cat[i]['id'].startswith(symbol) for i in range(len(cat))])
+    if filled_markers:
+        colors = make_palette(len(which), 1, alpha=0.5)
+    else:
+        colors = make_palette(len(which), 1, alpha=0)
+    
+    which_colors_dict = {}
+    for i, name in enumerate(which) :
+        which_colors_dict[name] = colors[i]
+    #for i, mask in enumerate(to_plot_mask):
+    #    for multiple_image in cat[mask]:
+    #        which_colors_dict[multiple_image['id']] = colors[i]
+    return which_colors_dict
+
+
+def make_full_color_function(families) :
+    n_families = len(families)
+    def make_full_color_dict(filled_markers=False) :
         if filled_markers:
-            colors = make_palette(len(which), 1, alpha=0.5)
+            colors = make_palette(n_families, 1, alpha=0.5)
         else:
-            colors = make_palette(len(which), 1, alpha=0)
-        colors_dict = {}
-        for i, mask in enumerate(to_plot_mask):
-            for multiple_image in cat[mask]:
-                colors_dict[multiple_image['id']] = colors[i]
-        return to_plot_mask, colors_dict, colors
-    
-    
+            colors = make_palette(n_families, 1, alpha=0)
+        full_colors_dict = {}
+        for i, family in enumerate(families) :
+            full_colors_dict[family] = colors[i]
+        return full_colors_dict
+    return make_full_color_dict
+
+
+def import_multiple_images(self, mult_file_path, fits_image, units=None, AttrName='mult', filled_markers=False) :
     multiple_images = Table(names=['id','ra','dec','a','b','theta','z','mag'], dtype=['str',*['float',]*7])
     with open(mult_file_path, 'r') as mult_file:
         for line in mult_file:
@@ -83,27 +95,41 @@ def import_multiple_images(self, mult_file_path, fits_image, units=None, AttrNam
                 for element in split_line[1:8] :
                     row.append(float(element))
                 multiple_images.add_row(row)
-    
     multiple_images['theta'] = multiple_images['theta'] - fits_image.orientation
     
-    def plot_multiple_images(self, which='all', size=40, marker='o', filled_markers=False, colors=None, mpl=False, fontsize=9,
-                           make_thumbnails=False, square_size=150, margin=50, distance=200, savefig=False, square_thumbnails=True,
-                           boost=[2,1.5,1], linewidth=1.7, text_color='white', text_alpha=0.5):
+    
+    setattr(self, AttrName, fits_image.make_catalog(multiple_images, units=units))
+    if AttrName=='mult' :
+        self.families = np.unique( [s[:-1] for s in getattr(self, AttrName).cat['id']] )
+        self.mult_colors = make_full_color_function(self.families)
+        self.which = self.families.copy()
+    
+    def make_to_plot_masks() :
+        to_plot_masks = {}
+        for name in self.which :
+            to_plot_masks[name] = np.array([ im_id.startswith(name) for im_id in getattr(self, AttrName).cat['id'] ])
+        return to_plot_masks
+    getattr(self, AttrName).masks = make_to_plot_masks
         
-        # Get colors for each family
-        to_plot_mask, colors_dict, default_colors = make_masks_and_colors(self.cat, which, filled_markers)
+    
+    lenstool_model = self
+    
+    def plot_multiple_images(self, size=40, marker='o', filled_markers=filled_markers, colors=None, mpl=False, fontsize=9,
+                             make_thumbnails=False, square_size=150, margin=50, distance=200, savefig=False, square_thumbnails=True,
+                             boost=[2,1.5,1], linewidth=1.7, text_color='white', text_alpha=0.5) :
+        self.clear()
+        
         if colors is not None:
-            # Override default colors if custom colors provided
             colors_dict = {}
-            for i, mask in enumerate(to_plot_mask):
-                for multiple_image in self.cat[mask]:
-                    colors_dict[multiple_image['id']] = colors[i]
+            for i, family in enumerate(lenstool_model.which) :
+                colors_dict[family] = colors[i]
         else :
-            colors = default_colors
+            colors_dict = lenstool_model.mult_colors(filled_markers=filled_markers)
+        
         
         cat_contains_ellipse_params = len(np.unique(self.cat['a']))!=1
         count = 0
-        for i, mask in enumerate(to_plot_mask) :
+        for name, mask in self.masks().items() :
             for multiple_image in self.cat[mask] :
                 # Remove the *1000
                 if not cat_contains_ellipse_params :
@@ -111,23 +137,23 @@ def import_multiple_images(self, mult_file_path, fits_image, units=None, AttrNam
                 else :
                     a, b = multiple_image['a'], multiple_image['b']
                 ellipse = self.plot_one_object(multiple_image['x'], multiple_image['y'], a, b,
-                                               multiple_image['theta'], count, color=colors[i])
+                                               multiple_image['theta'], count, color=colors_dict[name])
                 self.qtItems[count] = ellipse
                 count += 1
                 
                 if mpl :
                     font = {'size':fontsize, 'family':'DejaVu Sans'}
                     plt.rc('font', **font)
-                    self.plot_one_galaxy_mpl(multiple_image['x'], multiple_image['y'], a, b, multiple_image['theta'], color=colors[i][:3],
+                    self.plot_one_galaxy_mpl(multiple_image['x'], multiple_image['y'], a, b, multiple_image['theta'], color=colors_dict[name][:3],
                                              text=multiple_image['id'], linewidth=linewidth, text_color=text_color, text_alpha=text_alpha)
-                    #self.plot_one_galaxy_mpl(multiple_image['x'], multiple_image['y'], a, b, multiple_image['theta'], color=colors[i][:3], text=multiple_image['id'])
+                    #self.plot_one_galaxy_mpl(multiple_image['x'], multiple_image['y'], a, b, multiple_image['theta'], color=colors_dict[name][:3], text=multiple_image['id'])
         
         if make_thumbnails :
             if boost is not None :
-                adjusted_image = adjust_contrast(self.image_data, boost[0], pivot=boost[1])
+                adjusted_image = adjust_contrast(self.fits_image.image_data, boost[0], pivot=boost[1])
                 adjusted_image = adjust_luminosity(adjusted_image, boost[2])
             else :
-                adjusted_image = self.image_data
+                adjusted_image = self.fits_image.image_data
             
             group_list = find_close_coord(self.cat, distance)
             for group in group_list :
@@ -141,9 +167,9 @@ def import_multiple_images(self, mult_file_path, fits_image, units=None, AttrNam
                 half_side = square_size // 2
                 
                 x_min = round( max( min( np.min(x_array) - margin, x_pix - half_side ), 0) )
-                x_max = round( min( max( np.max(x_array) + margin, x_pix + half_side ), self.image_data.shape[1]) )
+                x_max = round( min( max( np.max(x_array) + margin, x_pix + half_side ), self.fits_image.image_data.shape[1]) )
                 y_min = round( max( min( np.min(y_array) - margin, y_pix - half_side ), 0) )
-                y_max = round( min( max( np.max(y_array) + margin, y_pix + half_side ), self.image_data.shape[0]) )
+                y_max = round( min( max( np.max(y_array) + margin, y_pix + half_side ), self.fits_image.image_data.shape[0]) )
                 
                 if square_thumbnails :
                     x_side_size = x_max - x_min
@@ -162,13 +188,13 @@ def import_multiple_images(self, mult_file_path, fits_image, units=None, AttrNam
                 plt.rc('font', **font)
                 
                 
-                #cropped_image = self.image_data[y_min:y_max, x_min:x_max, :]
+                #cropped_image = self.fits_image.image_data[y_min:y_max, x_min:x_max, :]
                 fig, ax = plot_image_mpl(adjusted_image, wcs=None, wcs_projection=False, units='pixel',
                                          pos=111, make_axes_labels=False, make_grid=False, crop=[x_min, x_max, y_min, y_max])
                 
                 for multiple_image_id in group :
                     multiple_image = self.cat[np.where(self.cat['id']==multiple_image_id)[0][0]]
-                    color = colors_dict[multiple_image_id]
+                    color = colors_dict[multiple_image_id[:-1]]
                     if not cat_contains_ellipse_params :
                         a, b = 75, 75
                     else :
@@ -181,12 +207,13 @@ def import_multiple_images(self, mult_file_path, fits_image, units=None, AttrNam
                 
                 fig.show()
                     
-                plot_scale_bar(ax, deg_per_pix=self.pix_deg_scale, unit='arcsec',
+                plot_scale_bar(ax, deg_per_pix=self.fits_image.pix_deg_scale, unit='arcsec',
                                length=1 , color='white', linewidth=2, text_offset=0.01)
                 if savefig :
-                    fig.savefig(os.path.join(os.path.dirname(self.image_path), 'mult_' + group[0]), bbox_inches='tight', pad_inches=0)
+                    fig.savefig(os.path.join(os.path.dirname(self.fits_image.image_path), 'mult_' + group[0]), bbox_inches='tight', pad_inches=0)
                     
                 plt_framework(full_tick_framework=True, ticks='out', image=True, width='full', drawscaler=0.8, tickscaler=0.5, minor_ticks=False)
+    
     
     def plot_multiple_images_column(self, text_column, which='all'):
         if text_column not in self.cat.colnames:
@@ -195,23 +222,19 @@ def import_multiple_images(self, mult_file_path, fits_image, units=None, AttrNam
         if not hasattr(self, 'text_items'):
             self.text_items = []
         for text_item in self.text_items:
-            self.qt_plot.removeItem(text_item)
+            self.fits_image.qt_plot.removeItem(text_item)
         self.text_items.clear()
         
-        to_plot_mask, colors_dict, default_colors = make_masks_and_colors(self.cat, which='all')
-        colors = []
-        for default_color in default_colors :
-            colors.append(list(np.array(default_color)*255)[:3])
-        print(colors)
+        colors_dict = lenstool_model.mult_colors(filled_markers=False)
         
-        for i, mask in enumerate(to_plot_mask) :
+        for name, mask in self.masks().items() :
             for multiple_image in self.cat[mask] :
                 
                 text = str(multiple_image[text_column])
-                text_item = pg.TextItem(text, color=colors[i])
+                text_item = pg.TextItem( text, color=list( np.array(colors_dict[name])*255 )[:3] )
                 
                 x = multiple_image['x']
-                y = self.image_data.shape[0] - multiple_image['y']  # Flip y to match PyQtGraph convention
+                y = self.fits_image.image_data.shape[0] - multiple_image['y']  # Flip y to match PyQtGraph convention
                 semi_major = multiple_image['a']
                 semi_minor = multiple_image['b']
                 offset = max(semi_major, semi_minor)
@@ -221,81 +244,93 @@ def import_multiple_images(self, mult_file_path, fits_image, units=None, AttrNam
                 font.setPointSize(15)
                 text_item.setFont(font)
                 
-                self.qt_plot.addItem(text_item)
+                self.fits_image.qt_plot.addItem(text_item)
                 self.text_items.append(text_item)
     
     
-    setattr(self, AttrName, fits_image.make_catalog(multiple_images, units=units))
-    
-    to_plot_mask, colors_dict, default_colors = make_masks_and_colors(getattr(self, AttrName).cat, which='all', filled_markers=filled_markers)
-    colors_dict_families = {}
-    for name in colors_dict.keys() :
-        family = name[:-1]
-        colors_dict_families[family] = colors_dict[name]
-    
     getattr(self, AttrName).plot = types.MethodType(plot_multiple_images, getattr(self, AttrName))
     getattr(self, AttrName).plot_column = types.MethodType(plot_multiple_images_column, getattr(self, AttrName))
-    getattr(self, AttrName).color = colors_dict_families
-    #return getattr(self, AttrName).cat
 
 
 
-def plot_curves(self, fits_image, which_critcaus='critical', join=False, size=2) :
-    curves_dir = os.path.join(self.model_dir, 'curves')
-    curve_paths = glob.glob(os.path.join(curves_dir, "*.dat"))
-    curve_dict = {}
-    for name in self.families :
-        i = np.where( [name in os.path.basename(path) for path in curve_paths] )[0][0]
-        curve_path = curve_paths[i]
-        curve_dict[name] = curve_path
+class curves :
+    def __init__(self, curves_dir, lenstool_model, fits_image, which_critcaus='critical', join=False, size=2) :
+        self.dir = curves_dir
+        self.paths = glob.glob(os.path.join(curves_dir, "*.dat"))
+        self.lenstool_model = lenstool_model
+        self.fits_image = fits_image
+        self.size = size
         
-        file = open(curve_path, 'r')
-        all_lines = file.readlines()
-        lines = all_lines[1:]
+        self.qtItems = {}
+        for name in lenstool_model.families :
+            self.qtItems[name] = None
         
-        ra_ref = float( all_lines[0].split()[-2] )
-        dec_ref = float( all_lines[0].split()[-1] )
+        self.coords = {}
+        for name in lenstool_model.families :
+            curve_mask = np.array([name in os.path.basename(path) for path in self.paths])
+            if True in curve_mask :
+                lines = []
+                for curve_path in np.array(self.paths)[curve_mask] :
+                    file = open(curve_path, 'r')
+                    all_lines = file.readlines()
+                    lines += all_lines[1:]
+                
+                ra_ref = float( all_lines[0].split()[-2] )
+                dec_ref = float( all_lines[0].split()[-1] )
+                
+                if which_critcaus=='critical' :
+                    delta_ra = np.array( [ float( lines[i].split()[1] ) for i in range(len(lines)) ] )
+                    delta_dec = np.array( [ float( lines[i].split()[2] ) for i in range(len(lines)) ] )
+                    ra, dec = relative_to_world(delta_ra, delta_dec, reference=(ra_ref, dec_ref))
+                    x, y = fits_image.world_to_image(ra, dec)
+                    
+                    y = fits_image.image_data.shape[0] - y
+                    
+                    shorten_indices = np.linspace(0, len(x) - 1, 10000, dtype=int)
+                    x = x[shorten_indices]
+                    y = y[shorten_indices]
+                    
+                    #if join :
+                    #    x, y = rearrange_points(x, y)
+                         
+                if which_critcaus=='caustic' :
+                    delta_ra = np.array( [ float( lines[i].split()[3] ) for i in range(len(lines)) ] )
+                    delta_dec = np.array( [ float( lines[i].split()[4] ) for i in range(len(lines)) ] )
+                    ra, dec = relative_to_world(delta_ra, delta_dec, reference=(ra_ref, dec_ref))
+                    x, y = fits_image.world_to_image(ra, dec)
+                    
+                    y = fits_image.image_data.shape[0] - y
+                    
+                    shorten_indices = np.linspace(0, len(x) - 1, 10000, dtype=int)
+                    x = x[shorten_indices]
+                    y = y[shorten_indices]
+                    
+                    #if join :
+                    #    x, y = rearrange_points(x, y)
+                
+                self.coords[name] = (x, y)
         
-        if which_critcaus=='critical' :
-            delta_ra = np.array( [ float( lines[i].split()[1] ) for i in range(len(lines)) ] )
-            delta_dec = np.array( [ float( lines[i].split()[2] ) for i in range(len(lines)) ] )
-            ra, dec = relative_to_world(delta_ra, delta_dec, reference=(ra_ref, dec_ref))
-            x, y = fits_image.world_to_image(ra, dec)
-            
-            y = fits_image.image_data.shape[0] - y
-            
-            shorten_indices = np.linspace(0, len(x) - 1, 10000, dtype=int)
-            x = x[shorten_indices]
-            y = y[shorten_indices]
-            
-            #if join :
-            #    x, y = rearrange_points(x, y)
-            color = np.round(self.mult.color[name]*255).astype(int)
+    def plot(self) :
+        self.clear()
+        for name in self.lenstool_model.which :
+            color = np.round(self.lenstool_model.mult_colors()[name]*255).astype(int)
             color[3] = 255
-            scatter = pg.ScatterPlotItem(x, y, pen=None, brush=pg.mkBrush(color), size=size)
-            fits_image.qt_plot.addItem(scatter)
-                 
-        if which_critcaus=='caustic' :
-            delta_ra = np.array( [ float( lines[i].split()[3] ) for i in range(len(lines)) ] )
-            delta_dec = np.array( [ float( lines[i].split()[4] ) for i in range(len(lines)) ] )
-            ra, dec = relative_to_world(delta_ra, delta_dec, reference=(ra_ref, dec_ref))
-            x, y = fits_image.world_to_image(ra, dec)
             
-            #if join :
-            #    x, y = rearrange_points(x, y)
-            scatter = pg.ScatterPlotItem(x, y, pen=None, brush=pg.mkBrush(255, 0, 0, 255), size=5)
-            fits_image.qt_plot.addItem(scatter)
-        
-    return curve_dict, scatter
+            x, y = self.coords[name]
+            
+            scatter = pg.ScatterPlotItem(x, y, pen=None, brush=pg.mkBrush(color), size=self.size)
+            self.qtItems[name] = scatter
+            self.fits_image.qt_plot.addItem(scatter)
+            
+    def clear(self) :
+        for name, qtItem in self.qtItems.items() :
+            if qtItem is not None :
+                self.fits_image.qt_plot.removeItem(qtItem)
+                self.qtItems[name] = None
+                
     
     
     
-    
-    
-    
-    
-
-
 
 
 class lenstool_model :
@@ -331,28 +366,71 @@ class lenstool_model :
         mult_idx = np.where(['mult' in name for name in all_cat_file_paths])[0]
         if len(mult_idx)==1 :
             mult_file_path = all_cat_file_paths[mult_idx[0]]
-            import_multiple_images(self, mult_file_path, fits_image, units='pixel')
-            self.families = np.unique( [s[:-1] for s in self.mult.cat['id']] )
+            import_multiple_images(self, mult_file_path, fits_image, units='pixel', filled_markers=True)
+            
         else :
+            self.which = None
             self.mult = None
             self.families = None
         
-        #dot_all_paths = glob.glob(os.path.join(self.model_dir, "*.all"))
-        arclets_path = os.path.join(self.model_dir, 'image.dat')
+        arclets_path = os.path.join(self.model_dir, 'PBC_arclets_to_predict.lenstool')
         if os.path.isfile(arclets_path) :
-            import_multiple_images(self, arclets_path, fits_image, AttrName='image', units='pixel')
+            import_multiple_images(self, arclets_path, fits_image, AttrName='arclets', units='pixel', filled_markers=False)
+        else :
+            self.arclets = None
         
+        #dot_all_paths = glob.glob(os.path.join(self.model_dir, "*.all"))
+        predicted_images_path = os.path.join(self.model_dir, 'image.dat')
+        if os.path.isfile(predicted_images_path) :
+            import_multiple_images(self, predicted_images_path, fits_image, AttrName='image', units='pixel', filled_markers=False)
+        else :
+            self.image = None
         
+        curves_dir = os.path.join(self.model_dir, 'curves')
+        if os.path.isdir(curves_dir) :
+            self.curves = curves(curves_dir, self, fits_image, which_critcaus='critical', join=False, size=2)
+        else :
+            self.curves = None
             
-        
+    
         
     def select_multiple_images(self) :
         return 'in progress'
     
-    def plot_curves(self) :
-        plot_curves(self, self.fits_image)
+    def plot(self, which=None) :
+        if which is not None :
+            self.set_which(which)
+        if self.mult is not None :
+            self.mult.plot()
+            self.mult.plot_column('id')
+        if self.image is not None :
+            self.image.plot()
+            self.image.plot_column('id')
+        if self.curves is not None :
+            self.curves.plot()
     
-    
+    def clear(self) :
+        if self.mult is not None :
+            self.mult.clear()
+        if self.image is not None :
+            self.image.clear()
+        if self.curves is not None :
+            self.curves.clear()
+            
+    def set_which(self, which) :
+        if which=='all' :
+            self.which = self.families.copy()
+        elif isinstance(which, str) :
+            self.which = [which]
+        else :
+            self.which = which
+        print("Images to plot are now ", which)
+        #self.clear()
+        #self.plot()
+        
+    def make_files(self) :
+        best_files_maker(self.model_dir)
+        make_magnifications_and_curves(self.model_dir)
     #def relative_to_mosaic_pixel
         
         

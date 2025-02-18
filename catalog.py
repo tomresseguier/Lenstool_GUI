@@ -85,14 +85,14 @@ def make_uniform_names_cat(cat, self) :
             self.units = input("ellipticity parameters " + str(colnames_dict['a']) \
                                + " and " + str(colnames_dict['b']) + " in pixels? [y][arcsec][deg]")
         if self.units == 'deg' :
-            uniform_names_cat.replace_column( 'a', uniform_names_cat['a']/(self.pix_deg_scale) )
-            uniform_names_cat.replace_column( 'b', uniform_names_cat['b']/(self.pix_deg_scale) )
+            uniform_names_cat.replace_column( 'a', uniform_names_cat['a']/(self.fits_image.pix_deg_scale) )
+            uniform_names_cat.replace_column( 'b', uniform_names_cat['b']/(self.fits_image.pix_deg_scale) )
         if self.units == 'arcsec' :
-            uniform_names_cat.replace_column( 'a', uniform_names_cat['a']/(self.pix_deg_scale*3600) )
-            uniform_names_cat.replace_column( 'b', uniform_names_cat['b']/(self.pix_deg_scale*3600) )
+            uniform_names_cat.replace_column( 'a', uniform_names_cat['a']/(self.fits_image.pix_deg_scale*3600) )
+            uniform_names_cat.replace_column( 'b', uniform_names_cat['b']/(self.fits_image.pix_deg_scale*3600) )
     
     #if colnames_dict['x']==None :
-    x, y = self.world_to_image(uniform_names_cat['ra'], uniform_names_cat['dec'], unit='deg')
+    x, y = self.fits_image.world_to_image(uniform_names_cat['ra'], uniform_names_cat['dec'], unit='deg')
     uniform_names_cat['x'] = x
     uniform_names_cat['y'] = y
     
@@ -135,32 +135,21 @@ def initialize_catalog(cat, self) :
 
 class catalog :
     def __init__(self, cat, fits_image, color=[1., 1., 0.], mag_colnames=['magAB_F814W', 'magAB_F435W'], use_default_names=True, units=None) :
-        self.image_data = fits_image.image_data
-        self.image_wcs = fits_image.wcs
-        self.qt_plot = fits_image.qt_plot
-        self.window = fits_image.window
-        self.image_path = fits_image.image_path
-        self.image_widget = fits_image.image_widget
-        self.image_widget_layout = fits_image.image_widget_layout
-        self.mpl_ax = fits_image.ax
-        self.mpl_fig = fits_image.fig
-        self.pix_deg_scale = fits_image.pix_deg_scale
-        self.world_to_image = fits_image.world_to_image
+        self.fits_image = fits_image
         
         self.mag_colnames = mag_colnames
         self.use_default_names = use_default_names
         self.units = units
         
         self.cat, self.ref_path = initialize_catalog(cat, self)
-        
-        self.qtItems = np.empty(len(cat), dtype=PyQt5.QtWidgets.QGraphicsEllipseItem)
-        #self.qtItems = np.empty(len(cat), dtype=utils.utils_classes.selectable_ellipse.SelectableEllipse)
+        self.qtItems = np.empty(len(self.cat), dtype=PyQt5.QtWidgets.QGraphicsEllipseItem)
+        #self.qtItems = np.empty(len(self.cat), dtype=utils.utils_classes.selectable_ellipse.SelectableEllipse)
         self.color = color
-        self.selection_mask = np.full(len(cat), False)
+        self.selection_mask = np.full(len(self.cat), False)
         self.selection_regions = []
         self.RS_widget = None
-        self.x_axis_cleaned = np.full(len(cat), None)
-        self.y_axis_cleaned = np.full(len(cat), None)
+        self.x_axis_cleaned = np.full(len(self.cat), None)
+        self.y_axis_cleaned = np.full(len(self.cat), None)
     
     
     def make_mask_naninf(self, xy_axes=None) :
@@ -191,6 +180,7 @@ class catalog :
         self.selection_mask = np.full(len(self.cat), False)
     
     def plot(self, scale=1., color=None, text_column=None) :
+        self.clear()
         x = self.cat['x']
         y = self.cat['y']
         semi_major = self.cat['a'] * scale
@@ -207,7 +197,9 @@ class catalog :
     def clear(self) :
         # Clear ellipses
         for i in tqdm( range(len(self.qtItems)) ) :
-            self.qt_plot.removeItem(self.qtItems[i])
+            if self.qtItems[i] is not None :
+                self.fits_image.qt_plot.removeItem(self.qtItems[i])
+                self.qtItems[i] = None
         
         # Clear text items if they exist
         if hasattr(self, 'text_items'):
@@ -215,7 +207,7 @@ class catalog :
     
     def clear_column(self) :
         for text_item in self.text_items:
-            self.qt_plot.removeItem(text_item)
+            self.fits_image.qt_plot.removeItem(text_item)
         self.text_items.clear()
     
     def clear_selection(self) :
@@ -230,20 +222,20 @@ class catalog :
         else :
             color = list(np.array(color)*255)
         #make the flip to accomosate pyqtgraph's strange plotting conventions
-        y = self.image_data.shape[0] - y
+        y = self.fits_image.image_data.shape[0] - y
         angle = -angle
         #####################################################################
         ellipse = SelectableEllipse(x-semi_major/2, y-semi_minor/2, semi_major, semi_minor, idx, self.selection_mask, \
                                     self.qtItems, color, scatter_pos=(self.x_axis_cleaned[idx], self.y_axis_cleaned[idx]), RS_widget=self.RS_widget)
         ellipse.setTransformOriginPoint( PyQt5.QtCore.QPointF(x, y) )
         ellipse.setRotation(angle)
-        self.qt_plot.addItem(ellipse)
+        self.fits_image.qt_plot.addItem(ellipse)
         return ellipse
     
     def plot_selection_panel(self, xy_axes=None) :
         self.make_mask_naninf(xy_axes=xy_axes)
         
-        self.RS_widget, self.selection_ROI = plot_panel(self.x_axis_cleaned, self.y_axis_cleaned, self.image_widget_layout, self.qt_plot)
+        self.RS_widget, self.selection_ROI = plot_panel(self.x_axis_cleaned, self.y_axis_cleaned, self.fits_image.image_widget_layout, self.fits_image.qt_plot)
         
         data=(self.x_axis_cleaned, self.y_axis_cleaned)
         #self.selection_mask = np.full(len(self.mag_F444W_cleaned), False)
@@ -251,16 +243,16 @@ class catalog :
                                                     qtItems=self.qtItems, color=list(np.array(self.color)*255))
             
     def make_image_ROI(self) :
-        center_y = self.image_data.shape[0]/2
-        center_x = self.image_data.shape[1]/2
-        self.image_ROI = ellipse_maker_ROI([center_x-200, center_y-100], [400, 200], self.qt_plot, self.window, self.cat)
+        center_y = self.fits_image.image_data.shape[0]/2
+        center_x = self.fits_image.image_data.shape[1]/2
+        self.image_ROI = ellipse_maker_ROI([center_x-200, center_y-100], [400, 200], self.fits_image.qt_plot, self.fits_image.window, self.cat)
         make_handles(self.image_ROI)
-        self.qt_plot.addItem(self.image_ROI)
+        self.fits_image.qt_plot.addItem(self.image_ROI)
         
     def make_cleaner_ROI(self) :
-        self.image_widget.cat = self
-        self.select_sources = SelectSources(self.cat, self.qt_plot, self.image_widget.current_ROI, self.selection_mask, self.selection_regions, \
-                                            window=self.window, qtItems=self.qtItems, color=list(np.array(self.color)*255))
+        self.fits_image.image_widget.cat = self
+        self.select_sources = SelectSources(self.cat, self.fits_image.qt_plot, self.fits_image.image_widget.current_ROI, self.selection_mask, self.selection_regions, \
+                                            window=self.fits_image.window, qtItems=self.qtItems, color=list(np.array(self.color)*255))
         
     def save_selection_mask(self, path=None) :
         self.selection_mask_path = self.make_path(path, self.ref_path, 'selection_mask.npy')
@@ -271,21 +263,21 @@ class catalog :
         self.selection_mask = np.load(self.selection_mask_path)
         
     def save_selection_regions(self, path=None) :
-        self.selection_regions_path = self.make_path(path, self.image_path, 'selection_regions.npy')
+        self.selection_regions_path = self.make_path(path, self.fits_image.image_path, 'selection_regions.npy')
         np.save(self.selection_regions_path, self.selection_regions)
         
     def load_selection_regions(self, path=None, name='selection_regions.npy') :
-        self.selection_regions_path = self.make_path(path, self.image_path, name)
+        self.selection_regions_path = self.make_path(path, self.fits_image.image_path, name)
         self.selection_regions = np.load(self.selection_regions_path).tolist()
         
-        size_y = self.qt_plot.image.shape[0]
+        size_y = self.fits_image.qt_plot.image.shape[0]
         for rect_params in self.selection_regions :
             indiv_mask = InRectangle(self.cat['x'], size_y - self.cat['y'], rect_params)
             self.selection_mask[indiv_mask] = True
         
         fig, ax = plt.subplots()
         ax.axis('equal')
-        size = max(self.qt_plot.image.shape[0], self.qt_plot.image.shape[1])
+        size = max(self.fits_image.qt_plot.image.shape[0], self.fits_image.qt_plot.image.shape[1])
         #ax.invert_yaxis()
         ax.set_ylim([size+2000, -2000])
         ax.set_xlim([-4000, size+4000])
@@ -321,9 +313,9 @@ class catalog :
         facecolor[-1] = 0
         ellipse = Ellipse( (x, y), a, b, angle=theta, facecolor=facecolor, edgecolor=edgecolor, lw=linewidth )
         if ax is None :
-            self.mpl_ax.add_artist(ellipse)
+            self.fits_image.mpl_ax.add_artist(ellipse)
             if text is not None :
-                #self.mpl_ax.text(x-1.5*b*np.abs(np.sin(theta)), y-1.5*b*np.abs(np.cos(theta)), text, color=edgecolor[:3], \
+                #self.fits_image.mpl_ax.text(x-1.5*b*np.abs(np.sin(theta)), y-1.5*b*np.abs(np.cos(theta)), text, color=edgecolor[:3], \
                 #                 ha='right', va='top')
                 offset = 0.85
                 theta_modulo = theta%180 * np.pi/180
@@ -333,9 +325,9 @@ class catalog :
                 else :
                     x_text, y_text = x-offset*b*np.abs(np.sin(theta_modulo)), y-offset*b*np.abs(np.cos(theta_modulo))
                     horizontalalignment, verticalalignment = 'right', 'top'
-                self.mpl_ax.text( x_text, y_text, text, c=text_color, alpha=1, fontsize=15, \
-                                  ha=horizontalalignment, va=verticalalignment, \
-                                  bbox=dict(facecolor=edgecolor[:3], alpha=text_alpha, edgecolor='none') )
+                self.fits_image.mpl_ax.text( x_text, y_text, text, c=text_color, alpha=1, fontsize=15, \
+                                              ha=horizontalalignment, va=verticalalignment, \
+                                              bbox=dict(facecolor=edgecolor[:3], alpha=text_alpha, edgecolor='none') )
         else :
             ax.add_artist(ellipse)
             if text is not None :
@@ -355,7 +347,7 @@ class catalog :
     
     def export_to_mult_file(self, file_path=None) :
         if file_path is None :
-            file_path = os.path.join(os.path.dirname(self.image_path), 'mult.lenstool')
+            file_path = os.path.join(os.path.dirname(self.fits_image.image_path), 'mult.lenstool')
         
         sub_cat = self.cat[self.selection_mask]
         
@@ -371,6 +363,28 @@ class catalog :
                     line = (f"{row['id']:<3}  {row['ra']:10.6f}  {row['dec']:10.6f}  "
                             "0.0  0.0  0.0  0.0  0.0\n")
                 f.write(line)
+                
+    
+    def export_to_potfile(self, file_path=None) :
+        ref_col = self.mag_colnames[0]
+        sort_array = np.argsort(self.cat[ref_col])
+        sorted_cat = self.cat[sort_array]
+        
+        lines = []
+        lines.append('#REFERENCE 0\n')
+        lines.append('## id   RA   Dec        a        b        theta     mag       lum\n')
+        
+        for i, galaxy in enumerate(sorted_cat) :
+            lines.append( '%d %f %f %f %f %f %f 0.\n' % (i+1, galaxy['ra'], galaxy['dec'], galaxy['a'], galaxy['b'], galaxy['theta']-self.fits_image.orientation, galaxy[ref_col]) )
+        
+        if file_path is None :
+            if self.ref_path is not None :
+                file_path = os.path.join( os.path.dirname(self.ref_path), 'exported_potfile.lenstool')
+            else :
+                file_path = os.path.join( os.path.dirname(self.fits_image.image_path), 'exported_potfile.lenstool')
+        with open(file_path, 'w') as file:
+            file.writelines(lines)
+        
     
     def plot_column(self, text_column, color=None):
         """
@@ -398,7 +412,7 @@ class catalog :
     
         # Clear existing text items if any
         for text_item in self.text_items:
-            self.qt_plot.removeItem(text_item)
+            self.fits_image.qt_plot.removeItem(text_item)
         self.text_items.clear()
     
         # Add new text labels
@@ -408,7 +422,7 @@ class catalog :
     
             # Get ellipse position and size for offset calculation
             x = self.cat['x'][i]
-            y = self.image_data.shape[0] - self.cat['y'][i]  # Flip y to match PyQtGraph convention
+            y = self.fits_image.image_data.shape[0] - self.cat['y'][i]  # Flip y to match PyQtGraph convention
             semi_major = self.cat['a'][i]
             semi_minor = self.cat['b'][i]
     
@@ -421,7 +435,7 @@ class catalog :
             font.setPointSize(15)
             text_item.setFont(font)
 
-            self.qt_plot.addItem(text_item)
+            self.fits_image.qt_plot.addItem(text_item)
             self.text_items.append(text_item)
             
             
