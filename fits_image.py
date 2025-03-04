@@ -85,6 +85,8 @@ class fits_image :
                              'multiple_images': None}
         self.ax = None
         self.redshift = None
+        self.boosted_image = None
+        self.boosted = False
     
     def open_image(self) :
         with fits.open(self.image_path) as hdus :
@@ -189,7 +191,7 @@ class fits_image :
         
         self.qt_plot = pg.ImageView()
         self.qt_plot.setImage(to_plot)
-        self.qt_plot.autoLevels()
+        #self.qt_plot.autoLevels()
         
         self.image_widget_layout = QHBoxLayout()
         self.image_widget_layout.addWidget(self.qt_plot)
@@ -220,6 +222,28 @@ class fits_image :
         """
         
         return self.qt_plot
+    
+    def boost(self, boost=[2,1.5,1]) :
+        if self.boosted_image is None :
+            print('Adjusting contrast...')
+            adjusted_image = adjust_contrast(self.image_data, boost[0], pivot=boost[1])
+            print('Done')
+            print('Adjusting luminosity...')
+            self.boosted_image = adjust_luminosity(adjusted_image, boost[2])
+            print('Done')
+            print('Plotting...')
+            self.qt_plot.setImage(np.flip(self.boosted_image, axis=0))
+            #self.qt_plot.autoLevels()
+            self.boosted = True
+        elif not self.boosted :
+            self.qt_plot.setImage(np.flip(self.boosted_image, axis=0))
+            self.boosted
+    
+    def unboost(self) :
+        if self.boosted :
+            self.qt_plot.setImage(np.flip(self.image_data, axis=0))
+            #self.qt_plot.autoLevels()
+            self.boosted = False
     
     def plot_image_mpl(self, wcs_projection=True, units='pixel', pos=111, make_axes_labels=True, make_grid=True, crop=None, replace_image=True, extra_pad=None) :
         fig, ax = plot_image_mpl(self.image_data, wcs=self.wcs, wcs_projection=wcs_projection, units=units, pos=pos, \

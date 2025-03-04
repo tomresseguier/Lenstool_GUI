@@ -438,7 +438,12 @@ class catalog :
             self.fits_image.qt_plot.addItem(text_item)
             self.text_items.append(text_item)
             
-            
+    
+    
+    def export_thumbnails(self, mask=None, group_images=True) :
+        if mask is None :
+            mask = self.selection_mask
+        ### TO DO ###
 
 
 

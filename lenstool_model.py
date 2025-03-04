@@ -19,7 +19,9 @@ import types
 import PyQt5
 from PyQt5.QtWidgets import QMainWindow, QWidget, QHBoxLayout
 import pyqtgraph as pg
+import pyqtgraph.exporters
 from PyQt5.QtWidgets import QGraphicsEllipseItem, QGraphicsScene, QGraphicsView, QGraphicsSceneMouseEvent, QApplication
+from PyQt5.QtCore import QRectF
 #from PyQt5.QtCore import Qt
 from pyqtgraph.Qt import QtCore
 from astropy.table import Table
@@ -85,32 +87,49 @@ def make_full_color_function(families) :
 
 
 def import_multiple_images(self, mult_file_path, fits_image, units=None, AttrName='mult', filled_markers=False) :
-    multiple_images = Table(names=['id','ra','dec','a','b','theta','z','mag'], dtype=['str',*['float',]*7])
+    multiple_images = Table(names=['id','family','ra','dec','a','b','theta','z','mag'], dtype=['str','str',*['float',]*7])
     with open(mult_file_path, 'r') as mult_file:
         for line in mult_file:
             cleaned_line = line.strip()
             if not cleaned_line.startswith("#") and len(cleaned_line)>0 :
                 split_line = cleaned_line.split()
-                row = [split_line[0]]
+                row = [split_line[0], split_line[0][:-1]]
                 for element in split_line[1:8] :
                     row.append(float(element))
                 multiple_images.add_row(row)
     multiple_images['theta'] = multiple_images['theta'] - fits_image.orientation
     
-    
     setattr(self, AttrName, fits_image.make_catalog(multiple_images, units=units))
     if AttrName=='mult' :
-        self.families = np.unique( [s[:-1] for s in getattr(self, AttrName).cat['id']] )
+        self.families = np.unique([ im_id[:-1] for im_id in getattr(self, AttrName).cat['id'] ])
         self.mult_colors = make_full_color_function(self.families)
-        self.which = self.families.copy()
+        self.which = self.families.tolist()
     
     def make_to_plot_masks() :
         to_plot_masks = {}
+        #for i, name in enumerate(self.which) :
+        #    other_names_mask = np.full(len(self.which), True)
+        #    other_names_mask[i] = False
+        #    other_names = np.array(self.which)[other_names_mask]
+        #    ambiguous_names = []
+        #    for other_name in other_names :
+        #        if other_name.startswith(name) :
+        #           ambiguous_names.append(other_name)
+        #    to_plot_mask = np.full(len(getattr(self, AttrName).cat), False)
+        #    for j, im_id in enumerate(getattr(self, AttrName).cat['id']) :
+        #        if im_id.startswith(name) and True not in [ im_id.startswith(ambiguous_name) for ambiguous_name in ambiguous_names ] :
+        #            to_plot_mask[j] = True
+        #    to_plot_masks[name] = to_plot_mask
         for name in self.which :
-            to_plot_masks[name] = np.array([ im_id.startswith(name) for im_id in getattr(self, AttrName).cat['id'] ])
+            to_plot_masks[name] = np.array([ im_id[:-1]==name for im_id in getattr(self, AttrName).cat['id'] ])
         return to_plot_masks
+    def make_overall_mask() :
+        overall_mask = np.full(len(getattr(self, AttrName).cat), False)
+        for mask in make_to_plot_masks().values() :
+            overall_mask = np.logical_or(overall_mask, mask)
+        return overall_mask
     getattr(self, AttrName).masks = make_to_plot_masks
-        
+    getattr(self, AttrName).mask = make_overall_mask
     
     lenstool_model = self
     
@@ -119,7 +138,7 @@ def import_multiple_images(self, mult_file_path, fits_image, units=None, AttrNam
                              boost=[2,1.5,1], linewidth=1.7, text_color='white', text_alpha=0.5) :
         self.clear()
         
-        if colors is not None:
+        if colors is not None :
             colors_dict = {}
             for i, family in enumerate(lenstool_model.which) :
                 colors_dict[family] = colors[i]
@@ -148,6 +167,7 @@ def import_multiple_images(self, mult_file_path, fits_image, units=None, AttrNam
                                              text=multiple_image['id'], linewidth=linewidth, text_color=text_color, text_alpha=text_alpha)
                     #self.plot_one_galaxy_mpl(multiple_image['x'], multiple_image['y'], a, b, multiple_image['theta'], color=colors_dict[name][:3], text=multiple_image['id'])
         
+        
         if make_thumbnails :
             if boost is not None :
                 adjusted_image = adjust_contrast(self.fits_image.image_data, boost[0], pivot=boost[1])
@@ -155,7 +175,11 @@ def import_multiple_images(self, mult_file_path, fits_image, units=None, AttrNam
             else :
                 adjusted_image = self.fits_image.image_data
             
-            group_list = find_close_coord(self.cat, distance)
+            if group_images :
+                group_list = find_close_coord(self.cat[self.mask()], distance)
+            else :
+                group_list = [[name] for name in self.cat[self.mask()]['id']]
+            
             for group in group_list :
                 
                 x_array = [self.cat[np.where(self.cat['id']==name)[0][0]]['x'] for name in group]
@@ -250,6 +274,54 @@ def import_multiple_images(self, mult_file_path, fits_image, units=None, AttrNam
     
     getattr(self, AttrName).plot = types.MethodType(plot_multiple_images, getattr(self, AttrName))
     getattr(self, AttrName).plot_column = types.MethodType(plot_multiple_images_column, getattr(self, AttrName))
+
+
+def export_thumbnails(self, group_images=True, square_thumbnails=True, square_size=150, margin=50, distance=200) :
+    self.fits_image.boost()
+    
+    if group_images :
+        group_list = find_close_coord(self.cat[self.mask()], distance)
+    else :
+        group_list = [[name] for name in self.cat[self.mask()]['id']]
+    
+    for group in group_list :
+        
+        x_array = [self.cat[np.where(self.cat['id']==name)[0][0]]['x'] for name in group]
+        y_array = [self.cat[np.where(self.cat['id']==name)[0][0]]['y'] for name in group]
+        
+        x_pix = (np.max(x_array) + np.min(x_array)) / 2
+        y_pix = (np.max(y_array) + np.min(y_array)) / 2
+        
+        half_side = square_size // 2
+        
+        x_min = round( max( min( np.min(x_array) - margin, x_pix - half_side ), 0) )
+        x_max = round( min( max( np.max(x_array) + margin, x_pix + half_side ), self.fits_image.image_data.shape[1]) )
+        y_min = round( max( min( np.min(y_array) - margin, y_pix - half_side ), 0) )
+        y_max = round( min( max( np.max(y_array) + margin, y_pix + half_side ), self.fits_image.image_data.shape[0]) )
+        
+        if square_thumbnails :
+            x_side_size = x_max - x_min
+            y_side_size = y_max - y_min
+            if x_side_size!=y_side_size :
+                demi_taille_unique = round( max(x_side_size, y_side_size)/2 )
+                x_pix = round( (x_max + x_min)/2 )
+                y_pix = round( (y_max + y_min)/2 )
+                x_min = x_pix - demi_taille_unique
+                x_max = x_pix + demi_taille_unique
+                y_min = y_pix - demi_taille_unique
+                y_max = y_pix + demi_taille_unique
+                
+        zoom_rect = QRectF(x_min, self.fits_image.image_data.shape[0] - y_max, demi_taille_unique*2, demi_taille_unique*2)
+        self.fits_image.qt_plot.getView().setRange(zoom_rect)        
+        
+        
+        print('Creating ' + os.path.dirname(self.fits_image.image_path), 'mult_' + group[0] + '.png')
+        exporter = pg.exporters.ImageExporter(self.fits_image.qt_plot.view)
+        exporter.export( os.path.join( os.path.dirname(self.fits_image.image_path), 'mult_' + group[0] + '.png' ) )
+        print('Done')
+        
+    self.fits_image.unboost()
+
 
 
 
@@ -417,14 +489,14 @@ class lenstool_model :
         if self.curves is not None :
             self.curves.clear()
             
-    def set_which(self, which) :
-        if which=='all' :
-            self.which = self.families.copy()
-        elif isinstance(which, str) :
-            self.which = [which]
+    def set_which(self, *names) :
+        if names[0]=='all' :
+            self.which = self.families.tolist()
+        elif isinstance(names[0], list) :
+            self.which = names[0]
         else :
-            self.which = which
-        print("Images to plot are now ", which)
+            self.which = list(names)
+        print("Images to plot are now ", self.which)
         #self.clear()
         #self.plot()
         
@@ -432,8 +504,14 @@ class lenstool_model :
         best_files_maker(self.model_dir)
         make_magnifications_and_curves(self.model_dir)
     #def relative_to_mosaic_pixel
+    
+    
+    def export_thumbnails(self, group_images=True, square_thumbnails=True, square_size=150, margin=50) :
+        export_thumbnails(self.mult, group_images=True, square_thumbnails=True, square_size=150, margin=50)
         
-        
+    
+    def test(self) :
+        print('yaha')
         
         
         
