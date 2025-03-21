@@ -54,11 +54,12 @@ def open_cat(cat_path) :
         cat = Table.read(cat_path, format='fits')
     else :
         with open(cat_path, 'r') as raw_cat :
-            first_line = raw_cat.readlines()[0]
+            first_line, second_line = raw_cat.readlines()[0:2]
+            start_line = 1 if second_line.startswith('--') else 0
         if len(first_line.split()) > len(first_line.split(',')) :
-            cat_df = pd.read_csv(cat_path, delim_whitespace=True)[1:].apply(pd.to_numeric, errors='coerce')
+            cat_df = pd.read_csv(cat_path, delim_whitespace=True)[start_line:].apply(pd.to_numeric, errors='coerce')
         else :
-            cat_df = pd.read_csv(cat_path)[1:].apply(pd.to_numeric, errors='coerce')
+            cat_df = pd.read_csv(cat_path)[start_line:].apply(pd.to_numeric, errors='coerce')
         cat = Table.from_pandas(cat_df)
     return cat
 
@@ -348,6 +349,7 @@ class catalog :
     def export_to_mult_file(self, file_path=None) :
         if file_path is None :
             file_path = os.path.join(os.path.dirname(self.fits_image.image_path), 'mult.lenstool')
+        print('Exporting selected sources to ' + file_path)
         
         sub_cat = self.cat[self.selection_mask]
         
@@ -382,6 +384,7 @@ class catalog :
                 file_path = os.path.join( os.path.dirname(self.ref_path), 'exported_potfile.lenstool')
             else :
                 file_path = os.path.join( os.path.dirname(self.fits_image.image_path), 'exported_potfile.lenstool')
+        print('Exporting selected sources to ' + file_path)
         with open(file_path, 'w') as file:
             file.writelines(lines)
         

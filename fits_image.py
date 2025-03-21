@@ -69,7 +69,7 @@ class fits_image :
             self.weight_path = self.image_path[:-8] + 'wht.fits'
         else :
             self.weight_path = None
-        self.image_data, self.pix_deg_scale, self.orientation, self.wcs, self.header = self.open_image()
+        self.image_data, self.pix_deg_scale, self.orientation, self.wcs, self.header = self.open_image(self.image_path)
         ### Following lines useless, just to see the possible attributes of the class ###
         self.sources = None
         self.fig = None
@@ -85,11 +85,18 @@ class fits_image :
                              'multiple_images': None}
         self.ax = None
         self.redshift = None
-        self.boosted_image = None
+        self.boosted_image_path = self.image_path[:-5] + '_boosted.fits'
+        if os.path.isfile(self.boosted_image_path) :
+            print("Boosted image found: " + self.boosted_image_path)
+            self.boosted_image, _, _, _, _ = self.open_image(self.boosted_image_path)
+        else :
+            self.boosted_image = None
         self.boosted = False
+        self.extra_qt_plots = []
+        self.extra_windows = []
     
-    def open_image(self) :
-        with fits.open(self.image_path) as hdus :
+    def open_image(self, image_path) :
+        with fits.open(image_path) as hdus :
             if isinstance(hdus, fits.hdu.hdulist.HDUList) :
                 image_hdus = []
                 for hdu in hdus :
@@ -113,6 +120,7 @@ class fits_image :
                     keyword = 'EXTNAME'
                 elif True in np.unique(['FILETYPE' in true_image_hdu.header for true_image_hdu in true_image_hdus]) :
                     keyword = 'FILETYPE'
+                print("keyword is", keyword)
                 if keyword is None :
                     print("No 'SCI' extname found.")
                     selected_hdus = true_image_hdus
@@ -129,7 +137,8 @@ class fits_image :
                             if true_image_hdu.header[keyword]=='WHT' :
                                 wht_hdus.append(true_image_hdu)
                                 print('Weight image found.')
-                
+                    if len(selected_hdus)==0 and len(wht_hdus)==0 :
+                        selected_hdus = true_image_hdus
                 
                 
                 if len(selected_hdus)==3 :
@@ -151,18 +160,25 @@ class fits_image :
                 
                 if 'ORIENTAT' in header :
                     orientation = header['ORIENTAT']
-                elif 'CD1_1' in header and 'CD1_2' in header and 'CD2_1' in header and 'CD2_2' in header :
-                    cd = np.array([[header['CD1_1'], header['CD1_2']], [header['CD2_1'], header['CD2_2']]])
-                    #det = np.linalg.det(cd)
-                    #sign = np.sign(det)
-                    orientation = np.arctan2(cd[1,0], cd[1,1])
-                elif 'PC1_1' in header and 'PC1_2' in header and 'PC2_1' in header and 'PC2_2' in header :
-                    cd = np.array([[header['PC1_1'], header['PC1_2']], [header['PC2_1'], header['PC2_2']]])
-                    #det = np.linalg.det(cd)
-                    #sign = np.sign(det)
-                    orientation = np.arctan2(cd[1,0], cd[1,1])
+                elif 'CD1_1' in header and 'CD2_2' in header :
+                    if 'CD1_2' in header and 'CD2_1' in header :
+                        cd = np.array([[header['CD1_1'], header['CD1_2']], [header['CD2_1'], header['CD2_2']]])
+                        #det = np.linalg.det(cd)
+                        #sign = np.sign(det)
+                        orientation = np.arctan2(cd[1,0], cd[1,1])
+                    else :
+                        orientation = 0.0
+                elif 'PC1_1' in header and 'PC2_2' in header :
+                    if 'PC1_2' in header and 'PC2_1' in header :
+                        cd = np.array([[header['PC1_1'], header['PC1_2']], [header['PC2_1'], header['PC2_2']]])
+                        #det = np.linalg.det(cd)
+                        #sign = np.sign(det)
+                        orientation = np.arctan2(cd[1,0], cd[1,1])
+                    else :
+                        orientation = 0.0                    
                 else :
                     orientation = None
+                orientation = np.rad2deg(orientation) if orientation is not None else None
                 
                 ### Finding the pixel scale ###
                 #if 'CD1_1' in hdus[0].header.keys() :
@@ -175,75 +191,79 @@ class fits_image :
                 #    pix_deg_scale = input('Pixel scale not found in header. Please provide manually in degrees:')
                 pix_deg_scale = np.sqrt(wcs.pixel_scale_matrix[0, 0]**2+wcs.pixel_scale_matrix[0, 1]**2)
                 
-                return image, pix_deg_scale, np.rad2deg(orientation), wcs, header
+                return image, pix_deg_scale, orientation, wcs, header
             
             else :
                 print('Unable to extract image data from FITS file')
                 return None
-                
-    def plot_image(self) :
-        #if self.qt_plot is None :
-        #to_plot = self.image_data
-        #to_plot = np.transpose(self.image_data, axes=[1,0,2])
-        to_plot = np.flip(self.image_data, axis=0)
+    
+    def create_qt_plot(self) :
+        to_plot = np.flip(self.image_data, axis=0) if not self.boosted else np.flip(self.boosted_image, axis=0)
         
-        #self.qt_plot = pg.image(to_plot)
+        #qt_plot = pg.image(to_plot)
+        qt_plot = pg.ImageView()
+        qt_plot.setImage(to_plot)
+        #qt_plot.autoLevels()
         
-        self.qt_plot = pg.ImageView()
-        self.qt_plot.setImage(to_plot)
-        #self.qt_plot.autoLevels()
-        
-        self.image_widget_layout = QHBoxLayout()
-        self.image_widget_layout.addWidget(self.qt_plot)
+        image_widget_layout = QHBoxLayout()
+        image_widget_layout.addWidget(qt_plot)
         
         #self.image_widget = QWidget()
-        self.image_widget = DragWidget(self.qt_plot)
-        self.image_widget.setLayout(self.image_widget_layout)
+        image_widget = DragWidget(qt_plot)
+        image_widget.setLayout(image_widget_layout)
         
-        self.window = QMainWindow()
-        self.window.setWindowTitle(os.path.basename(self.image_path))
-        self.window.setCentralWidget(self.image_widget)
-        self.window.show()
-        
-        #win = pg.GraphicsLayoutWidget()
-        #win.setWindowTitle(os.path.basename(image.image_path))
-        #win.show()
-        
-        #win_element = win.addPlot()
-        #win_element.addItem(image.qt_plot, row=0, col=0)
-        ########################################
-        
-        """
-        self.qt_plot = pg.ImageItem(to_plot)
-        self.window = pg.GraphicsLayoutWidget()
-        plot_element = self.window.addPlot(title=os.path.basename(self.image_path))
-        plot_element.addItem(self.qt_plot)
-        self.window.show()
-        """
-        
-        return self.qt_plot
+        window = QMainWindow()
+        window.setWindowTitle(os.path.basename(self.image_path))
+        window.setCentralWidget(image_widget)
+        window.show()
+        return qt_plot, image_widget_layout, image_widget, window
+    
+    def plot_image(self) :
+        #to_plot = self.image_data
+        #to_plot = np.transpose(self.image_data, axes=[1,0,2])
+        if self.qt_plot is None or not self.qt_plot.isVisible() :
+            print('Creating main window...')
+            self.qt_plot, self.image_widget_layout, self.image_widget, self.window = self.create_qt_plot()
+            print('Done')
+            to_return = self.qt_plot
+        else :
+            print('Creating secondary window...')
+            extra_qt_plot, _, _, extra_window = self.create_qt_plot()
+            extra_window.setWindowTitle(os.path.basename(self.image_path) + ' (' + str(len(self.extra_qt_plots)+2) + ')')
+            extra_window.show()
+            self.extra_qt_plots.append(extra_qt_plot)
+            self.extra_windows.append(extra_window)
+            print('Done')
+            to_return = extra_qt_plot
+        return to_return
     
     def boost(self, boost=[2,1.5,1]) :
         if self.boosted_image is None :
             print('Adjusting contrast...')
             adjusted_image = adjust_contrast(self.image_data, boost[0], pivot=boost[1])
-            print('Done')
             print('Adjusting luminosity...')
             self.boosted_image = adjust_luminosity(adjusted_image, boost[2])
-            print('Done')
+            print('Writing to memory...')
+            hdul = fits.HDUList([fits.PrimaryHDU()] + [ fits.ImageHDU(data=self.boosted_image[:,:,i], header=self.wcs.to_header(), name=name) for i, name in enumerate(['RED','GREEN','BLUE']) ])
+            hdul.writeto(self.boosted_image_path, overwrite=True)
+        if not self.boosted :
             print('Plotting...')
             self.qt_plot.setImage(np.flip(self.boosted_image, axis=0))
             #self.qt_plot.autoLevels()
             self.boosted = True
-        elif not self.boosted :
-            self.qt_plot.setImage(np.flip(self.boosted_image, axis=0))
-            self.boosted
+            for extra_qt_plot in self.extra_qt_plots :
+                extra_qt_plot.setImage(np.flip(self.boosted_image, axis=0))
+            print('Done')
     
     def unboost(self) :
         if self.boosted :
+            print('Plotting...')
             self.qt_plot.setImage(np.flip(self.image_data, axis=0))
             #self.qt_plot.autoLevels()
             self.boosted = False
+            for extra_qt_plot in self.extra_qt_plots :
+                extra_qt_plot.setImage(np.flip(self.image_data, axis=0))
+            print('Done')
     
     def plot_image_mpl(self, wcs_projection=True, units='pixel', pos=111, make_axes_labels=True, make_grid=True, crop=None, replace_image=True, extra_pad=None) :
         fig, ax = plot_image_mpl(self.image_data, wcs=self.wcs, wcs_projection=wcs_projection, units=units, pos=pos, \

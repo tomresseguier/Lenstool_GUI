@@ -55,13 +55,13 @@ cosmo = set_cosmo()
 
 
 
-def make_which_colors(self, filled_markers=False) :
+def make_which_colors(self, filled_markers=False, saturation=None) :
     which = self.families if self.which=='all' else self.which
     
     if filled_markers:
-        colors = make_palette(len(which), 1, alpha=0.5)
+        colors = make_palette(len(which), 1, alpha=0.5, sat_fixed=saturation)
     else:
-        colors = make_palette(len(which), 1, alpha=0)
+        colors = make_palette(len(which), 1, alpha=0, sat_fixed=saturation)
     
     which_colors_dict = {}
     for i, name in enumerate(which) :
@@ -74,11 +74,11 @@ def make_which_colors(self, filled_markers=False) :
 
 def make_full_color_function(families) :
     n_families = len(families)
-    def make_full_color_dict(filled_markers=False) :
+    def make_full_color_dict(filled_markers=False, saturation=None) :
         if filled_markers:
-            colors = make_palette(n_families, 1, alpha=0.5)
+            colors = make_palette(n_families, 1, alpha=0.5, sat_fixed=saturation)
         else:
-            colors = make_palette(n_families, 1, alpha=0)
+            colors = make_palette(n_families, 1, alpha=0, sat_fixed=saturation)
         full_colors_dict = {}
         for i, family in enumerate(families) :
             full_colors_dict[family] = colors[i]
@@ -86,7 +86,7 @@ def make_full_color_function(families) :
     return make_full_color_dict
 
 
-def import_multiple_images(self, mult_file_path, fits_image, units=None, AttrName='mult', filled_markers=False) :
+def import_multiple_images(self, mult_file_path, fits_image, units=None, AttrName='mult', filled_markers=False, saturation=None) :
     multiple_images = Table(names=['id','family','ra','dec','a','b','theta','z','mag'], dtype=['str','str',*['float',]*7])
     with open(mult_file_path, 'r') as mult_file:
         for line in mult_file:
@@ -135,15 +135,16 @@ def import_multiple_images(self, mult_file_path, fits_image, units=None, AttrNam
     
     def plot_multiple_images(self, size=40, marker='o', filled_markers=filled_markers, colors=None, mpl=False, fontsize=9,
                              make_thumbnails=False, square_size=150, margin=50, distance=200, savefig=False, square_thumbnails=True,
-                             boost=[2,1.5,1], linewidth=1.7, text_color='white', text_alpha=0.5) :
+                             boost=[2,1.5,1], linewidth=1.7, text_color='white', text_alpha=0.5, saturation=saturation) :
         self.clear()
+        self.saturation = saturation
         
         if colors is not None :
             colors_dict = {}
             for i, family in enumerate(lenstool_model.which) :
                 colors_dict[family] = colors[i]
         else :
-            colors_dict = lenstool_model.mult_colors(filled_markers=filled_markers)
+            colors_dict = lenstool_model.mult_colors(filled_markers=filled_markers, saturation=saturation)
         
         
         cat_contains_ellipse_params = len(np.unique(self.cat['a']))!=1
@@ -249,7 +250,7 @@ def import_multiple_images(self, mult_file_path, fits_image, units=None, AttrNam
             self.fits_image.qt_plot.removeItem(text_item)
         self.text_items.clear()
         
-        colors_dict = lenstool_model.mult_colors(filled_markers=False)
+        colors_dict = lenstool_model.mult_colors(filled_markers=False, saturation=self.saturation)
         
         for name, mask in self.masks().items() :
             for multiple_image in self.cat[mask] :
@@ -432,8 +433,11 @@ class lenstool_model :
         potfile_paths_list = glob.glob(os.path.join(self.model_dir, "*potfile*.lenstool"))
         self.potfile_path = potfile_paths_list[0] if len(potfile_paths_list)>=1 else None
         
-        potfile_Table = read_potfile(self.potfile_path)
-        self.potfile = fits_image.make_catalog(potfile_Table, color=[1.,0.,0.], units='arcsec')
+        if self.potfile_path is not None :
+            potfile_Table = read_potfile(self.potfile_path)
+            self.potfile = fits_image.make_catalog(potfile_Table, color=[1.,0.,0.], units='arcsec')
+        else :
+            self.potfile = None
         
         mult_idx = np.where(['mult' in name for name in all_cat_file_paths])[0]
         if len(mult_idx)==1 :

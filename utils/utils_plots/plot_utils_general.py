@@ -14,9 +14,9 @@ from utils_astro.set_cosmology import set_cosmo
 cosmo = set_cosmo()
 
 
-def make_palette(hue_range, sat_range, alpha=1) :
+def make_palette(hue_range, sat_range, alpha=1, sat_fixed=None) :
     hues = np.linspace(0, 1-1/hue_range, hue_range)
-    sats = np.linspace(1, 0, sat_range)
+    sats = np.linspace(1, 0, sat_range) if sat_fixed is None else [sat_fixed]
     colors = []
     for sat in sats :
         for hue in hues :
