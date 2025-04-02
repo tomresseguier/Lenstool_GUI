@@ -278,7 +278,8 @@ def import_multiple_images(self, mult_file_path, fits_image, units=None, AttrNam
 
 
 def export_thumbnails(self, group_images=True, square_thumbnails=True, square_size=150, margin=50, distance=200) :
-    self.fits_image.boost()
+    if not self.fits_image.boosted :
+        self.fits_image.boost()
     
     if group_images :
         group_list = find_close_coord(self.cat[self.mask()], distance)
@@ -300,17 +301,17 @@ def export_thumbnails(self, group_images=True, square_thumbnails=True, square_si
         y_min = round( max( min( np.min(y_array) - margin, y_pix - half_side ), 0) )
         y_max = round( min( max( np.max(y_array) + margin, y_pix + half_side ), self.fits_image.image_data.shape[0]) )
         
-        if square_thumbnails :
-            x_side_size = x_max - x_min
-            y_side_size = y_max - y_min
-            if x_side_size!=y_side_size :
-                demi_taille_unique = round( max(x_side_size, y_side_size)/2 )
-                x_pix = round( (x_max + x_min)/2 )
-                y_pix = round( (y_max + y_min)/2 )
-                x_min = x_pix - demi_taille_unique
-                x_max = x_pix + demi_taille_unique
-                y_min = y_pix - demi_taille_unique
-                y_max = y_pix + demi_taille_unique
+        #if square_thumbnails :
+        x_side_size = x_max - x_min
+        y_side_size = y_max - y_min
+        demi_taille_unique = round( max(x_side_size, y_side_size)/2 )
+        if x_side_size!=y_side_size :
+            x_pix = round( (x_max + x_min)/2 )
+            y_pix = round( (y_max + y_min)/2 )
+            x_min = x_pix - demi_taille_unique
+            x_max = x_pix + demi_taille_unique
+            y_min = y_pix - demi_taille_unique
+            y_max = y_pix + demi_taille_unique
                 
         zoom_rect = QRectF(x_min, self.fits_image.image_data.shape[0] - y_max, demi_taille_unique*2, demi_taille_unique*2)
         self.fits_image.qt_plot.getView().setRange(zoom_rect)        
@@ -321,8 +322,6 @@ def export_thumbnails(self, group_images=True, square_thumbnails=True, square_si
         exporter.export( os.path.join( os.path.dirname(self.fits_image.image_path), 'mult_' + group[0] + '.png' ) )
         print('Done')
         
-    self.fits_image.unboost()
-
 
 
 
@@ -510,8 +509,8 @@ class lenstool_model :
     #def relative_to_mosaic_pixel
     
     
-    def export_thumbnails(self, group_images=True, square_thumbnails=True, square_size=150, margin=50) :
-        export_thumbnails(self.mult, group_images=True, square_thumbnails=True, square_size=150, margin=50)
+    def export_thumbnails(self, group_images=True, square_thumbnails=True, square_size=150, margin=50, distance=200) :
+        export_thumbnails(self.mult, group_images=group_images, square_thumbnails=square_thumbnails, square_size=square_size, margin=margin, distance=distance)
         
     
     def test(self) :

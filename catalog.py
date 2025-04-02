@@ -258,6 +258,7 @@ class catalog :
     def save_selection_mask(self, path=None) :
         self.selection_mask_path = self.make_path(path, self.ref_path, 'selection_mask.npy')
         np.save(self.selection_mask_path, self.selection_mask)
+        print("Selection mask saved at " + self.selection_mask_path)
         
     def load_selection_mask(self, path=None) :
         self.selection_mask_path = self.make_path(path, self.ref_path, 'selection_mask.npy')
@@ -349,7 +350,6 @@ class catalog :
     def export_to_mult_file(self, file_path=None) :
         if file_path is None :
             file_path = os.path.join(os.path.dirname(self.fits_image.image_path), 'mult.lenstool')
-        print('Exporting selected sources to ' + file_path)
         
         sub_cat = self.cat[self.selection_mask]
         
@@ -365,12 +365,14 @@ class catalog :
                     line = (f"{row['id']:<3}  {row['ra']:10.6f}  {row['dec']:10.6f}  "
                             "0.0  0.0  0.0  0.0  0.0\n")
                 f.write(line)
+        print('Selected sources exported at ' + file_path)
                 
     
     def export_to_potfile(self, file_path=None) :
+        cat = self.cat[self.selection_mask] if True in self.selection_mask else self.cat
         ref_col = self.mag_colnames[0]
-        sort_array = np.argsort(self.cat[ref_col])
-        sorted_cat = self.cat[sort_array]
+        sort_array = np.argsort(cat[ref_col])
+        sorted_cat = cat[sort_array]
         
         lines = []
         lines.append('#REFERENCE 0\n')
