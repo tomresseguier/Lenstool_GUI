@@ -101,7 +101,7 @@ def make_uniform_names_cat(cat, self) :
     if colnames_dict['a'] is not None and not self.use_default_names :
         yesno = input("'a', 'b' and 'theta' columns found in catalog. Use them as ellipticity parameters (if not, sources will be shown as circles)? [y] or [n]")
     if colnames_dict['a'] is None or yesno != 'y' :
-        size = 40.
+        size = np.min([self.fits_image.image_data.shape[0], self.fits_image.image_data.shape[1]]) / 1000
         uniform_names_cat['a'] = np.full(len(uniform_names_cat), size)
         uniform_names_cat['b'] = np.full(len(uniform_names_cat), size)
         uniform_names_cat['theta'] = np.full(len(uniform_names_cat), 0.)

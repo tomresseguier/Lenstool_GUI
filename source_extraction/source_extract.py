@@ -47,7 +47,8 @@ def source_extract( image_path, weight_path=None, pixel_scale=0.03, zero_point=N
     if out_dir == 'PWD':
         out_dir = os.getcwd()
     out_path = out_dir + '/' + outfile_name
-    config_dir = os.path.join(module_dir, 'SExtractor_config/from_pyRRG')
+    config_dir = os.path.join(module_dir, 'SExtractor_config/from_DC')
+    #config_dir = os.path.join(module_dir, 'SExtractor_config/from_pyRRG')
     check_sex_files(config_dir)
     
     header = fits.open( image_path )[0].header
@@ -125,7 +126,10 @@ def source_extract( image_path, weight_path=None, pixel_scale=0.03, zero_point=N
     
     
 def acs_zero_point( header ):
-    zpt = -2.5*np.log10(header['PHOTFLAM']) + header['PHOTZPT'] - 5.0*np.log10(header['PHOTPLAM'])+18.6921
+    if 'PHOTFLAM' in header and 'PHOTZPT' in header :
+        zpt = -2.5*np.log10(header['PHOTFLAM']) + header['PHOTZPT'] - 5.0*np.log10(header['PHOTPLAM'])+18.6921
+    else :
+        zpt = 0.
     return zpt
 
 def check_sex_files( config_dir ):
