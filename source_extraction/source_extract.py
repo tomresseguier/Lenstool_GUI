@@ -38,18 +38,26 @@ def source_extract( image_path, weight_path=None, pixel_scale=0.03, zero_point=N
     
     '''
     
-    for name in ['cold_sources.fits', 'hot_sources.fits', 'matched_A_B.fits'] :
-        if os.path.isfile( os.path.join(os.getcwd(), name) ) :
-            yesno = input("file " + "'" + name + "'" + " found. Will be overwritten by the execution of the source extraction. Continue? [y][n]")
-            if yesno!='y' :
-                sys.exit('Execution aborted by user.')
+    #for name in ['cold_sources.fits', 'hot_sources.fits', 'matched_A_B.fits'] :
+    #    if os.path.isfile( os.path.join(os.getcwd(), name) ) :
+    #        yesno = input("file " + "'" + name + "'" + " found. Do you want to rerun source extraction (takes a while)? [y][n]")
+            #if yesno!='y' :
+            #    sys.exit('Execution aborted by user.')
     
     if out_dir == 'PWD':
         out_dir = os.getcwd()
     out_path = out_dir + '/' + outfile_name
-    config_dir = os.path.join(module_dir, 'SExtractor_config/from_DC')
-    #config_dir = os.path.join(module_dir, 'SExtractor_config/from_pyRRG')
-    check_sex_files(config_dir)
+    #config_dir = os.path.join(module_dir, 'SExtractor_config/from_DC')
+    config_dir = os.path.join(module_dir, 'SExtractor_config/from_pyRRG')
+    
+    if " " in config_dir :
+        print('File in Drive, replacing:')
+        print(config_dir)
+        print('with:')
+        config_dir = config_dir.replace('Mobile Documents/com~apple~CloudDocs', 'Mobile_Documents')
+        print(config_dir)
+    
+    #check_sex_files(config_dir)
     
     header = fits.open( image_path )[0].header
     findPhot = np.array(['PHOTFLAM' in key for key in header.keys()])
@@ -61,37 +69,53 @@ def source_extract( image_path, weight_path=None, pixel_scale=0.03, zero_point=N
         
     conf_args = {'PIXEL_SCALE': pixel_scale,
                  'MAG_ZEROPOINT': zero_point,
-                 'WEIGHT_TYPE': 'MAP_WEIGHT',
+                 'WEIGHT_TYPE': 'NONE', #'MAP_WEIGHT'
                  'PARAMETERS_NAME': config_dir + '/rrg.param',
                  'STARNNW_NAME': config_dir + '/default.nnw',
                  'FILTER_NAME': config_dir + '/gauss_5.0_9x9.conv'}
     if weight_path is not None :
         conf_args['WEIGHT_IMAGE'] : weight_path
     
+    print('conf_args:')
+    print(conf_args)
+    
     #F## COLD RUN ###
     cold_conf = config_dir + '/HFF_cold.param'
-    cold_sources = pysex.run( image_path, \
-                              conf_file=cold_conf, \
-                              conf_args=conf_args, \
-                              param_file=config_dir+'/rrg.param')
     
-    cold_sources = append_fits_field( cold_sources, 'RA', cold_sources['X_WORLD'])
-    cold_sources = append_fits_field( cold_sources, 'DEC', cold_sources['Y_WORLD'])
+    cold_sources_path = os.path.join(os.getcwd(), 'cold_sources.fits')
+    if os.path.isfile( cold_sources_path ) :
+        yesno = input("file " + "'" + 'cold_sources.fits' + "'" + " found. Do you want to rerun source extraction (takes a while)? [y][n]")
+        if yesno!='y' :
+            with fits.open(cold_sources_path) as hdu :
+                cold_sources = hdu[1].data
+    else :
+        cold_sources = pysex.run( image_path, \
+                                  conf_file=cold_conf, \
+                                  conf_args=conf_args, \
+                                  param_file=config_dir+'/rrg.param')
+        cold_sources = append_fits_field( cold_sources, 'RA', cold_sources['X_WORLD'])
+        cold_sources = append_fits_field( cold_sources, 'DEC', cold_sources['Y_WORLD'])
     
     
 
     #Second hot 
     hot_conf = config_dir+'/HFF_hot.param'
-    hot_sources = pysex.run( image_path, \
-                               conf_file=hot_conf, \
-                               conf_args=conf_args, \
-                               param_file=config_dir+'/rrg.param')
-
-
-    hot_sources = append_fits_field( hot_sources, 'RA', hot_sources['X_WORLD'])
-    hot_sources = append_fits_field( hot_sources, 'DEC', hot_sources['Y_WORLD'])
     
-    #The NYMBER is a weird thing
+    hot_sources_path = os.path.join(os.getcwd(), 'hot_sources.fits')
+    if os.path.isfile( hot_sources_path ) :
+        yesno = input("file " + "'" + 'hot_sources.fits' + "'" + " found. Do you want to rerun source extraction (takes a while)? [y][n]")
+        if yesno!='y' :
+            with fits.open(hot_sources_path) as hdu :
+                hot_sources = hdu[1].data
+    else :
+        hot_sources = pysex.run( image_path, \
+                                   conf_file=hot_conf, \
+                                   conf_args=conf_args, \
+                                   param_file=config_dir+'/rrg.param')
+        hot_sources = append_fits_field( hot_sources, 'RA', hot_sources['X_WORLD'])
+        hot_sources = append_fits_field( hot_sources, 'DEC', hot_sources['Y_WORLD'])
+    
+    #The NUMBER is a weird thing
     
     hot_sources['NUMBER'] = np.arange( len(hot_sources['NUMBER'])) +1
     cold_sources['NUMBER'] = np.arange( len(cold_sources['NUMBER'])) +1
@@ -104,8 +128,15 @@ def source_extract( image_path, weight_path=None, pixel_scale=0.03, zero_point=N
     print( str(len(cold_sources)) + ' cold sources' )
     print( str(len(hot_sources)) + ' hot sources' )
     print( 'TOTAL: ' + str(len(cold_sources) + len(hot_sources)) + ' detections' )
-    matched_sources = run_match( 'cold_sources.fits',
-                                 'hot_sources.fits' )
+    
+    matched_sources_path = os.path.join(os.getcwd(), 'matched_A_B.fits')
+    yesno = input("file " + "'" + 'matched_A_B.fits' + "'" + " found. Do you want to rerun matching (can take a while)? [y][n]")
+    if yesno!='y' :
+        with fits.open(matched_sources_path) as hdu :
+            matched_sources = hdu[1].data
+    else :
+        matched_sources = run_match( 'cold_sources.fits',
+                                     'hot_sources.fits' )
     
     for iField in hot_sources.columns.names:
         hot_sources[iField][ matched_sources[1].data['NUMBER_2'] -1 ] = cold_sources[iField][ matched_sources[1].data['NUMBER_1'] - 1]

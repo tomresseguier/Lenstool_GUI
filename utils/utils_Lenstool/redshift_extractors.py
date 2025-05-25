@@ -32,18 +32,22 @@ def make_fixed_z_dict(run_dir) :
             fixed_z_dict[fixed_z_image_name] = redshifts[i]
     return fixed_z_dict
 
-def make_opt_z_dict(run_dir) :
-    with open( os.path.join(run_dir, 'best.par') ) as best_par_file :
+def make_opt_z_dict(run_dir, best_file_name='best.par') :
+    with open( os.path.join(run_dir, best_file_name) ) as best_par_file :
         lines = best_par_file.readlines()
         
     opt_redshift_key = '\tz_m_limit 1 '
     opt_redshifts_indexes = np.where( [line.startswith(opt_redshift_key) for line in lines] )[0]
     opt_redshifts_dict = {}
-    start = len('\tz_m_limit 1 A1 0 ')
-    end = len('\tz_m_limit 1 A1 0 1.478015')
+    #start = len('\tz_m_limit 1 A1 0 ')
+    #end = len('\tz_m_limit 1 A1 0 1.478015')
     for idx in opt_redshifts_indexes :
-        source_name = lines[idx][len(opt_redshift_key):len(opt_redshift_key)+2]
-        opt_redshift = float( lines[idx][start:end] )
+        source_name = lines[idx].split()[2]
+        print("source_name:", source_name)
+        #source_name = lines[idx][len(opt_redshift_key):len(opt_redshift_key)+2]
+        opt_redshift = float( lines[idx].split()[-3] )
+        print("opt_redshift:", opt_redshift)
+        #opt_redshift = float( lines[idx][start:end] )
         opt_redshifts_dict[source_name] = opt_redshift
     return opt_redshifts_dict
 

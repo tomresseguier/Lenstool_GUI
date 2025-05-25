@@ -5,10 +5,10 @@ import sys
 import os
 
 
-from .redshift_extractors import make_source_z_dict
 module_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(module_dir))
 from utils_astro.set_cosmology import set_cosmo
+from utils_Lenstool.redshift_extractors import make_source_z_dict
 cosmo = set_cosmo()
 
 
@@ -17,15 +17,17 @@ cosmo = set_cosmo()
 
 
 
-def run_Lenstool_on_best(run_dir, best_file_name='best.par') :
+def run_Lenstool_on_best(run_dir, best_file_name='best.par', env_name='lenstool_env') : #Planck_bullet_cluster
     cwd = os.getcwd()
     os.chdir(run_dir)
-    subprocess.run('conda activate Planck_bullet_cluster', shell=True)
-    subprocess.run('lenstool ' + best_file_name + ' -n', shell=True)
+    #subprocess.run('conda init zsh', shell=True)
+    #subprocess.run('conda activate ' + env_name, shell=True)
+    #subprocess.run('lenstool ' + best_file_name + ' -n', shell=True)
+    subprocess.run(['conda', 'run', '-n', env_name, 'lenstool', best_file_name, '-n'])
     os.chdir(cwd)
 
 
-def make_magnifications_and_curves(run_dir) :
+def make_magnifications_and_curves(run_dir, env_name='lenstool_env') :
     cwd = os.getcwd()
     os.chdir(run_dir)
     magnification_dir = './' + 'magnifications/'
@@ -59,8 +61,9 @@ def make_magnifications_and_curves(run_dir) :
         with open('./best_maps.par', 'w') as file:
             file.writelines(lines)
         
-        subprocess.run('conda activate Planck_bullet_cluster', shell=True)
-        subprocess.run('lenstool best_maps.par -n', shell=True)
+        subprocess.run(['conda', 'run', '-n', env_name, 'lenstool', 'best_maps.par', '-n'])
+        #subprocess.run('conda activate Planck_bullet_cluster', shell=True)
+        #subprocess.run('lenstool best_maps.par -n', shell=True)
         for file_name in os.listdir('./') :
             if file_name.startswith("magnification_") :
                 shutil.move(os.path.join('./', file_name), os.path.join(magnification_dir, file_name))
@@ -89,8 +92,9 @@ def make_magnifications_and_curves(run_dir) :
     
     step_idx = np.where( ['step' in line.split() for line in lines] )[0]
     if len(step_idx)>0 :
-        if float(lines[step_idx].split()[1]) > 0.1 :
-            lines[limitLow_idx] = '\tstep   0.1\n'
+        print(lines[step_idx].split()[1])
+        #if float(lines[step_idx].split()[1]) > 0.1 :
+        #    lines[limitLow_idx] = '\tstep   0.1\n'
     else :
         lines.insert(curve_plan_index+1, '\tstep   0.1\n')
     
@@ -112,8 +116,8 @@ def make_magnifications_and_curves(run_dir) :
     print('#################')
     
 
-def best_files_maker(run_dir, run_Lenstool=True) :
-    file_path = run_dir + 'best.par'
+def best_files_maker(run_dir, run_Lenstool=True, best_file_name='best.par') :
+    file_path = os.path.join(run_dir, best_file_name)
     with open(file_path, 'r') as file:
             lines = file.readlines()
     field_index = np.where( [ line.startswith('field') for line in lines ] )[0][0]

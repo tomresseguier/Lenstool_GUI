@@ -19,11 +19,12 @@ from .utils_general import *
 
 class SelectableEllipse(QGraphicsEllipseItem) :
     def __init__(self, x, y, width, height, idx, selection_mask, qtItems, initial_color, selection_color=[255, 255, 255], 
-                 scatter_pos=None, RS_widget=None, alpha=127):
+                 scatter_pos=None, RS_widget=None, alpha=127, linewidth=3):
         super(SelectableEllipse, self).__init__(x, y, width, height)
         self.idx = idx
         self.selection_mask = selection_mask
         self.qtItems = qtItems
+        self.linewidth = linewidth
         self.setFlag(QGraphicsEllipseItem.ItemIsSelectable, True)
         
         self.alpha = alpha
@@ -33,7 +34,7 @@ class SelectableEllipse(QGraphicsEllipseItem) :
         
         self.selection_color = selection_color
         self.initial_color = initial_color
-        self.setPen( pg.mkPen(initial_color + [255]) )
+        self.setPen( pg.mkPen(initial_color + [255], width=linewidth) )
         self.setBrush( pg.mkBrush(initial_color + [self.alpha]) )
         
         self.scatter_pos = scatter_pos
@@ -47,10 +48,10 @@ class SelectableEllipse(QGraphicsEllipseItem) :
             
             self.selection_mask[self.idx] = not self.selection_mask[self.idx]
             if self.selection_mask[self.idx] :
-                self.qtItems[self.idx].setPen( pg.mkPen(self.selection_color + [255]) )
+                self.qtItems[self.idx].setPen( pg.mkPen(self.selection_color + [255], width=self.linewidth) )
                 self.qtItems[self.idx].setBrush( pg.mkBrush(self.selection_color + [self.alpha]) )
             else :
-                self.qtItems[self.idx].setPen( pg.mkPen(self.initial_color + [255]) )
+                self.qtItems[self.idx].setPen( pg.mkPen(self.initial_color + [255], width=self.linewidth) )
                 self.qtItems[self.idx].setBrush( pg.mkBrush(self.initial_color + [self.alpha]) )
             
             

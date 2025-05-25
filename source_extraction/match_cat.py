@@ -8,6 +8,13 @@ from astropy.io import fits
 
 
 module_dir = os.path.dirname(os.path.abspath(__file__))
+if " " in module_dir :
+    print('File in Drive, replacing:')
+    print(module_dir)
+    print('with:')
+    module_dir = module_dir.replace('Mobile Documents/com~apple~CloudDocs', 'Mobile_Documents')
+    print(module_dir)
+
 
 
 def magnitude( flux, zpt, exptime, apcor ):

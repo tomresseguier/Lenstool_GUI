@@ -33,6 +33,7 @@ import sys
 from .source_extraction.source_extract import source_extract, source_extract_DIM
 from .source_extraction.match_cat import run_match
 #sys.path.append(module_dir + "/utils")
+from .utils.utils_astro.cat_manip import match_cat2
 from .utils.utils_plots.plot_utils_general import *
 from .utils.utils_Qt.selectable_classes import *
 from .utils.utils_Qt.utils_general import *
@@ -180,7 +181,7 @@ class catalog :
         self.qtItems = np.empty(len(self.cat), dtype=PyQt5.QtWidgets.QGraphicsEllipseItem)
         self.selection_mask = np.full(len(self.cat), False)
     
-    def plot(self, scale=1., color=None, text_column=None) :
+    def plot(self, scale=1., color=None, text_column=None, linewidth=3) :
         self.clear()
         x = self.cat['x']
         y = self.cat['y']
@@ -188,7 +189,7 @@ class catalog :
         semi_minor = self.cat['b'] * scale
         angle = self.cat['theta']
         for i in tqdm(range(len(semi_major))) :
-            ellipse = self.plot_one_object(x[i], y[i], semi_major[i], semi_minor[i], angle[i], i, color=color)
+            ellipse = self.plot_one_object(x[i], y[i], semi_major[i], semi_minor[i], angle[i], i, color=color, linewidth=linewidth)
             self.qtItems[i] = ellipse
         
         # Add text labels if requested
@@ -217,7 +218,7 @@ class catalog :
         self.clear()
         self.plot()
     
-    def plot_one_object(self, x, y, semi_major, semi_minor, angle, idx, color=None) :
+    def plot_one_object(self, x, y, semi_major, semi_minor, angle, idx, color=None, linewidth=3) :
         if color is None :
             color = list(np.array(self.color)*255)
         else :
@@ -227,7 +228,8 @@ class catalog :
         angle = -angle
         #####################################################################
         ellipse = SelectableEllipse(x-semi_major/2, y-semi_minor/2, semi_major, semi_minor, idx, self.selection_mask, \
-                                    self.qtItems, color, scatter_pos=(self.x_axis_cleaned[idx], self.y_axis_cleaned[idx]), RS_widget=self.RS_widget)
+                                    self.qtItems, color, scatter_pos=(self.x_axis_cleaned[idx], self.y_axis_cleaned[idx]), \
+                                    RS_widget=self.RS_widget, linewidth=linewidth)
         ellipse.setTransformOriginPoint( PyQt5.QtCore.QPointF(x, y) )
         ellipse.setRotation(angle)
         self.fits_image.qt_plot.addItem(ellipse)
@@ -444,11 +446,25 @@ class catalog :
             self.text_items.append(text_item)
             
     
+    def transfer_col(self, col_to_transfer) :
+        if self.fits_image.imported_cat is not None :
+            if col_to_transfer in self.fits_image.imported_cat.cat.colnames :
+                temp_cat = match_cat2([self.cat, self.fits_image.imported_cat.cat], keep_all_col=True, fill_in_value=-1)
+                if col_to_transfer in self.cat.colnames :
+                    col_to_transfer = col_to_transfer + '_CAT2'
+                self.cat[col_to_transfer] = temp_cat[col_to_transfer]
+                print('###############\nColumn ' + col_to_transfer + ' added.\n###############')
+            else :
+                print(col_to_transfer + ' not found in imported_cat')
+        else :
+            print('No imported_cat')
     
-    def export_thumbnails(self, mask=None, group_images=True) :
-        if mask is None :
-            mask = self.selection_mask
-        ### TO DO ###
+        
+    #def export_thumbnails(self, mask=None, group_images=True) :
+    #    if mask is None :
+    #        mask = self.selection_mask
+    #    print('Function is being built.')
+    #    ### TO DO ###
 
 
 

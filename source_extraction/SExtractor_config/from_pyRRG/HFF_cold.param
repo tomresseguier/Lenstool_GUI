@@ -15,7 +15,7 @@ GAIN            4056                           # gain adjusted for exposure para
 
 CHECKIMAGE_TYPE SEGMENTATION                   # can be one of NONE, BACKGROUND,
 WEIGHT_GAIN     N                              # Gain is already known
-WEIGHT_TYPE     MAP_WEIGHT		               # Set Weight image type
+WEIGHT_TYPE     NONE                           # Set Weight image type - MAP_WEIGHT
 
 FILTER          Y                              # apply filter for detection ("Y" or "N")?
 

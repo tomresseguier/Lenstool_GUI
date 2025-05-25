@@ -25,7 +25,8 @@ import asciidata
 import numpy as np
 import glob
 
-command = 'sex'
+#command = 'sex'
+command = 'source-extractor'
 
 
 def _reg_path(filename):
@@ -125,6 +126,12 @@ def _setup_img(image, name):
 def _get_cmd(img, img_ref, conf_args):
     ref = img_ref if img_ref is not None else ''
     cmd = ' '.join([command, ref, img, '-c .pysex.sex '])
+    for key in conf_args :
+        if type(conf_args[key]) is str :
+            if " " in conf_args[key] :
+                conf_args[key] = conf_args[key].replace(' ', '\\ ')
+            #if os.path.isfile(conf_args[key]) or os.path.isdir(conf_args[key]) :
+            #    conf_args[key] = "\"" + conf_args[key] + "\""
     args = [''.join(['-', key, ' ', str(conf_args[key])]) for key in conf_args]
     cmd += ' '.join(args)
     
@@ -233,7 +240,8 @@ def run_wrap(image='', imageref='', params=[], conf_file=None, conf_args={}):
     
     ###########################################################################
     print("###########################")
-    cmd = '/usr/local/bin/' + cmd
+    #cmd = '/usr/local/bin/' + cmd
+    cmd = '/opt/local/bin/' + cmd
     print(cmd)
     print("###########################")
     ###########################################################################

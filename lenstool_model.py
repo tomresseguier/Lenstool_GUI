@@ -8,6 +8,7 @@ from astropy.wcs import WCS
 import astropy.units as u
 import astropy.constants as c
 from reproject import reproject_interp
+from collections import defaultdict
 #from astropy.visualization.wcsaxes import *
 from astropy.coordinates import SkyCoord
 from astropy.visualization import ZScaleInterval, ImageNormalize
@@ -35,6 +36,7 @@ import sys
 from .source_extraction.source_extract import source_extract, source_extract_DIM
 from .source_extraction.match_cat import run_match
 #sys.path.append(module_dir + "/utils")
+from .utils.utils_astro.cat_manip import match_cat2
 from .utils.utils_plots.plot_utils_general import *
 from .utils.utils_Qt.selectable_classes import *
 from .utils.utils_Qt.utils_general import *
@@ -93,17 +95,21 @@ def import_multiple_images(self, mult_file_path, fits_image, units=None, AttrNam
             cleaned_line = line.strip()
             if not cleaned_line.startswith("#") and len(cleaned_line)>0 :
                 split_line = cleaned_line.split()
-                row = [split_line[0], split_line[0][:-1]]
+                row = [split_line[0], '---'] #split_line[0][:-1]
                 for element in split_line[1:8] :
                     row.append(float(element))
                 multiple_images.add_row(row)
     multiple_images['theta'] = multiple_images['theta'] - fits_image.orientation
+    multiple_images['family'] = find_families(multiple_images['id'])
     
     setattr(self, AttrName, fits_image.make_catalog(multiple_images, units=units))
     if AttrName=='mult' :
-        self.families = np.unique([ im_id[:-1] for im_id in getattr(self, AttrName).cat['id'] ])
+        self.families = np.unique( find_families(getattr(self, AttrName).cat['id']) )
+        #self.families = np.unique([ im_id[:-1] for im_id in getattr(self, AttrName).cat['id'] ])
         self.mult_colors = make_full_color_function(self.families)
         self.which = self.families.tolist()
+    if AttrName=='arclets' :
+        self.extra_families = np.unique( find_families(getattr(self, AttrName).cat['id']) )
     
     def make_to_plot_masks() :
         to_plot_masks = {}
@@ -120,8 +126,8 @@ def import_multiple_images(self, mult_file_path, fits_image, units=None, AttrNam
         #        if im_id.startswith(name) and True not in [ im_id.startswith(ambiguous_name) for ambiguous_name in ambiguous_names ] :
         #            to_plot_mask[j] = True
         #    to_plot_masks[name] = to_plot_mask
-        for name in self.which :
-            to_plot_masks[name] = np.array([ im_id[:-1]==name for im_id in getattr(self, AttrName).cat['id'] ])
+        for family in self.which :
+            to_plot_masks[family] = getattr(self, AttrName).cat['family'] == family
         return to_plot_masks
     def make_overall_mask() :
         overall_mask = np.full(len(getattr(self, AttrName).cat), False)
@@ -137,6 +143,7 @@ def import_multiple_images(self, mult_file_path, fits_image, units=None, AttrNam
                              make_thumbnails=False, square_size=150, margin=50, distance=200, savefig=False, square_thumbnails=True,
                              boost=[2,1.5,1], linewidth=1.7, text_color='white', text_alpha=0.5, saturation=saturation) :
         self.clear()
+        saturation = fits_image.lt.saturation if saturation is None else saturation
         self.saturation = saturation
         
         if colors is not None :
@@ -157,7 +164,7 @@ def import_multiple_images(self, mult_file_path, fits_image, units=None, AttrNam
                 else :
                     a, b = multiple_image['a'], multiple_image['b']
                 ellipse = self.plot_one_object(multiple_image['x'], multiple_image['y'], a, b,
-                                               multiple_image['theta'], count, color=colors_dict[name])
+                                               multiple_image['theta'], count, color=colors_dict[name], linewidth=linewidth)
                 self.qtItems[count] = ellipse
                 count += 1
                 
@@ -275,10 +282,33 @@ def import_multiple_images(self, mult_file_path, fits_image, units=None, AttrNam
     
     getattr(self, AttrName).plot = types.MethodType(plot_multiple_images, getattr(self, AttrName))
     getattr(self, AttrName).plot_column = types.MethodType(plot_multiple_images_column, getattr(self, AttrName))
+    
+    def transfer_ids(self, id_name='id') :
+        if fits_image.imported_cat is not None :
+            if id_name in fits_image.imported_cat.cat.colnames :
+                temp_cat = match_cat2([self.cat, fits_image.imported_cat.cat], keep_all_col=True, fill_in_value=-1, column_to_transfer=id_name)
+                if id_name in self.cat.colnames :
+                    id_name = id_name + '_CAT2'
+                self.cat[id_name] = temp_cat[id_name]
+                print('###############\nColumn ' + id_name + ' added.\n###############')
+            else :
+                print(id_name + ' not found in imported_cat')
+        else :
+            print('No imported_cat')
+    
+    getattr(self, AttrName).transfer_ids = types.MethodType(transfer_ids, getattr(self, AttrName))
+    
+    
 
 
-def export_thumbnails(self, group_images=True, square_thumbnails=True, square_size=150, margin=50, distance=200) :
-    if not self.fits_image.boosted :
+def export_thumbnails(self, group_images=True, square_thumbnails=True, square_size=150, margin=50, distance=200, export_dir=None, boost=True, make_broad_view=True, broad_view_params=None) :
+    export_dir = os.path.join(os.path.dirname(self.fits_image.image_path), 'mult_thumbnails') if export_dir is None else os.path.abspath(os.path.join(export_dir, 'mult_thumbnails'))
+    if os.path.isdir( os.path.dirname( os.path.dirname(export_dir) ) ) and not os.path.isdir( os.path.dirname(export_dir) ) :
+        os.mkdir(os.path.dirname(export_dir))
+    if not os.path.isdir(export_dir) :
+        os.mkdir(export_dir)
+    
+    if not self.fits_image.boosted and boost :
         self.fits_image.boost()
     
     if group_images :
@@ -312,15 +342,41 @@ def export_thumbnails(self, group_images=True, square_thumbnails=True, square_si
             x_max = x_pix + demi_taille_unique
             y_min = y_pix - demi_taille_unique
             y_max = y_pix + demi_taille_unique
-                
+        
         zoom_rect = QRectF(x_min, self.fits_image.image_data.shape[0] - y_max, demi_taille_unique*2, demi_taille_unique*2)
         self.fits_image.qt_plot.getView().setRange(zoom_rect)        
         
         
-        print('Creating ' + os.path.dirname(self.fits_image.image_path), 'mult_' + group[0] + '.png')
+        thumbnail_path = os.path.join( export_dir, 'mult_' + group[0] + '.png' )
+        print('Creating ' + thumbnail_path)
         exporter = pg.exporters.ImageExporter(self.fits_image.qt_plot.view)
-        exporter.export( os.path.join( os.path.dirname(self.fits_image.image_path), 'mult_' + group[0] + '.png' ) )
+        exporter.export(thumbnail_path)
         print('Done')
+        
+    
+    ##### Adding broad view #####
+    if make_broad_view :
+        # broad_view_params = [ [x_min, x_max], [y_min, y_max] ]
+        if broad_view_params is not None :
+            x = broad_view_params[0][0]
+            y = self.fits_image.image_data.shape[0] - broad_view_params[1][1]
+            x_width = broad_view_params[0][1]-broad_view_params[0][0]
+            y_width = broad_view_params[1][1]-broad_view_params[1][0]
+            zoom_rect = QRectF(x, y, x_width, y_width)
+        else :
+            zoom_rect = QRectF(0, 0, self.fits_image.image_data.shape[1], self.fits_image.image_data.shape[0])
+        self.fits_image.qt_plot.getView().setRange(zoom_rect)        
+        
+        broadview_filename = 'broadview'
+        for name in self.fits_image.lt.which :
+            broadview_filename += '_' + name
+        broadview_path = os.path.join( export_dir, broadview_filename + '.png' )
+        print('Creating ' + broadview_path)
+        exporter = pg.exporters.ImageExporter(self.fits_image.qt_plot.view)
+        exporter.export(broadview_path)
+        print('Done')
+    ##############################
+
         
 
 
@@ -385,7 +441,7 @@ class curves :
     def plot(self) :
         self.clear()
         for name in self.lenstool_model.which :
-            color = np.round(self.lenstool_model.mult_colors()[name]*255).astype(int)
+            color = np.round(self.lenstool_model.mult_colors(saturation=self.lenstool_model.saturation)[name]*255).astype(int)
             color[3] = 255
             
             x, y = self.coords[name]
@@ -408,6 +464,7 @@ class curves :
 class lenstool_model :
     def __init__(self, model_path, fits_image) :
         self.fits_image = fits_image
+        self.saturation = 1
         self.model_dir = model_path if os.path.isdir(model_path) else os.path.dirname(model_path)
         all_par_file_paths = glob.glob(os.path.join(self.model_dir, "*.par"))
         all_cat_file_paths = glob.glob(os.path.join(self.model_dir, "*.lenstool"))
@@ -448,8 +505,9 @@ class lenstool_model :
             self.mult = None
             self.families = None
         
-        arclets_path = os.path.join(self.model_dir, 'PBC_arclets_to_predict.lenstool')
-        if os.path.isfile(arclets_path) :
+        arclets_path_list = glob.glob( os.path.join(self.model_dir, "*arclet*.lenstool") )
+        if len(arclets_path_list)>0 :
+            arclets_path = arclets_path_list[0]
             import_multiple_images(self, arclets_path, fits_image, AttrName='arclets', units='pixel', filled_markers=False)
         else :
             self.arclets = None
@@ -466,7 +524,9 @@ class lenstool_model :
             self.curves = curves(curves_dir, self, fits_image, which_critcaus='critical', join=False, size=2)
         else :
             self.curves = None
-            
+        
+        #self.reference = [179.4888967, -10.7669233]
+        self.reference = [47.2332780, 26.7604953]
     
         
     def select_multiple_images(self) :
@@ -509,14 +569,76 @@ class lenstool_model :
     #def relative_to_mosaic_pixel
     
     
-    def export_thumbnails(self, group_images=True, square_thumbnails=True, square_size=150, margin=50, distance=200) :
-        export_thumbnails(self.mult, group_images=group_images, square_thumbnails=square_thumbnails, square_size=square_size, margin=margin, distance=distance)
+    def export_thumbnails(self, group_images=True, square_thumbnails=True, square_size=150, margin=50, distance=200, export_dir=None, boost=True, make_broad_view=True, broad_view_params=None) :
+        export_thumbnails(self.mult, group_images=group_images, square_thumbnails=square_thumbnails, square_size=square_size, margin=margin, \
+                          distance=distance, export_dir=export_dir, boost=boost, make_broad_view=make_broad_view, broad_view_params=broad_view_params)
         
     
-    def test(self) :
-        print('yaha')
+    def world_to_relative(self, ra, dec) :
+        ref = SkyCoord(self.reference[0], self.reference[1], unit='deg')
+        world_radec = SkyCoord(ra, dec, unit='deg')
+        relative_coord = ( (world_radec.ra - ref.ra)*np.cos(ref.dec.rad), world_radec.dec - ref.dec )
+        return -relative_coord[0].arcsec, relative_coord[1].arcsec
+    
+    def make_webpage(self) :
+        print('in progress')
         
         
         
         
-        
+
+
+
+
+def find_families(image_ids):
+    # Step 1: Initial guess by chopping last character
+    id_to_family = {img_id: img_id[:-1] for img_id in image_ids}
+    
+    # Step 2: Group by these tentative families
+    family_groups = defaultdict(list)
+    for img_id, fam in id_to_family.items():
+        family_groups[fam].append(img_id)
+
+    # Step 3: Merge singleton families if their name starts with another family name
+    updated = True
+    while updated:
+        updated = False
+        singletons = {fam for fam, ids in family_groups.items() if len(ids) == 1}
+        for fam in list(singletons):
+            for target in family_groups:
+                if fam != target and fam.startswith(target):
+                    family_groups[target].extend(family_groups[fam])
+                    del family_groups[fam]
+                    updated = True
+                    break
+            if updated:
+                break
+
+    # Step 4: Merge families with 'alt' in original IDs if the ID starts with another family name
+    for fam in list(family_groups):
+        for img_id in family_groups[fam]:
+            if 'alt' in img_id:
+                for target in family_groups:
+                    if fam != target and img_id.startswith(target):
+                        family_groups[target].extend(family_groups[fam])
+                        del family_groups[fam]
+                        break
+                break  # Only need to check one 'alt' image to trigger a merge
+
+    # Step 5: Build final output mapping
+    final_map = {}
+    for fam, ids in family_groups.items():
+        for img_id in ids:
+            final_map[img_id] = fam
+
+    return [final_map[img_id] for img_id in image_ids]
+
+    
+
+
+
+
+
+
+
+

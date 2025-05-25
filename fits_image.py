@@ -94,6 +94,8 @@ class fits_image :
         self.boosted = False
         self.extra_qt_plots = []
         self.extra_windows = []
+        
+        self.plot_image()
     
     def open_image(self, image_path) :
         with fits.open(image_path) as hdus :
