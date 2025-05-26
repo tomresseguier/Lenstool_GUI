@@ -103,13 +103,18 @@ def import_multiple_images(self, mult_file_path, fits_image, units=None, AttrNam
     multiple_images['family'] = find_families(multiple_images['id'])
     
     setattr(self, AttrName, fits_image.make_catalog(multiple_images, units=units))
-    if AttrName=='mult' :
-        self.families = np.unique( find_families(getattr(self, AttrName).cat['id']) )
-        #self.families = np.unique([ im_id[:-1] for im_id in getattr(self, AttrName).cat['id'] ])
-        self.mult_colors = make_full_color_function(self.families)
-        self.which = self.families.tolist()
-    if AttrName=='arclets' :
-        self.extra_families = np.unique( find_families(getattr(self, AttrName).cat['id']) )
+    
+    local_families = np.unique( find_families(getattr(self, AttrName).cat['id']) ).tolist()
+    #local_families = np.unique([ im_id[:-1] for im_id in getattr(self, AttrName).cat['id'] ]).tolist()
+    self.families = np.unique(self.families + local_families).tolist()
+    self.which = self.families.copy()
+    
+    self.mult_colors = make_full_color_function(self.families)
+    
+    #if AttrName=='mult' :
+        #self.families = np.unique( find_families(getattr(self, AttrName).cat['id']) )
+        #self.mult_colors = make_full_color_function(self.families)
+        #self.which = self.families.tolist()
     
     def make_to_plot_masks() :
         to_plot_masks = {}
@@ -139,7 +144,7 @@ def import_multiple_images(self, mult_file_path, fits_image, units=None, AttrNam
     
     lenstool_model = self
     
-    def plot_multiple_images(self, size=40, marker='o', filled_markers=filled_markers, colors=None, mpl=False, fontsize=9,
+    def plot_multiple_images(self, size=1, marker='o', filled_markers=filled_markers, colors=None, mpl=False, fontsize=9,
                              make_thumbnails=False, square_size=150, margin=50, distance=200, savefig=False, square_thumbnails=True,
                              boost=[2,1.5,1], linewidth=1.7, text_color='white', text_alpha=0.5, saturation=saturation) :
         self.clear()
@@ -160,9 +165,9 @@ def import_multiple_images(self, mult_file_path, fits_image, units=None, AttrNam
             for multiple_image in self.cat[mask] :
                 # Remove the *1000
                 if not cat_contains_ellipse_params :
-                    a, b = size, size
+                    a, b = size*40, size*40
                 else :
-                    a, b = multiple_image['a'], multiple_image['b']
+                    a, b = multiple_image['a']*size, multiple_image['b']*size
                 ellipse = self.plot_one_object(multiple_image['x'], multiple_image['y'], a, b,
                                                multiple_image['theta'], count, color=colors_dict[name], linewidth=linewidth)
                 self.qtItems[count] = ellipse
@@ -467,7 +472,7 @@ class lenstool_model :
         self.saturation = 1
         self.model_dir = model_path if os.path.isdir(model_path) else os.path.dirname(model_path)
         all_par_file_paths = glob.glob(os.path.join(self.model_dir, "*.par"))
-        all_cat_file_paths = glob.glob(os.path.join(self.model_dir, "*.lenstool"))
+        #all_cat_file_paths = glob.glob(os.path.join(self.model_dir, "*.lenstool"))
         
         if os.path.isfile(model_path) :
             self.param_file_path = model_path
@@ -495,22 +500,26 @@ class lenstool_model :
         else :
             self.potfile = None
         
-        mult_idx = np.where(['mult' in name for name in all_cat_file_paths])[0]
-        if len(mult_idx)==1 :
-            mult_file_path = all_cat_file_paths[mult_idx[0]]
+        self.families = []
+        self.which = []
+        
+        mult_path_list = glob.glob( os.path.join(self.model_dir, "*mult*.lenstool") )
+        if len(mult_path_list)==1 :
+            mult_file_path = mult_path_list[0]
             import_multiple_images(self, mult_file_path, fits_image, units='pixel', filled_markers=True)
-            
         else :
-            self.which = None
             self.mult = None
-            self.families = None
         
         arclets_path_list = glob.glob( os.path.join(self.model_dir, "*arclet*.lenstool") )
-        if len(arclets_path_list)>0 :
+        if len(arclets_path_list)==1 :
             arclets_path = arclets_path_list[0]
             import_multiple_images(self, arclets_path, fits_image, AttrName='arclets', units='pixel', filled_markers=False)
         else :
             self.arclets = None
+        
+        if len(arclets_path_list)==1 and len(mult_path_list)==1 :
+            import_multiple_images(self, mult_file_path, fits_image, units='pixel', filled_markers=True)
+            import_multiple_images(self, arclets_path, fits_image, AttrName='arclets', units='pixel', filled_markers=False)
         
         #dot_all_paths = glob.glob(os.path.join(self.model_dir, "*.all"))
         predicted_images_path = os.path.join(self.model_dir, 'image.dat')
@@ -547,6 +556,8 @@ class lenstool_model :
     def clear(self) :
         if self.mult is not None :
             self.mult.clear()
+        if self.arclets is not None :
+            self.arclets.clear()
         if self.image is not None :
             self.image.clear()
         if self.curves is not None :

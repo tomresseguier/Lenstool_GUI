@@ -29,7 +29,6 @@ def combine_catalogs_dumb(catalogs_paths) :
     return combined_catalog
 
 def match_cat2(cats, match_radius=0.5, fill_in_value = np.nan, return_match_mask=False, keep_all_col=False, column_to_transfer=None) :
-    print('YIIHAA')
     catalogs = []
     for cat in cats :
         if isinstance(cat, str) :

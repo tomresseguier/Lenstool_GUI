@@ -353,16 +353,30 @@ class catalog :
         if file_path is None :
             file_path = os.path.join(os.path.dirname(self.fits_image.image_path), 'mult.lenstool')
         
-        sub_cat = self.cat[self.selection_mask]
+        sub_cat = self.cat[self.selection_mask] if True in self.selection_mask else self.cat
         
         header = "#REFERENCE 0\n## id   RA      Dec        a         b         theta     z         mag\n"
+        
+        if 'THETA_WORLD' in sub_cat.colnames :
+            theta_colname = 'THETA_WORLD'
+        elif 'theta' in sub_cat.colnames :
+            theta_colname = 'theta'
+            print("Using 'theta' column in exported catalog, make sure theta is relative to world coordinates and not image coordinates!!")
+        else :
+            theta_colname = None
+        
         with open(file_path, 'w') as f :
             f.write(header)
             for index, row in enumerate(sub_cat) :
-                if 'THETA_WORLD' in sub_cat.colnames :
-                    line = (f"{row['id']:<3}  {row['ra']:10.6f}  {row['dec']:10.6f}  "
-                            f"{row['a']:8.6f}  {row['b']:8.6f}  {row['THETA_WORLD']:8.6f}  "
-                            f"{row['zb']:8.6f}  {row['f814w_mag']:8.6f}\n")
+                if theta_colname is not None :
+                    if 'zb' in sub_cat.colnames and 'f814w_mag' in sub_cat.colnames :
+                        line = (f"{row['id']:<3}  {row['ra']:10.6f}  {row['dec']:10.6f}  "
+                                f"{row['a']:8.6f}  {row['b']:8.6f}  {row[theta_colname]:8.6f}  "
+                                f"{row['zb']:8.6f}  {row['f814w_mag']:8.6f}\n")
+                    else :
+                        line = (f"{row['id']:<3}  {row['ra']:10.6f}  {row['dec']:10.6f}  "
+                                f"{row['a']:8.6f}  {row['b']:8.6f}  {row[theta_colname]:8.6f}  "
+                                "0.0  0.0\n")
                 else :
                     line = (f"{row['id']:<3}  {row['ra']:10.6f}  {row['dec']:10.6f}  "
                             "0.0  0.0  0.0  0.0  0.0\n")
@@ -446,19 +460,33 @@ class catalog :
             self.text_items.append(text_item)
             
     
-    def transfer_col(self, col_to_transfer) :
-        if self.fits_image.imported_cat is not None :
-            if col_to_transfer in self.fits_image.imported_cat.cat.colnames :
-                temp_cat = match_cat2([self.cat, self.fits_image.imported_cat.cat], keep_all_col=True, fill_in_value=-1)
-                if col_to_transfer in self.cat.colnames :
+    #def transfer_col(self, col_to_transfer) :
+    #    if self.fits_image.imported_cat is not None :
+    #        if col_to_transfer in self.fits_image.imported_cat.cat.colnames :
+    #            temp_cat = match_cat2([self.cat, self.fits_image.imported_cat.cat], keep_all_col=True, fill_in_value=-1)
+    #            if col_to_transfer in self.cat.colnames :
+    #                col_to_transfer = col_to_transfer + '_CAT2'
+    #            self.cat[col_to_transfer] = temp_cat[col_to_transfer]
+    #            print('###############\nColumn ' + col_to_transfer + ' added.\n###############')
+    #        else :
+    #            print(col_to_transfer + ' not found in imported_cat')
+    #    else :
+    #        print('No imported_cat')
+    
+    def transfer_col(self, col_to_transfer, which_cat="imported_cat"):
+        source_cat = getattr(self.fits_image, which_cat, None)
+    
+        if source_cat is not None:
+            if col_to_transfer in source_cat.cat.colnames:
+                temp_cat = match_cat2([self.cat, source_cat.cat], keep_all_col=True, fill_in_value=-1.0)
+                if col_to_transfer in self.cat.colnames:
                     col_to_transfer = col_to_transfer + '_CAT2'
                 self.cat[col_to_transfer] = temp_cat[col_to_transfer]
-                print('###############\nColumn ' + col_to_transfer + ' added.\n###############')
-            else :
-                print(col_to_transfer + ' not found in imported_cat')
-        else :
-            print('No imported_cat')
-    
+                print(f'###############\nColumn {col_to_transfer} added.\n###############')
+            else:
+                print(f'{col_to_transfer} not found in {which_cat}')
+        else:
+            print(f'No {which_cat}')
         
     #def export_thumbnails(self, mask=None, group_images=True) :
     #    if mask is None :
