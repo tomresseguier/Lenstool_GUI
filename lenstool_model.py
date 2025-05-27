@@ -1,5 +1,6 @@
 import os
 import glob
+import shutil
 import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib.patches import Ellipse, Polygon, Circle, Rectangle
@@ -27,6 +28,7 @@ from PyQt5.QtCore import QRectF
 from pyqtgraph.Qt import QtCore
 from astropy.table import Table
 import pandas as pd
+import lenstool
 
 ###############################################################################
 import sys
@@ -47,6 +49,7 @@ from .utils.utils_Lenstool.param_extractors import read_potfile, read_bayes_file
 
 from .utils.utils_Lenstool.file_makers import best_files_maker, make_magnifications_and_curves                  # This import is problematic. The two functions run Lenstool
                                                                                                                 # and are therefore dependent on my own install.
+from .utils.utils_Lenstool.operations import make_image_to_source
 from .utils.utils_astro.utils_general import relative_to_world
 #from utils_general.utils import flux_muJy_to_magAB
 from .utils.utils_astro.set_cosmology import set_cosmo
@@ -468,6 +471,7 @@ class curves :
 
 class lenstool_model :
     def __init__(self, model_path, fits_image) :
+        self.safe_mode = False
         self.fits_image = fits_image
         self.saturation = 1
         self.model_dir = model_path if os.path.isdir(model_path) else os.path.dirname(model_path)
@@ -537,7 +541,36 @@ class lenstool_model :
         #self.reference = [179.4888967, -10.7669233]
         self.reference = [47.2332780, 26.7604953]
     
-        
+    
+    def SafeMode(self) :
+        if self.safe_mode :
+            print("Already in safe directory")
+        elif self.model_dir.endswith('_safe/') :
+            print("Safe directory already selected, moving to it")
+            os.chdir(self.model_dir)
+            self.safe_mode = True
+        else :
+            safe_dir = self.model_dir.rstrip('/') + '_safe/'
+            if os.path.exists(safe_dir) :
+                print("Safe directory already exists, moving to it")
+                self.__init__(safe_dir, self.fits_image)
+                os.chdir(safe_dir)
+                self.safe_mode = True
+            else :
+                os.makedirs(safe_dir, exist_ok=False)
+                for item in os.listdir(self.model_dir):
+                    s = os.path.join(self.model_dir, item)
+                    d = os.path.join(safe_dir, item)
+                    if os.path.isdir(s):
+                        shutil.copytree(s, d, dirs_exist_ok=True)
+                    else:
+                        shutil.copy2(s, d)
+                self.__init__(safe_dir, self.fits_image)
+                os.chdir(safe_dir)
+                self.safe_mode = True
+        print("Now in " + os.getcwd())
+    
+    
     def select_multiple_images(self) :
         return 'in progress'
     
@@ -591,12 +624,114 @@ class lenstool_model :
         relative_coord = ( (world_radec.ra - ref.ra)*np.cos(ref.dec.rad), world_radec.dec - ref.dec )
         return -relative_coord[0].arcsec, relative_coord[1].arcsec
     
+    def relative_to_world(self, xr, yr) :
+        ref = SkyCoord(self.reference[0], self.reference[1], unit='deg')
+        dec = ref.dec.deg + yr*u.arcsec.to('deg')
+        ra = ref.ra.deg - xr*u.arcsec.to('deg') / np.cos(dec*u.deg.to('rad'))
+        return ra, dec
+    
     def make_webpage(self) :
         print('in progress')
         
+    
+    
+    def set_lt_z(self, z) :
+        if not self.safe_mode :
+            print("Moving to safe directory")
+            self.copysafe()
         
+        self.lt_z = z
+        print(self.best_file_path)
+        print(os.getcwd())
+        self.lt = lenstool.Lenstool( os.path.basename(self.best_file_path) )
         
+        self.dx_map = None
+    
+    
+    def start_im2source(self) :
+        if self.dx_map is None :
+            self.dx_map, self.dy_map, self.dmap_wcs = self.lt.g_dpl(1000, self.lt_z)
         
+        transform_coords_radec = make_image_to_source(self.dx_map, self.dy_map, self.dmap_wcs)
+        
+        def transform_coords(x, y) :
+            ra, dec = self.fits_image.image_to_world(x, y)
+            
+            ra_source, dec_source = transform_coords_radec(ra, dec)
+            x_source, y_source = self.fits_image.world_to_image(ra_source, dec_source)
+            return x_source, y_source, ra_source, dec_source
+            
+        self.transform_coords = transform_coords
+        
+        # Set up label if needed (optional)
+        if not hasattr(self, 'transform_label'):
+            self.transform_label = pg.TextItem(anchor=(0, 1), color='w')
+            self.fits_image.qt_plot.addItem(self.transform_label)
+        
+        # Create scatter point for transformed location
+        self.transformed_point = pg.ScatterPlotItem(size=10, brush='r')
+        self.fits_image.qt_plot.addItem(self.transformed_point)
+        
+        self.images_scatter = pg.ScatterPlotItem(size=10, brush='g')
+        self.fits_image.qt_plot.addItem(self.images_scatter)
+    
+        # Ensure view does not auto-range when updating
+        self.fits_image.qt_plot.getView().enableAutoRange(pg.ViewBox.XAxis, False)
+        self.fits_image.qt_plot.getView().enableAutoRange(pg.ViewBox.YAxis, False)
+    
+        # Mouse tracking setup
+        def mouse_moved(evt):
+            pos = evt[0]
+            if self.fits_image.qt_plot.getView().sceneBoundingRect().contains(pos):
+                mouse_point = self.fits_image.qt_plot.getView().mapSceneToView(pos)
+                x, y_flipped = mouse_point.x(), mouse_point.y()
+                x, y = x, self.fits_image.image_data.shape[0] - y_flipped
+                try:
+                    x_source, y_source, ra_source, dec_source = self.transform_coords(x, y)
+                    
+                    #xr_source, yr_source = self.world_to_relative(ra_source, dec_source)
+                    source = Table( rows=[('test', ra_source, dec_source, 1, 1, 0, self.lt_z, 25)],names=['n','x','y','a','b','theta','z','mag'], dtype=['str',*['float',]*7] )
+                    self.lt.set_sources(source)
+                    self.lt.e_lensing()
+                    image_cat = self.lt.get_images()
+                    x_images = []
+                    y_images = []
+                    for image in image_cat :
+                        ra_image, dec_image = self.relative_to_world(image['x'], image['y'])
+                        x_image, y_image = self.fits_image.world_to_image(ra_image, dec_image)
+                        x_images.append(x_image)
+                        y_images.append(y_image)
+                    self.images_scatter.setData( x_images, self.fits_image.image_data.shape[0] - np.array(y_images) )
+                    
+                    self.transformed_point.setData([x_source], [self.fits_image.image_data.shape[0] - y_source])
+                    self.transform_label.setText(f"({x:.2f}, {y:.2f}) → ({x_source:.2f}, {y_source:.2f})")
+                    self.transform_label.setPos(x, y_flipped)
+                except Exception as e:
+                    self.transform_label.setText(f"Error: {e}")
+                    self.transform_label.setPos(x, y_flipped)
+    
+        self._transform_proxy = pg.SignalProxy(self.fits_image.qt_plot.getView().scene().sigMouseMoved, rateLimit=60, slot=mouse_moved)
+    
+        # Key press handling
+        def keyPressEvent(event):
+            if event.key() == Qt.Key_Escape:
+                self.fits_image.qt_plot.removeItem(self.transformed_point)
+                self.fits_image.qt_plot.removeItem(self.transform_label)
+                self._transform_proxy.disconnect()
+                del self._transform_proxy
+                del self.transformed_point
+                del self.transform_label
+                del self.images_scatter
+                self.fits_image.window.keyPressEvent = self._original_keyPressEvent
+    
+        # Save existing keyPressEvent so we can restore it
+        self._original_keyPressEvent = self.fits_image.window.keyPressEvent
+        self.fits_image.window.keyPressEvent = keyPressEvent
+    
+    
+    
+    
+    
 
 
 

@@ -384,10 +384,24 @@ class catalog :
         print('Selected sources exported at ' + file_path)
                 
     
-    def export_to_potfile(self, file_path=None) :
+    def export_to_potfile(self, file_path=None, units='pixel') :
         cat = self.cat[self.selection_mask] if True in self.selection_mask else self.cat
-        ref_col = self.mag_colnames[0]
-        sort_array = np.argsort(cat[ref_col])
+        
+        if units=='pixel' :
+            cat['a'] *= self.fits_image.pix_deg_scale*3600
+            cat['b'] *= self.fits_image.pix_deg_scale*3600
+            print("Converting pixel units to arcsec")
+        elif units=='deg' :
+            cat['a'] *= 3600
+            cat['b'] *= 3600
+            print("Converting deg units to arcsec")
+        else :
+            if units!='arcsec' :
+                print("Units not recognized, exporting as is")
+        
+        mag_col = self.mag_colnames[0] if self.mag_colnames[0] in cat.colnames else 'mag'
+        print(f"Using '{mag_col}' as mag column")
+        sort_array = np.argsort(cat[mag_col])
         sorted_cat = cat[sort_array]
         
         lines = []
@@ -395,7 +409,7 @@ class catalog :
         lines.append('## id   RA   Dec        a        b        theta     mag       lum\n')
         
         for i, galaxy in enumerate(sorted_cat) :
-            lines.append( '%d %f %f %f %f %f %f 0.\n' % (i+1, galaxy['ra'], galaxy['dec'], galaxy['a'], galaxy['b'], galaxy['theta']-self.fits_image.orientation, galaxy[ref_col]) )
+            lines.append( '%d %f %f %f %f %f %f 0.\n' % (i+1, galaxy['ra'], galaxy['dec'], galaxy['a'], galaxy['b'], galaxy['theta']-self.fits_image.orientation, galaxy[mag_col]) )
         
         if file_path is None :
             if self.ref_path is not None :

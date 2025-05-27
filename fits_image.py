@@ -397,6 +397,10 @@ class fits_image :
             image_coord = (image_coord[0]*1., image_coord[1]*1.)
         return image_coord
     
+    def image_to_world(self, x, y, unit='deg') :
+        world_coord = WCS.pixel_to_world(self.wcs, x, y)
+        return world_coord.ra.deg, world_coord.dec.deg
+    
     def clear_Items(self) :
         for key in self.qtItems_dict.keys() :
             if self.qtItems_dict[key] is not None :
