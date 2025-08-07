@@ -140,14 +140,14 @@ def rearrange_points(x, y) :
 
 def arcsec_to_kpc(arcsec, redshift) :
     separation_rad = arcsec * u.arcsec.to(u.rad)
-    distance = cosmo.comoving_distance(redshift)
-    separation_kpc = separation_rad * distance.to(u.kpc) 
+    ang_diam_dist = cosmo.angular_diameter_distance(redshift)
+    separation_kpc = separation_rad * ang_diam_dist.to(u.kpc) 
     return separation_kpc
 
 
 def kpc_to_arcsec(separation_kpc, redshift) :
-    distance = cosmo.comoving_distance(redshift)
-    separation_rad = separation_kpc * u.kpc / distance.to(u.kpc)
+    ang_diam_dist = cosmo.angular_diameter_distance(redshift)
+    separation_rad = separation_kpc * u.kpc / ang_diam_dist.to(u.kpc)
     arcsec = separation_rad * u.rad.to(u.arcsec)
     return arcsec
 
@@ -206,15 +206,14 @@ def abs_mag_to_luminosity(abs_mag) :
     return L
 
 
-def angle_to_sky_distance(angle_arcsec, z=0.972):
-    angle_rad = angle_arcsec * (1/3600) * (np.pi/180)
-    comoving_dist = cosmo.comoving_distance(z)
-    distance_kpc = comoving_dist * angle_rad
-    return distance_kpc.to('kpc')
-
-
 def angular_diameter_distance(z) :
     return cosmo.angular_diameter_distance(z)
+
+
+def angle_to_sky_distance(angle_arcsec, z=0.556):
+    angle_rad = angle_arcsec*u.arcsec.to(u.rad) #angle_arcsec * (1/3600) * (np.pi/180)
+    distance_kpc = angular_diameter_distance(z) * angle_rad
+    return distance_kpc.to('kpc')
 
 
 def v_disp(galaxy, z=0.972) :

@@ -1,5 +1,6 @@
 import re
 import pandas as pd
+from io import StringIO
 import numpy as np
 import math
 import os
@@ -422,8 +423,17 @@ def make_param_str(param_file_path) :
     main_pot_z_dict = get_main_pot_z(param_file_path)
     main_pot_z_list = [main_pot_z_dict[key] for key in main_pot_z_dict.keys()]
     
+    param_file = pylenstool.lenstool_param_file(param_file_path)
+    ref_coord = param_file.get_ref()
+    ref_coord_str = ref_coord[0] + ' ' + ref_coord[1]
+    
+    xmin = param_file.get_parameter('field', 'xmin')[1]
+    xmax = param_file.get_parameter('field', 'xmax')[1]
+    ymin = param_file.get_parameter('field', 'ymin')[1]
+    ymax = param_file.get_parameter('field', 'ymax')[1]
+    
     # Standard header
-    param_str = """runmode\n\treference     3 179.488897 -10.766923\n\timage     1 PBC_arclets_to_predict.lenstool\n\tmass      4 1000 0.556000 mass.fits\n\tampli	   1 1000 3.000000 magnification.fits\n\tshear  1 1000 3.000000 shear.fits\n\tshearfield  1 25.000000 1.0 25\n\tend\ngrid\n\tnumber      30\n\tpolar     0\n\tnlens   156\n\tend\n"""
+    param_str = """runmode\n\treference     3 """ + ref_coord_str + """\n\timage     1 arclets_to_predict.lenstool\n\tmass      4 1000 0.556000 mass.fits\n\tampli	   1 1000 3.000000 magnification.fits\n\tshear  1 1000 3.000000 shear.fits\n\tshearfield  1 25.000000 1.0 25\n\tend\ngrid\n\tnumber      30\n\tpolar     0\n\tnlens   156\n\tend\n"""
     # Map from our parameter names to Lenstool names
     param_map = {
         'x_centre': 'x_centre',
@@ -459,7 +469,7 @@ def make_param_str(param_file_path) :
     param_str += format_potfile_table(potfile_cat_opt)
     
     
-    param_str += """cline\n\tnplan    1 2.000000\n\tdmax     0.000000\n\talgorithm   MARCHINGSQUARES\n\tlimitHigh   0.5\n\tlimitLow    0.100000\n\tend\ngrande\n\tiso         0 0 1.000000 0.000000 0.000000\n\tname        best\n\tprofile      0 0\n\tcontour     0 0\n\tlarge_dist  2.000000\n\tend\ncosmology\n\tmodel       1\n\tH0        70.000000\n\tomegaM    0.300000\n\tomegaX    0.700000\n\tomegaK    0.\n\twX        -1.000000\n\twa        0.000000\n\tend\nfield\n\txmin     -120.000000\n\txmax     80.000000\n\tymin     -100.000000\n\tymax     100.000000\n\tend\nfinish"""
+    param_str += """cline\n\tnplan    1 2.000000\n\tdmax     0.000000\n\talgorithm   MARCHINGSQUARES\n\tlimitHigh   0.5\n\tlimitLow    0.100000\n\tend\ngrande\n\tiso         0 0 1.000000 0.000000 0.000000\n\tname        best\n\tprofile      0 0\n\tcontour     0 0\n\tlarge_dist  2.000000\n\tend\ncosmology\n\tmodel       1\n\tH0        70.000000\n\tomegaM    0.300000\n\tomegaX    0.700000\n\tomegaK    0.\n\twX        -1.000000\n\twa        0.000000\n\tend\nfield\n\txmin     """ + xmin + """\n\txmax     """ + xmax + """\n\tymin     """ + ymin + """\n\tymax     """ + ymax + """\n\tend\nfinish"""
     return param_str
 
 
@@ -475,7 +485,13 @@ def make_best_file_from_bayes(param_file_path) :
 
 
 
-
+def extract_magnification_from_dist(dist_path) :
+    dist_text = open(dist_path, 'r').read()
+    data_lines = [line for line in dist_text.splitlines() if line.strip() and not line.strip().startswith('#')]
+    table_text = "\n".join(data_lines)
+    columns = ['ID', 'X', 'Y', 'R', 'EPS', 'TAU', 'AMP', 'E_AMP', 'DMAG', 'TIME[days]', 'DTIME', 'PARITY']
+    table_df = pd.read_csv(StringIO(table_text), delim_whitespace=True, names=columns)
+    return table_df
 
 
 
@@ -536,6 +552,10 @@ def get_lenstool_WCS(param_file_path) :
     shutil.rmtree(temp_dir)
     
     return lenstool_WCS
+
+
+
+
 
 
 

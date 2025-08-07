@@ -209,6 +209,16 @@ def plot_corner(df):
     # Extract the numeric columns (skip non-numeric like 'Chi2' or similar if needed)
     data = df.select_dtypes(include='number')
     
+    df_range = []
+    for i, col in enumerate(data.columns) :
+        col_min = np.min(data[col])
+        col_max = np.max(data[col])
+        if col_min==col_max or col=='Chi2' or col=='Nsample' or col=='ln(Lhood)':
+            #df_range.append( [col_min-1, col_min+1] )
+            del data[col]
+        #else :
+            #df_range.append( [col_min, col_max] )
+    
     figure = corner.corner( data,
                             labels=data.columns,  # Use column names from the DataFrame
                             quantiles=[0.16, 0.5, 0.84],  # Plot the 1, 2, and 3 sigma contours
@@ -216,7 +226,7 @@ def plot_corner(df):
                             title_fmt=".2f",  # Format the numbers to 2 decimal places
                             title_kwargs={"fontsize": 12},  # Customize title font size
                             levels=(1 - 0.6827, 1 - 0.9545, 1 - 0.9973),  # 1, 2, 3 sigma
-                            plot_contours=True )  # Enable contours
+                            plot_contours=True)#, range=df_range)
 
     plt.show()
 

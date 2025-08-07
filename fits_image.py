@@ -38,7 +38,7 @@ from .source_extraction.match_cat import run_match
 from .utils.utils_plots.plot_utils_general import *
 from .utils.utils_Qt.selectable_classes import *
 from .utils.utils_Qt.utils_general import *
-from .utils.utils_general.utils_general import find_close_coord, make_colnames_dict
+from .utils.utils_general.utils_general import find_close_coord, make_colnames_dict, extract_line
 from .utils.utils_plots.plt_framework import plt_framework
 from .utils.utils_Lenstool.redshift_extractors import make_source_z_dict, find_param_file
 from .utils.utils_Lenstool.param_extractors import read_potfile, read_bayes_file, make_param_latex_table
@@ -94,6 +94,8 @@ class fits_image :
         self.boosted = False
         self.extra_qt_plots = []
         self.extra_windows = []
+        if self.orientation==None :
+            self.orientation = 0.
         
         self.plot_image()
     
@@ -470,12 +472,37 @@ class fits_image :
     
     
     
-    def make_hand_made_catalogue(self) :
-        empty_cat_dict = {'x': [], 'y': [], 'a': [], 'b': [], 'theta': []}
-        empty_cat = Table(empty_cat_dict)
-        self.hand_made_catalogue = self.catalog(empty_cat, self.image_data, self.qt_plot, window=self.window, make_selection_panel=False, image_widget_layout=self.image_widget_layout)
+    def start_hand_select(self) :
+        cat_dict = {'id': [], 'ra': [], 'dec': [], 'x': [], 'y': [], 'a': [], 'b': [], 'theta': []}
+        cat = Table(cat_dict)
+        self.hand_made_cat = catalog(cat, self, units='pixel')
         
+        def mouse_clicked(evt):
+            if evt.double():
+                pos = evt.scenePos()
+                if self.qt_plot.getView().sceneBoundingRect().contains(pos):
+                    mouse_point = self.qt_plot.getView().mapSceneToView(pos)
+                    x, y_flipped = mouse_point.x(), mouse_point.y()
+                    x, y = x, self.image_data.shape[0] - y_flipped
+                    ra, dec = self.image_to_world(x, y)
+                    self.hand_made_cat.cat.add_row( {'id': [len(self.hand_made_cat.cat) + 1], 'ra': [ra], 'dec': [dec], 'x': [x], 'y': [y], 'a': [10], 'b': [10], 'theta': [0]} )
+                    self.hand_made_cat.qtItems.append(PyQt5.QtWidgets.QGraphicsEllipseItem())
+                    self.hand_made_cat.plot(color=[1,1,1,0])
+                    
+        self._doubleclick_connection = self.qt_plot.scene.sigMouseClicked.connect(mouse_clicked)
         
+        def keyPressEvent(event):
+            #print('Hand selection stopped.')
+            if event.key() == Qt.Key_Escape or event.key() == Qt.Key_Space :
+                if hasattr(self, '_doubleclick_connection'):
+                    self.qt_plot.scene.sigMouseClicked.disconnect(self._doubleclick_connection)
+                    del self._doubleclick_connection
+                self.hand_made_cat.clear()
+                self.window.keyPressEvent = self._original_keyPressEvent
+                print('Hand selection stopped.')
+        
+        self._original_keyPressEvent = self.window.keyPressEvent
+        self.window.keyPressEvent = keyPressEvent
     
     
     

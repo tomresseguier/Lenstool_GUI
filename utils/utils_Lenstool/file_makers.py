@@ -155,3 +155,52 @@ def best_files_maker(run_dir, run_Lenstool=True, best_file_name='best.par') :
     # TO DO: create 2 best.par files for maps (big field) and predictions (small)
     
     
+
+
+
+
+
+
+
+
+
+def insert_lines(input_path, n):
+    input_path = os.path.join(input_path, 'best.par')
+    # Format n as string (with dot preserved)
+    n_str = str(n)
+
+    # New lines to insert
+    new_lines = [
+        f"\tampli\t   1 1000 {n_str} magnification_z{n_str}.fits\n",
+        f"\tdpl\t   1 1000 {n_str} dx_z{n_str}.fits dy_z{n_str}.fits\n"
+    ]
+
+    # Read input file
+    with open(input_path, 'r') as file:
+        lines = file.readlines()
+
+    # Find where to insert (after 'runmode')
+    for i, line in enumerate(lines):
+        if line.strip().startswith("runmode"):
+            insert_index = i + 1
+            break
+    else:
+        raise ValueError("No line starting with 'runmode' found.")
+
+    # Insert new lines
+    lines[insert_index:insert_index] = new_lines
+
+    # Construct output path: insert _z{n} before extension
+    base, ext = os.path.splitext(input_path)
+    output_path = f"{base}_z{n_str}{ext}"
+
+    # Write modified file
+    with open(output_path, 'w') as file:
+        file.writelines(lines)
+
+    print(f"New file created: {output_path}")
+
+
+
+
+

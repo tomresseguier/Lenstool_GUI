@@ -144,7 +144,8 @@ class catalog :
         self.units = units
         
         self.cat, self.ref_path = initialize_catalog(cat, self)
-        self.qtItems = np.empty(len(self.cat), dtype=PyQt5.QtWidgets.QGraphicsEllipseItem)
+        #self.qtItems = np.empty(len(self.cat), dtype=PyQt5.QtWidgets.QGraphicsEllipseItem)
+        self.qtItems = [PyQt5.QtWidgets.QGraphicsEllipseItem() for _ in range(len(self.cat))]
         #self.qtItems = np.empty(len(self.cat), dtype=utils.utils_classes.selectable_ellipse.SelectableEllipse)
         self.color = color
         self.selection_mask = np.full(len(self.cat), False)
@@ -181,7 +182,7 @@ class catalog :
         self.qtItems = np.empty(len(self.cat), dtype=PyQt5.QtWidgets.QGraphicsEllipseItem)
         self.selection_mask = np.full(len(self.cat), False)
     
-    def plot(self, scale=1., color=None, text_column=None, linewidth=3) :
+    def plot(self, scale=1., color=None, text_column=None, linewidth=3, marker=None) :
         self.clear()
         x = self.cat['x']
         y = self.cat['y']
@@ -189,7 +190,8 @@ class catalog :
         semi_minor = self.cat['b'] * scale
         angle = self.cat['theta']
         for i in tqdm(range(len(semi_major))) :
-            ellipse = self.plot_one_object(x[i], y[i], semi_major[i], semi_minor[i], angle[i], i, color=color, linewidth=linewidth)
+            ellipse = self.plot_one_object(x[i], y[i], semi_major[i], semi_minor[i], angle[i], i, \
+                                           color=color, linewidth=linewidth, marker=marker, size=scale*15.)
             self.qtItems[i] = ellipse
         
         # Add text labels if requested
@@ -218,7 +220,7 @@ class catalog :
         self.clear()
         self.plot()
     
-    def plot_one_object(self, x, y, semi_major, semi_minor, angle, idx, color=None, linewidth=3) :
+    def plot_one_object(self, x, y, semi_major, semi_minor, angle, idx, color=None, linewidth=3, marker=None, size=15) :
         if color is None :
             color = list(np.array(self.color)*255)
         else :
@@ -227,13 +229,31 @@ class catalog :
         y = self.fits_image.image_data.shape[0] - y
         angle = -angle
         #####################################################################
-        ellipse = SelectableEllipse(x-semi_major/2, y-semi_minor/2, semi_major, semi_minor, idx, self.selection_mask, \
-                                    self.qtItems, color, scatter_pos=(self.x_axis_cleaned[idx], self.y_axis_cleaned[idx]), \
-                                    RS_widget=self.RS_widget, linewidth=linewidth)
-        ellipse.setTransformOriginPoint( PyQt5.QtCore.QPointF(x, y) )
-        ellipse.setRotation(angle)
-        self.fits_image.qt_plot.addItem(ellipse)
-        return ellipse
+        if marker==None or marker=='ellipse' :
+            if self.RS_widget==None :
+                scatter_pos = None
+            else :
+                scatter_pos = (self.x_axis_cleaned[idx], self.y_axis_cleaned[idx])
+            to_plot = SelectableEllipse(x-semi_major/2, y-semi_minor/2, semi_major, semi_minor, idx, self.selection_mask, \
+                                        self.qtItems, color, scatter_pos=scatter_pos, \
+                                        RS_widget=self.RS_widget, linewidth=linewidth)
+            to_plot.setTransformOriginPoint( PyQt5.QtCore.QPointF(x, y) )
+            to_plot.setRotation(angle)
+        else :
+            to_plot = pg.ScatterPlotItem(size=size, symbol=marker)
+            if color[-1]==0 : #filled_markers==False
+                to_plot.setPen( pg.mkPen(color[:-1], width=2) ) #no outline
+                to_plot.setBrush( pg.mkBrush([0,0,0,0]) )
+            else :
+                to_plot.setPen( pg.mkPen([0,0,0,0]) )
+                #to_plot.setPen( pg.mkPen(color[:-1]) ) #outline makes cross thicker
+                to_plot.setBrush( pg.mkBrush(color[:-1]) )
+                to_plot.setPen(width=0.1)
+                
+            to_plot.setData([x], [y])
+        
+        self.fits_image.qt_plot.addItem(to_plot)
+        return to_plot
     
     def plot_selection_panel(self, xy_axes=None) :
         self.make_mask_naninf(xy_axes=xy_axes)
@@ -492,7 +512,7 @@ class catalog :
     
         if source_cat is not None:
             if col_to_transfer in source_cat.cat.colnames:
-                temp_cat = match_cat2([self.cat, source_cat.cat], keep_all_col=True, fill_in_value=-1.0)
+                temp_cat, match_idx = match_cat2([self.cat, source_cat.cat], keep_all_col=True, fill_in_value=-1.0, return_match_idx=True)
                 if col_to_transfer in self.cat.colnames:
                     col_to_transfer = col_to_transfer + '_CAT2'
                 self.cat[col_to_transfer] = temp_cat[col_to_transfer]
@@ -501,6 +521,7 @@ class catalog :
                 print(f'{col_to_transfer} not found in {which_cat}')
         else:
             print(f'No {which_cat}')
+        return match_idx
         
     #def export_thumbnails(self, mask=None, group_images=True) :
     #    if mask is None :

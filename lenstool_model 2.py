@@ -28,8 +28,7 @@ from PyQt5.QtCore import QRectF
 #from PyQt5.QtCore import Qt
 #from pyqtgraph.Qt import QtCore
 from astropy.table import Table
-import pandas as pd
-import io
+#import pandas as pd
 import pickle
 import lenstool
 import pylenstool
@@ -329,14 +328,6 @@ def import_multiple_images(self, mult_file_path, fits_image, units=None, AttrNam
     getattr(self, AttrName).transfer_ids = types.MethodType(transfer_ids, getattr(self, AttrName))
     
     
-def import_sources(self, predicted_sources_path, fits_image, AttrName='source', units='pixel', filled_markers=False) :
-    with open(predicted_sources_path) as file :
-        source_lines = file.readlines()[1:]
-    sources = Table(names=['id','ra','dec','a','b','theta','z','mag'], dtype=['str', *['float',]*7])
-    for line in source_lines :
-        sources.add_row(line.split())
-    sources['ra'], sources['dec'] = self.relative_to_world(sources['ra'], sources['dec'])
-    self.source = fits_image.make_catalog(sources, color=[1.,0.5,0.], units='arcsec')
 
 
 def export_thumbnails(self, group_images=True, square_thumbnails=True, square_size=150, margin=50, distance=200, export_dir=None, boost=True, make_broad_view=True, broad_view_params=None) :
@@ -585,10 +576,6 @@ class lenstool_model :
         ref_coord = param_file.get_ref()
         self.reference = [float(ref_coord[0]), float(ref_coord[1])]
         
-        predicted_sources_path = os.path.join(self.model_dir, 'source.dat')
-        if os.path.isfile(predicted_sources_path) :
-            import_sources(self, predicted_sources_path, fits_image, AttrName='source', units='pixel', filled_markers=False)
-        
         self.curve_plot = None
         
         self.lt = None
@@ -751,8 +738,7 @@ class lenstool_model :
         ######## Curves ########
         if z not in self.lt_curves.keys() or recompute :
             self.compute_lt_curve(z)
-        self.lt_curve_coords = self.lt_curves[z]
-        self.lt_caustic_coords = self.lt_caustics[z]
+        self.lt_curve_coords = self.lt_curves[z]            
         self.plot_lt_curve(color=color)
         
         ######## Magnification ########
@@ -1177,9 +1163,9 @@ class lenstool_model :
     
     
     def send_to_source_plane(self) :
-        for row in self.fits_image.imported_cat.cat :
-            row['ra'], row['dec'] = self.transform_coords_radec(row['ra'], row['dec'])
-            row['x'], row['y'] = self.fits_image.world_to_image(row['ra'], row['dec'])
+        for row in self.fits_image.imported_cat :
+            print(row)
+                
         
 
 def find_families(image_ids):

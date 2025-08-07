@@ -28,7 +28,7 @@ def combine_catalogs_dumb(catalogs_paths) :
     combined_catalog = vstack(catalogs)
     return combined_catalog
 
-def match_cat2(cats, match_radius=0.5, fill_in_value = np.nan, return_match_mask=False, keep_all_col=False, column_to_transfer=None) :
+def match_cat2(cats, match_radius=0.5, fill_in_value = np.nan, return_match_idx=False, keep_all_col=False, column_to_transfer=None) :
     catalogs = []
     for cat in cats :
         if isinstance(cat, str) :
@@ -66,8 +66,8 @@ def match_cat2(cats, match_radius=0.5, fill_in_value = np.nan, return_match_mask
             for index in np.where(match_mask)[0] :
                 matched_cat[index][extra_colname] = cat_giver[idx[index]][colname]
             
-    if return_match_mask :
-        return matched_cat, match_mask
+    if return_match_idx :
+        return matched_cat, idx
     else :
         return matched_cat
 

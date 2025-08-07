@@ -15,6 +15,7 @@ def read_text_file(file_path):
 
 def find_close_coord(cat, d):
     ids = cat['id']
+    indices = np.arange(len(ids))
     x = cat['x']
     y = cat['y']
     
@@ -45,8 +46,10 @@ def find_close_coord(cat, d):
         root = find(i)
         if root in groups:
             groups[root].append(ids[i])
+            #groups[root].append(indices[i])
         else:
             groups[root] = [ids[i]]
+            #groups[root] = [indices[i]]
     
     result = list(groups.values())
     
@@ -148,4 +151,72 @@ def make_colnames_dict(catalog, use_default_names=True):
     else :
         names_dict = names_dict_default
     return names_dict
+
+
+def extract_line(point1, point2, image_array) :
+    """
+    ***Function created by Gemini AI***
+    Extracts pixel values along a line defined by two points in a 2D NumPy array.
+    This function implements a variation of Bresenham's line algorithm to
+    identify the pixels that lie on the line segment between the two given points.
+    Args:
+        point1 (tuple): The (x, y) coordinates of the first point.
+        point2 (tuple): The (x, y) coordinates of the second point.
+        image_array (np.ndarray): The 2D NumPy array (the map) from which
+                                  to extract pixel values.
+    Returns:
+        list: A list of pixel values along the defined line.
+              Returns an empty list if points are out of bounds or invalid.
+    """
+    if not isinstance(image_array, np.ndarray) or image_array.ndim != 2:
+        print("Error: image_array must be a 2D NumPy array.")
+        return [], []
+
+    height, width = image_array.shape
+    x0, y0 = int(point1[0]), int(point1[1])
+    x1, y1 = int(point2[0]), int(point2[1])
+
+    # Check if points are within bounds
+    if not (0 <= x0 < width and 0 <= y0 < height and
+            0 <= x1 < width and 0 <= y1 < height):
+        print("Error: One or both points are out of image bounds.")
+        return [], []
+
+    # Lists to store the pixel values and their corresponding distances
+    pixel_values = []
+    distances = []
+
+    dx = abs(x1 - x0)
+    dy = abs(y1 - y0)
+    sx = 1 if x0 < x1 else -1
+    sy = 1 if y0 < y1 else -1
+    err = dx - dy
+
+    current_x, current_y = x0, y0
+
+    while True:
+        # Add the current pixel value
+        if 0 <= current_y < height and 0 <= current_x < width:
+            pixel_values.append(image_array[current_y, current_x])
+            # Calculate Euclidean distance from the starting point (x0, y0)
+            dist = np.sqrt((current_x - x0)**2 + (current_y - y0)**2)
+            distances.append(dist)
+        else:
+            # This case should ideally not be hit if initial bounds check is thorough
+            print(f"Warning: Pixel ({current_x}, {current_y}) went out of bounds during line drawing.")
+            break # Or handle as appropriate
+
+        if current_x == x1 and current_y == y1:
+            break
+
+        e2 = 2 * err
+        if e2 > -dy:
+            err -= dy
+            current_x += sx
+        if e2 < dx:
+            err += dx
+            current_y += sy
+
+    return [distances, pixel_values]
+
 
