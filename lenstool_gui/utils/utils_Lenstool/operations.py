@@ -25,7 +25,7 @@ def make_image_to_source(dx_map, dy_map, wcs) :
     return transform_coords
 
 
-def make_magnification_function(mmap, wcs) :    
+def MakeFunctionFromMap(mmap, wcs) :    
     def get_magnification(ra, dec) :
         coord = SkyCoord(ra, dec, unit='deg')
         local_coord = WCS.world_to_pixel(wcs, coord)

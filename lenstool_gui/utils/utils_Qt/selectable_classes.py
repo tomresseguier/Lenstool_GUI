@@ -6,30 +6,28 @@ import pyqtgraph as pg
 import numpy as np
 from tqdm import tqdm
 
-from .utils_general import transform_rectangle, InRectangle
+from .utils_general import transform_rectangle, InRectangle, make_full_color
 from .drag_widgets import DragPlotWidget
 
 
 class SelectableEllipse(QGraphicsEllipseItem) :
-    def __init__(self, x, y, width, height, idx, selection_mask, qtItems, initial_color, selection_color=[255, 255, 255], 
-                 scatter_pos=None, Scatter_widget=None, alpha=127, linewidth=3):
+    def __init__(self, x, y, width, height, idx, selection_mask, initial_color, selection_color=[1, 1, 1], 
+                 scatter_pos=None, Scatter_widget=None, linewidth=3, alpha=None):
         #super(SelectableEllipse, self).__init__(x, y, width, height)
         super().__init__(x, y, width, height)
         self.idx = idx
+        self.is_selected = False
         self.selection_mask = selection_mask
-        self.qtItems = qtItems
         self.linewidth = linewidth
         self.setFlag(QGraphicsEllipseItem.ItemIsSelectable, True)
         
-        self.alpha = alpha
-        if len(initial_color)==4 :
-            self.alpha = initial_color[-1]
-            initial_color = initial_color[0:3]
+        if alpha is not None and len(initial_color)==3 :
+            initial_color = initial_color + [alpha]
+        self.initial_color = make_full_color(initial_color)
+        self.selection_color = make_full_color(selection_color)
         
-        self.selection_color = selection_color
-        self.initial_color = initial_color
-        self.setPen( pg.mkPen(initial_color + [255], width=linewidth) )
-        self.setBrush( pg.mkBrush(initial_color + [self.alpha]) )
+        self.setPen( pg.mkPen(self.initial_color[:3] + self.initial_color[-1:], width=linewidth) )
+        self.setBrush( pg.mkBrush(self.initial_color[:4]) )
         
         self.scatter_pos = scatter_pos
         self.Scatter_widget = Scatter_widget
@@ -37,16 +35,16 @@ class SelectableEllipse(QGraphicsEllipseItem) :
 
     def mousePressEvent(self, event: QGraphicsSceneMouseEvent):
         if event.button() == Qt.LeftButton:
-            print(f"Ellipse selected: {self.rect().x()}, {self.rect().y()}")
-            print('\n########\n Index: ' + str(self.idx) + '\n ########\n')
+            print(f"Object {self.idx} selected")
+            self.is_selected = not self.is_selected
             
             self.selection_mask[self.idx] = not self.selection_mask[self.idx]
-            if self.selection_mask[self.idx] :
-                self.qtItems[self.idx].setPen( pg.mkPen(self.selection_color + [255], width=self.linewidth) )
-                self.qtItems[self.idx].setBrush( pg.mkBrush(self.selection_color + [self.alpha]) )
+            if self.is_selected :
+                self.setPen( pg.mkPen(self.selection_color[:3] + self.selection_color[-1:], width=self.linewidth) )
+                self.setBrush( pg.mkBrush(self.selection_color[:4]) )
             else :
-                self.qtItems[self.idx].setPen( pg.mkPen(self.initial_color + [255], width=self.linewidth) )
-                self.qtItems[self.idx].setBrush( pg.mkBrush(self.initial_color + [self.alpha]) )
+                self.setPen( pg.mkPen(self.initial_color[:3] + self.initial_color[-1:], width=self.linewidth) )
+                self.setBrush( pg.mkBrush(self.initial_color[:4]) )
             
             
             if self.Scatter_widget is not None :
@@ -54,22 +52,23 @@ class SelectableEllipse(QGraphicsEllipseItem) :
                     self.selection_scatter = pg.ScatterPlotItem()
                     self.Scatter_widget.addItem(self.selection_scatter)
                 if self.selection_mask[self.idx] :
-                    self.selection_scatter.setData([self.scatter_pos[0]], [self.scatter_pos[1]], pen=(255, 0, 0), size=10)
+                    self.selection_scatter.setData([self.scatter_pos[0]], [self.scatter_pos[1]], pen=(255, 0, 0), size=20, symbol='x')
                 else :
                     self.selection_scatter.setData([], [])
             
             
         
 class SelectableScatter(DragPlotWidget) :
-    def __init__(self, xy, selection_mask, qtItems=None, color=None, selection_color=[255, 0, 0]) :
+    def __init__(self, cat_instance, selection_color=[1, 0, 0]) :
         super().__init__()
-        self.xy = xy
-        self.plot(xy[0], xy[1], pen=None, symbol='o', symbolBrush='g', symbolSize=2)
+        self.cat_instance = cat_instance
+        self.xy = (cat_instance.x_axis_cleaned, cat_instance.y_axis_cleaned)
+        self.plot(self.xy[0], self.xy[1], pen=None, symbol='o', symbolBrush='g', symbolSize=2)
         
-        self.full_mask = selection_mask
-        self.qtItems = qtItems
-        self.initial_color = color
-        self.selection_color = selection_color
+        self.full_mask = cat_instance.selection_mask.copy()
+        self.qtItems = cat_instance.qtItems
+        #self.initial_color = make_full_color(cat_instance.color)
+        self.selection_color = make_full_color(selection_color)
         
         self.selection_scatter = pg.ScatterPlotItem()
         self.selection_scatter.setData([],[], pen=(255, 0, 0), size=2)
@@ -102,12 +101,14 @@ class SelectableScatter(DragPlotWidget) :
                 to_change = np.where( np.logical_xor(self.full_mask_previous, self.full_mask) )[0]
                 for i in tqdm(to_change) :
                     if self.full_mask[i] :
-                        self.qtItems[i].setPen( pg.mkPen(self.selection_color + [255]) )
-                        self.qtItems[i].setBrush( pg.mkBrush(self.selection_color + [127]) )
+                        self.qtItems[i].setPen( pg.mkPen(self.selection_color[:3] + self.selection_color[-1:], width=self.qtItems[i].linewidth) )
+                        self.qtItems[i].setBrush( pg.mkBrush(self.selection_color[:4]) )
                     else :
-                        self.qtItems[i].setPen( pg.mkPen(self.initial_color + [255]) )
-                        self.qtItems[i].setBrush( pg.mkBrush(self.initial_color + [127]) )
+                        self.qtItems[i].setPen( pg.mkPen(self.qtItems[i].initial_color[:3] + self.qtItems[i].initial_color[-1:], width=self.qtItems[i].linewidth) )
+                        self.qtItems[i].setBrush( pg.mkBrush(self.qtItems[i].initial_color[:4]) )
                 
+                self.cat_instance.selection_mask = self.full_mask.copy()
+            
             ROI_changed()
             current_roi.sigRegionChangeFinished.connect(ROI_changed)
     
@@ -127,22 +128,17 @@ class SelectableScatter(DragPlotWidget) :
         
         
 class SelectSources() : #pg.PlotWidget()
-    def __init__(self, cat, qt_image, selection_ROI, selection_mask, selection_regions, window=None, qtItems=None, color=None, selection_color=[255, 0, 0]) :
-        self.cat = cat
-        self.selection_ROI = selection_ROI
-        self.selection_mask = selection_mask
-        self.selection_mask_temp = np.full(len(cat), False)
+    def __init__(self, cat_instance, selection_color=[1, 0, 0]) :
+        self.cat_instance = cat_instance
+        self.selection_ROI = cat_instance.fits_image.image_widget.current_ROI
+        self.selection_mask_temp = np.full(len(self.cat_instance.cat), False)
         self.selection_ROI.sigRegionChangeFinished.connect(self.selection_ROI_changed)
         self.selection_scatter = None
-        self.qt_image = qt_image
-        self.qtItems = qtItems
-        self.initial_color = color
-        self.selection_color = selection_color
-        self.selection_regions = selection_regions
-        self.confirm_selection_filter = SelectSources_KeyPressFilter(self.selection_ROI, self.selection_mask, self.selection_mask_temp, \
-                                                                     self.qt_image, self.qtItems, self.initial_color, self.selection_regions)
+        #self.initial_color = make_full_color(cat_instance.color)
+        self.selection_color = make_full_color(selection_color)
+        self.confirm_selection_filter = SelectSources_KeyPressFilter(self)
         #self.window = window
-        window.installEventFilter(self.confirm_selection_filter)
+        cat_instance.fits_image.window.installEventFilter(self.confirm_selection_filter)
         self.make_selection()
         
         
@@ -151,10 +147,10 @@ class SelectSources() : #pg.PlotWidget()
     
         
     def make_selection(self) :
-        size_y = self.qt_image.image.shape[0]
+        size_y = self.cat_instance.fits_image.qt_image.image.shape[0]
         
-        x = self.cat['x']
-        y = size_y - self.cat['y']
+        x = self.cat_instance.cat['x']
+        y = size_y - self.cat_instance.cat['y']
         
         x0 = self.selection_ROI.getState()['pos'][0]
         y0 = self.selection_ROI.getState()['pos'][1]
@@ -169,49 +165,51 @@ class SelectSources() : #pg.PlotWidget()
         self.selection_mask_temp[np.where( np.logical_not(full_mask) )] = False
         
         
-        for qtItem in self.qtItems[~self.selection_mask] :
-            qtItem.setPen( pg.mkPen(self.initial_color + [255]) )
-            qtItem.setBrush( pg.mkBrush(self.initial_color + [127]) )
+        for qtItem in np.array(self.cat_instance.qtItems)[~self.cat_instance.selection_mask] :
+            qtItem.setPen( pg.mkPen(qtItem.initial_color[:3] + qtItem.initial_color[-1:], width=qtItem.linewidth) )
+            qtItem.setBrush( pg.mkBrush(qtItem.initial_color[:4]) )
         
-        for qtItem in self.qtItems[self.selection_mask_temp | self.selection_mask] :
-            qtItem.setPen( pg.mkPen(self.selection_color + [255]) )
-            qtItem.setBrush( pg.mkBrush(self.selection_color + [127]) )
+        for qtItem in np.array(self.cat_instance.qtItems)[self.selection_mask_temp | self.cat_instance.selection_mask] :
+            qtItem.setPen( pg.mkPen(self.selection_color[:3] + self.selection_color[-1:], width=qtItem.linewidth) )
+            qtItem.setBrush( pg.mkBrush(self.selection_color[:4]) )
         
         #for i in np.where(self.selection_mask_temp)[0] :
-        #    self.qtItems[i].setPen( pg.mkPen(self.selection_color + [255]) )
-        #    self.qtItems[i].setBrush( pg.mkBrush(self.selection_color + [127]) )
+        #    self.cat_instance.qtItems[i].setPen( pg.mkPen(self.selection_color + [255]) )
+        #    self.cat_instance.qtItems[i].setBrush( pg.mkBrush(self.selection_color + [127]) )
     
 
 class SelectSources_KeyPressFilter(QObject) :
-    def __init__(self, ROI, selection_mask, selection_mask_temp, qt_image, qtItems, initial_color, selection_regions) :
+    def __init__(self, SelectSources_instance) :
         super().__init__()
-        self.ROI = ROI
-        self.selection_mask = selection_mask
-        self.selection_mask_temp = selection_mask_temp
-        self.qt_image = qt_image
-        self.qtItems = qtItems
-        self.initial_color = initial_color
-        self.selection_regions = selection_regions
+        self.SelectSources_instance = SelectSources_instance
+        self.selection_ROI = SelectSources_instance.selection_ROI
+        self.selection_mask = SelectSources_instance.cat_instance.selection_mask
+        self.selection_mask_temp = SelectSources_instance.selection_mask_temp
+        self.qt_image = SelectSources_instance.cat_instance.fits_image.qt_image
+        self.qtItems = SelectSources_instance.cat_instance.qtItems
+        #self.initial_color = SelectSources_instance.initial_color
+        self.selection_regions = SelectSources_instance.cat_instance.selection_regions
 
     def eventFilter(self, obj, event) :
         if event.type() == QEvent.KeyPress :
             key = event.key()
             if key in [Qt.Key_Enter, Qt.Key_Return, Qt.Key_Space] :
+                print('Current selection confirmed')
                 self.selection_mask[self.selection_mask_temp] = True
                 
-                x0 = self.ROI.getState()['pos'][0]
-                y0 = self.ROI.getState()['pos'][1]
-                a = self.ROI.getState()['size'][0]
-                b = self.ROI.getState()['size'][1]
-                angle = self.ROI.getState()['angle']
+                x0 = self.selection_ROI.getState()['pos'][0]
+                y0 = self.selection_ROI.getState()['pos'][1]
+                a = self.selection_ROI.getState()['size'][0]
+                b = self.selection_ROI.getState()['size'][1]
+                angle = self.selection_ROI.getState()['angle']
                 rect_params = transform_rectangle(x0, y0, a, b, angle*np.pi/180)
                 self.selection_regions.append(rect_params)
                 
-            if key in [Qt.Key_Backspace, Qt.Key_Escape, Qt.Key_D] and self.ROI in self.qt_image.getView().allChildren() :
-                self.qt_image.removeItem(self.ROI)
+            if key in [Qt.Key_Backspace, Qt.Key_Escape, Qt.Key_D] and self.selection_ROI in self.qt_image.getView().allChildren() :
+                self.qt_image.removeItem(self.selection_ROI)
                 for qtItem in self.qtItems[~self.selection_mask] :
-                    qtItem.setPen( pg.mkPen(self.initial_color + [255]) )
-                    qtItem.setBrush( pg.mkBrush(self.initial_color + [127]) )
+                    qtItem.setPen( pg.mkPen(qtItem.initial_color[:3] + qtItem.initial_color[-1:], width=qtItem.linewidth) )
+                    qtItem.setBrush( pg.mkBrush(qtItem.initial_color[:4]) )
             return True  # Event has been handled
         return False  # Pass the event to the parent
 

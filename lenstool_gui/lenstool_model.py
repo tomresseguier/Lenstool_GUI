@@ -4,489 +4,35 @@ import shutil
 import numpy as np
 from matplotlib import pyplot as plt
 from astropy.wcs import WCS
-import astropy.units as u
-from collections import defaultdict
 from astropy.coordinates import SkyCoord
 from tqdm import tqdm
-import types
 import copy
 
 import PyQt5
 import pyqtgraph as pg
 import pyqtgraph.exporters
-from PyQt5.QtWidgets import QMainWindow, QWidget, QSplitter
-from PyQt5.QtCore import Qt, QRectF, QObject, QEvent
+from PyQt5.QtCore import Qt
 from astropy.table import Table
 import pickle
 import lenstool
 import pylenstool
 
 ###############################################################################
-import lenstronomy
-from lenstronomy.Data.pixel_grid import PixelGrid     
-from lenstronomy.LensModel.lens_model import LensModel
-from lenstronomy.LightModel.light_model import LightModel
-from lenstronomy.Data.psf import PSF
-from lenstronomy.ImSim.image_model import ImageModel
-from lenstronomy.LensModel.Solver.lens_equation_solver import LensEquationSolver
-#from lenstronomy.Plots import lens_plot
-from lenstronomy.Plots.model_plot import ModelPlot
-from lenstronomy.Data.imaging_data import ImageData
-from lenstronomy.Util import util
-from lenstronomy.Sampling.parameters import Param
-from lenstronomy.Workflow.fitting_sequence import FittingSequence
-
-###############################################################################
-from .utils.utils_astro.cat_manip import match_cat2
-from .utils.utils_plots.plot_utils_general import make_palette, adjust_luminosity, adjust_contrast, plot_scale_bar, plot_image_mpl, plot_corner
-from .utils.utils_Qt.drag_widgets import DragPlotWidget_special
-from .utils.utils_Qt.utils_general import transform_rectangle, transform_ROI_params
-from .utils.utils_general.utils_general import find_close_coord, extract_line
+from .utils.utils_astro.utils_general import world_to_relative, relative_to_world
+from .utils.utils_lenstool_model import import_multiple_images, import_sources, export_thumbnails, curves
+from .utils.utils_simulate_image import save_lenstronomy_model, load_lenstronomy_model, make_LENSTRONOMY_plot
+from .utils.utils_plots.plot_utils_general import plot_corner
+from .utils.utils_general.utils_general import extract_line
 from .utils.utils_general.sort_points import break_curves
-from .utils.utils_plots.plt_framework import plt_framework
 from .utils.utils_Lenstool.param_extractors import read_potfile, make_best_file_from_bayes, make_param_latex_table, read_bayes_file
+from .simulate_image import lenstronomy_model
 
 from .utils.utils_Lenstool.file_makers import best_files_maker, make_magnifications_and_curves                  # This import is problematic. The two functions run Lenstool
                                                                                                                 # and are therefore dependent on my own install.
-from .utils.utils_Lenstool.operations import make_image_to_source, make_magnification_function
-from .utils.utils_astro.utils_general import relative_to_world
+from .utils.utils_Lenstool.operations import make_image_to_source, MakeFunctionFromMap
 
 
 
-
-
-
-def make_which_colors(self, filled_markers=False, saturation=None) :
-    which = self.broad_families if self.which=='all' else self.which
-    
-    if filled_markers:
-        colors = make_palette(len(which), 1, alpha=0.5, sat_fixed=saturation)
-    else:
-        colors = make_palette(len(which), 1, alpha=0, sat_fixed=saturation)
-    
-    which_colors_dict = {}
-    for i, name in enumerate(which) :
-        which_colors_dict[name] = colors[i]
-    #for i, mask in enumerate(to_plot_mask):
-    #    for multiple_image in cat[mask]:
-    #        which_colors_dict[multiple_image['id']] = colors[i]
-    return which_colors_dict
-
-
-def make_full_color_function(families) :
-    n_families = len(families)
-    def make_full_color_dict(filled_markers=False, saturation=None) :
-        if filled_markers:
-            colors = make_palette(n_families, 1, alpha=0.5, sat_fixed=saturation)
-        else:
-            colors = make_palette(n_families, 1, alpha=0, sat_fixed=saturation)
-        full_colors_dict = {}
-        for i, family in enumerate(families) :
-            full_colors_dict[family] = colors[i]
-        return full_colors_dict
-    return make_full_color_dict
-
-
-def import_multiple_images(self, mult_file_path, fits_image, units=None, AttrName='mult', filled_markers=False, saturation=None) :
-    multiple_images = Table(names=['id','family','broad_family','ra','dec','a','b','theta','z','mag','confidence'], dtype=['str','str','str',*['float',]*8])
-    with open(mult_file_path, 'r') as mult_file:
-        for line in mult_file:
-            cleaned_line = line.strip()
-            if not cleaned_line.startswith("#") and len(cleaned_line)>0 :
-                split_line = cleaned_line.split()
-                row = [split_line[0], '---', '---'] #split_line[0][:-1]
-                for element in split_line[1:8] :
-                    row.append(float(element))
-                row.append(0)
-                multiple_images.add_row(row)
-    multiple_images['theta'] = multiple_images['theta'] - fits_image.orientation
-    multiple_images['family'], multiple_images['broad_family'], local_families, local_broad_families, multiple_images['confidence'] = find_families(multiple_images['id'])
-    
-    setattr(self, AttrName, fits_image.make_catalog(multiple_images, units=units))
-    
-    self.families, indices = np.unique(self.families + local_families, return_index=True)
-    self.families = self.families[np.argsort(indices)].tolist()
-    
-    self.broad_families, indices = np.unique(self.broad_families + local_broad_families, return_index=True)
-    self.broad_families = self.broad_families[np.argsort(indices)].tolist()
-    
-    self.which = self.broad_families.copy()
-    
-    self.mult_colors = make_full_color_function(self.broad_families) #make_full_color_function(self.broad_families)
-    
-    #if AttrName=='mult' :
-        #self.broad_families = np.unique( find_families(getattr(self, AttrName).cat['id']) )
-        #self.mult_colors = make_full_color_function(self.broad_families)
-        #self.which = self.broad_families.tolist()
-    
-    def make_to_plot_masks() :
-        to_plot_masks = {}
-        #for i, name in enumerate(self.which) :
-        #    other_names_mask = np.full(len(self.which), True)
-        #    other_names_mask[i] = False
-        #    other_names = np.array(self.which)[other_names_mask]
-        #    ambiguous_names = []
-        #    for other_name in other_names :
-        #        if other_name.startswith(name) :
-        #           ambiguous_names.append(other_name)
-        #    to_plot_mask = np.full(len(getattr(self, AttrName).cat), False)
-        #    for j, im_id in enumerate(getattr(self, AttrName).cat['id']) :
-        #        if im_id.startswith(name) and True not in [ im_id.startswith(ambiguous_name) for ambiguous_name in ambiguous_names ] :
-        #            to_plot_mask[j] = True
-        #    to_plot_masks[name] = to_plot_mask
-        for family in self.which :
-            to_plot_masks[family] = getattr(self, AttrName).cat['broad_family'] == family
-            if len(np.unique(to_plot_masks[family]))==1 and np.unique(to_plot_masks[family])[0]==False :
-                to_plot_masks[family] = getattr(self, AttrName).cat['family'] == family
-                if len(np.unique(to_plot_masks[family]))==1 and np.unique(to_plot_masks[family])[0]==False :
-                    to_plot_masks[family] = getattr(self, AttrName).cat['id'] == family
-        return to_plot_masks
-    def make_overall_mask() :
-        overall_mask = np.full(len(getattr(self, AttrName).cat), False)
-        for mask in make_to_plot_masks().values() :
-            overall_mask = np.logical_or(overall_mask, mask)
-        return overall_mask
-    getattr(self, AttrName).masks = make_to_plot_masks
-    getattr(self, AttrName).mask = make_overall_mask
-    
-    lenstool_model = self
-    
-    def plot_multiple_images(self, scale=1, marker=None, filled_markers=filled_markers, colors=None, mpl=False, fontsize=9,
-                             make_thumbnails=False, square_size=150, margin=50, distance=200, savefig=False, square_thumbnails=True,
-                             boost=[2,1.5,1], linewidth=1.7, text_color='white', text_alpha=0.5, saturation=saturation) :
-        self.clear()
-        saturation = fits_image.lt.saturation if saturation is None else saturation
-        self.saturation = saturation
-        
-        if colors is not None :
-            colors_dict = {}
-            for i, family in enumerate(lenstool_model.which) :
-                colors_dict[family] = colors[i]
-        else :
-            colors_dict = lenstool_model.mult_colors(filled_markers=filled_markers, saturation=saturation)
-        
-        cat_contains_ellipse_params = len(np.unique(self.cat['a']))!=1
-        count = 0
-        for name, mask in self.masks().items() :
-            broad_family = name#self.cat['broad_family'][ np.where(self.cat['family']==name)[0][0] ]
-            for multiple_image in self.cat[mask] :
-                # Remove the *1000
-                if not cat_contains_ellipse_params :
-                    a, b = scale*40, scale*40
-                else :
-                    a, b = multiple_image['a']*scale, multiple_image['b']*scale
-                color = colors_dict[broad_family].copy()
-                if multiple_image['confidence']==1 :
-                    color/=2
-                elif multiple_image['confidence']==0 :
-                    color/=4
-                ellipse = self.plot_one_object(multiple_image['x'], multiple_image['y'], a, b, 
-                                               multiple_image['theta'], count, color=color, 
-                                               linewidth=linewidth, marker=marker, size=scale*15)
-                #self.qtItems[count] = ellipse
-                self.qtItems.append(ellipse)
-                count += 1
-                
-                if mpl :
-                    font = {'size':fontsize, 'family':'DejaVu Sans'}
-                    plt.rc('font', **font)
-                    self.plot_one_galaxy_mpl(multiple_image['x'], multiple_image['y'], a, b, multiple_image['theta'], color=colors_dict[broad_family][:3],
-                                             text=multiple_image['id'], linewidth=linewidth, text_color=text_color, text_alpha=text_alpha)
-                    #self.plot_one_galaxy_mpl(multiple_image['x'], multiple_image['y'], a, b, multiple_image['theta'], color=colors_dict[broad_family][:3], text=multiple_image['id'])
-        
-        
-        if make_thumbnails :
-            if boost is not None :
-                adjusted_image = adjust_contrast(self.fits_image.image_data, boost[0], pivot=boost[1])
-                adjusted_image = adjust_luminosity(adjusted_image, boost[2])
-            else :
-                adjusted_image = self.fits_image.image_data
-            
-            if group_images :
-                group_list = find_close_coord(self.cat[self.mask()], distance)
-            else :
-                group_list = [[name] for name in self.cat[self.mask()]['id']]
-            
-            for group in group_list :
-                
-                x_array = [self.cat[np.where(self.cat['id']==name)[0][0]]['x'] for name in group]
-                y_array = [self.cat[np.where(self.cat['id']==name)[0][0]]['y'] for name in group]
-                
-                x_pix = (np.max(x_array) + np.min(x_array)) / 2
-                y_pix = (np.max(y_array) + np.min(y_array)) / 2
-                
-                half_side = square_size // 2
-                
-                x_min = round( max( min( np.min(x_array) - margin, x_pix - half_side ), 0) )
-                x_max = round( min( max( np.max(x_array) + margin, x_pix + half_side ), self.fits_image.image_data.shape[1]) )
-                y_min = round( max( min( np.min(y_array) - margin, y_pix - half_side ), 0) )
-                y_max = round( min( max( np.max(y_array) + margin, y_pix + half_side ), self.fits_image.image_data.shape[0]) )
-                
-                if square_thumbnails :
-                    x_side_size = x_max - x_min
-                    y_side_size = y_max - y_min
-                    if x_side_size!=y_side_size :
-                        demi_taille_unique = round( max(x_side_size, y_side_size)/2 )
-                        x_pix = round( (x_max + x_min)/2 )
-                        y_pix = round( (y_max + y_min)/2 )
-                        x_min = x_pix - demi_taille_unique
-                        x_max = x_pix + demi_taille_unique
-                        y_min = y_pix - demi_taille_unique
-                        y_max = y_pix + demi_taille_unique
-                
-                plt_framework(image=True, figsize=3, drawscaler=1.2)
-                font = {'size':9, 'family':'DejaVu Sans'}
-                plt.rc('font', **font)
-                
-                
-                #cropped_image = self.fits_image.image_data[y_min:y_max, x_min:x_max, :]
-                fig, ax = plot_image_mpl(adjusted_image, wcs=None, wcs_projection=False, units='pixel',
-                                         pos=111, make_axes_labels=False, make_grid=False, crop=[x_min, x_max, y_min, y_max])
-                
-                for multiple_image_id in group :
-                    multiple_image = self.cat[np.where(self.cat['id']==multiple_image_id)[0][0]]
-                    color = colors_dict[multiple_image_id[:-1]]
-                    if not cat_contains_ellipse_params :
-                        a, b = 75, 75
-                    else :
-                        a, b = multiple_image['a'], multiple_image['b']
-                    self.plot_one_galaxy_mpl(multiple_image['x']-x_min, multiple_image['y']-y_min, a, b, multiple_image['theta'],
-                                             color=color[:3], text=multiple_image['id'], ax=ax, linewidth=linewidth, text_color=text_color, text_alpha=text_alpha)
-                
-                ax.axis('off')
-                #plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
-                
-                fig.show()
-                    
-                plot_scale_bar(ax, deg_per_pix=self.fits_image.pix_deg_scale, unit='arcsec',
-                               length=1 , color='white', linewidth=2, text_offset=0.01)
-                if savefig :
-                    fig.savefig(os.path.join(os.path.dirname(self.fits_image.image_path), 'mult_' + group[0]), bbox_inches='tight', pad_inches=0)
-                    
-                plt_framework(full_tick_framework=True, ticks='out', image=True, width='full', drawscaler=0.8, tickscaler=0.5, minor_ticks=False)
-    
-    
-    def plot_multiple_images_column(self, text_column, which='all'):
-        if text_column not in self.cat.colnames:
-            print(f"Column '{text_column}' not found in catalog")
-            return
-        if not hasattr(self, 'text_items'):
-            self.text_items = []
-        for text_item in self.text_items:
-            self.fits_image.qt_image.removeItem(text_item)
-        self.text_items.clear()
-        
-        colors_dict = lenstool_model.mult_colors(filled_markers=False, saturation=self.saturation)
-        
-        for name, mask in self.masks().items() :
-            broad_family = name#self.cat['broad_family'][ np.where(self.cat['family']==name)[0][0] ]
-            for multiple_image in self.cat[mask] :
-                
-                text = str(multiple_image[text_column])
-                text_item = pg.TextItem( text, color=list( np.array(colors_dict[broad_family])*255 )[:3] )
-                
-                x = multiple_image['x']
-                y = self.fits_image.image_data.shape[0] - multiple_image['y']  # Flip y to match PyQtGraph convention
-                semi_major = multiple_image['a']
-                semi_minor = multiple_image['b']
-                offset = max(semi_major, semi_minor)
-                text_item.setPos(x + offset/2, y - offset/2)
-                
-                font = PyQt5.QtGui.QFont()
-                font.setPointSize(15)
-                text_item.setFont(font)
-                
-                self.fits_image.qt_image.addItem(text_item)
-                self.text_items.append(text_item)
-    
-    
-    getattr(self, AttrName).plot = types.MethodType(plot_multiple_images, getattr(self, AttrName))
-    getattr(self, AttrName).plot_column = types.MethodType(plot_multiple_images_column, getattr(self, AttrName))
-    
-    def transfer_ids(self, id_name='id') :
-        if fits_image.imported_cat is not None :
-            if id_name in fits_image.imported_cat.cat.colnames :
-                temp_cat = match_cat2([self.cat, fits_image.imported_cat.cat], keep_all_col=True, fill_in_value=-1, column_to_transfer=id_name)
-                if id_name in self.cat.colnames :
-                    id_name = id_name + '_CAT2'
-                self.cat[id_name] = temp_cat[id_name]
-                print('###############\nColumn ' + id_name + ' added.\n###############')
-            else :
-                print(id_name + ' not found in imported_cat')
-        else :
-            print('No imported_cat')
-    
-    getattr(self, AttrName).transfer_ids = types.MethodType(transfer_ids, getattr(self, AttrName))
-    
-    
-def import_sources(self, predicted_sources_path, fits_image, AttrName='source', units='pixel', filled_markers=False) :
-    with open(predicted_sources_path) as file :
-        source_lines = file.readlines()[1:]
-    sources = Table(names=['id','ra','dec','a','b','theta','z','mag'], dtype=['str', *['float',]*7])
-    for line in source_lines :
-        sources.add_row(line.split())
-    sources['ra'], sources['dec'] = self.relative_to_world(sources['ra'], sources['dec'])
-    self.source = fits_image.make_catalog(sources, color=[1.,0.5,0.], units='arcsec')
-
-
-def export_thumbnails(self, group_images=True, square_thumbnails=True, square_size=150, margin=50, distance=200, export_dir=None, boost=True, make_broad_view=True, broad_view_params=None) :
-    export_dir = os.path.join(os.path.dirname(self.fits_image.image_path), 'mult_thumbnails') if export_dir is None else os.path.abspath(os.path.join(export_dir, 'mult_thumbnails'))
-    if os.path.isdir( os.path.dirname( os.path.dirname(export_dir) ) ) and not os.path.isdir( os.path.dirname(export_dir) ) :
-        os.mkdir(os.path.dirname(export_dir))
-    if not os.path.isdir(export_dir) :
-        os.mkdir(export_dir)
-    
-    if not self.fits_image.boosted and boost :
-        self.fits_image.boost()
-    
-    if group_images :
-        group_list = find_close_coord(self.cat[self.mask()], distance)
-    else :
-        group_list = [[name] for name in self.cat[self.mask()]['id']]
-    
-    for group in group_list :
-        
-        x_array = [self.cat[np.where(self.cat['id']==name)[0][0]]['x'] for name in group]
-        y_array = [self.cat[np.where(self.cat['id']==name)[0][0]]['y'] for name in group]
-        
-        x_pix = (np.max(x_array) + np.min(x_array)) / 2
-        y_pix = (np.max(y_array) + np.min(y_array)) / 2
-        
-        half_side = square_size // 2
-        
-        x_min = round( max( min( np.min(x_array) - margin, x_pix - half_side ), 0) )
-        x_max = round( min( max( np.max(x_array) + margin, x_pix + half_side ), self.fits_image.image_data.shape[1]) )
-        y_min = round( max( min( np.min(y_array) - margin, y_pix - half_side ), 0) )
-        y_max = round( min( max( np.max(y_array) + margin, y_pix + half_side ), self.fits_image.image_data.shape[0]) )
-        
-        #if square_thumbnails :
-        x_side_size = x_max - x_min
-        y_side_size = y_max - y_min
-        demi_taille_unique = round( max(x_side_size, y_side_size)/2 )
-        if x_side_size!=y_side_size :
-            x_pix = round( (x_max + x_min)/2 )
-            y_pix = round( (y_max + y_min)/2 )
-            x_min = x_pix - demi_taille_unique
-            x_max = x_pix + demi_taille_unique
-            y_min = y_pix - demi_taille_unique
-            y_max = y_pix + demi_taille_unique
-        
-        zoom_rect = QRectF(x_min, self.fits_image.image_data.shape[0] - y_max, demi_taille_unique*2, demi_taille_unique*2)
-        self.fits_image.qt_image.getView().setRange(zoom_rect)        
-        
-        
-        thumbnail_path = os.path.join( export_dir, 'mult_' + group[0] + '.png' )
-        print('Creating ' + thumbnail_path)
-        exporter = pg.exporters.ImageExporter(self.fits_image.qt_image.view)
-        exporter.export(thumbnail_path)
-        print('Done')
-        
-    
-    ##### Adding broad view #####
-    if make_broad_view :
-        # broad_view_params = [ [x_min, x_max], [y_min, y_max] ]
-        if broad_view_params is not None :
-            x = broad_view_params[0][0]
-            y = self.fits_image.image_data.shape[0] - broad_view_params[1][1]
-            x_width = broad_view_params[0][1]-broad_view_params[0][0]
-            y_width = broad_view_params[1][1]-broad_view_params[1][0]
-            zoom_rect = QRectF(x, y, x_width, y_width)
-        else :
-            zoom_rect = QRectF(0, 0, self.fits_image.image_data.shape[1], self.fits_image.image_data.shape[0])
-        self.fits_image.qt_image.getView().setRange(zoom_rect)        
-        
-        broadview_filename = 'broadview'
-        for name in self.fits_image.lt.which :
-            broadview_filename += '_' + name
-        broadview_path = os.path.join( export_dir, broadview_filename + '.png' )
-        print('Creating ' + broadview_path)
-        exporter = pg.exporters.ImageExporter(self.fits_image.qt_image.view)
-        exporter.export(broadview_path)
-        print('Done')
-    ##############################
-
-        
-
-
-
-class curves :
-    def __init__(self, curves_dir, lenstool_model, fits_image, which_critcaus='critical', join=False, size=2) :
-        self.dir = curves_dir
-        self.paths = glob.glob(os.path.join(curves_dir, "*.dat"))
-        self.lenstool_model = lenstool_model
-        self.fits_image = fits_image
-        self.size = size
-        
-        self.qtItems = {}
-        for name in lenstool_model.broad_families :
-            self.qtItems[name] = None
-        
-        self.coords = {}
-        for name in lenstool_model.broad_families :
-            curve_mask = np.array([name in os.path.basename(path) for path in self.paths])
-            if True in curve_mask :
-                lines = []
-                for curve_path in np.array(self.paths)[curve_mask] :
-                    file = open(curve_path, 'r')
-                    all_lines = file.readlines()
-                    lines += all_lines[1:]
-                
-                ra_ref = float( all_lines[0].split()[-2] )
-                dec_ref = float( all_lines[0].split()[-1] )
-                
-                if which_critcaus=='critical' :
-                    delta_ra = np.array( [ float( lines[i].split()[1] ) for i in range(len(lines)) ] )
-                    delta_dec = np.array( [ float( lines[i].split()[2] ) for i in range(len(lines)) ] )
-                    ra, dec = relative_to_world(delta_ra, delta_dec, (ra_ref, dec_ref))
-                    x, y = fits_image.world_to_image(ra, dec)
-                    
-                    y = fits_image.image_data.shape[0] - y
-                    
-                    shorten_indices = np.linspace(0, len(x) - 1, 10000, dtype=int)
-                    x = x[shorten_indices]
-                    y = y[shorten_indices]
-                    
-                    #if join :
-                    #    x, y = rearrange_points(x, y)
-                         
-                if which_critcaus=='caustic' :
-                    delta_ra = np.array( [ float( lines[i].split()[3] ) for i in range(len(lines)) ] )
-                    delta_dec = np.array( [ float( lines[i].split()[4] ) for i in range(len(lines)) ] )
-                    ra, dec = relative_to_world(delta_ra, delta_dec, (ra_ref, dec_ref))
-                    x, y = fits_image.world_to_image(ra, dec)
-                    
-                    y = fits_image.image_data.shape[0] - y
-                    
-                    shorten_indices = np.linspace(0, len(x) - 1, 10000, dtype=int)
-                    x = x[shorten_indices]
-                    y = y[shorten_indices]
-                    
-                    #if join :
-                    #    x, y = rearrange_points(x, y)
-                
-                self.coords[name] = (x, y)
-        
-    def plot(self) :
-        self.clear()
-        for name in self.lenstool_model.which :
-            color = np.round(self.lenstool_model.mult_colors(saturation=self.lenstool_model.saturation)[name]*255).astype(int)
-            color[3] = 255
-            
-            x, y = self.coords[name]
-            
-            scatter = pg.ScatterPlotItem(x, y, pen=None, brush=pg.mkBrush(color), size=self.size)
-            self.qtItems[name] = scatter
-            self.fits_image.qt_image.addItem(scatter)
-            
-    def clear(self) :
-        for name, qtItem in self.qtItems.items() :
-            if qtItem is not None :
-                self.fits_image.qt_image.removeItem(qtItem)
-                self.qtItems[name] = None
-                
-    
-    
-    
 
 
 class lenstool_model :
@@ -514,7 +60,7 @@ class lenstool_model :
         if self.param_file_path is not None :
             param_file = pylenstool.lenstool_param_file(self.param_file_path)
             ref_coord = param_file.get_ref()
-            self.reference = [float(ref_coord[0]), float(ref_coord[1])]
+            self.reference = ( float(ref_coord[0]), float(ref_coord[1]) )
         
         all_par_file_names = [ os.path.basename(file_path) for file_path in all_par_file_paths ]
         
@@ -522,8 +68,8 @@ class lenstool_model :
         self.best_file_path = os.path.join(self.model_dir, 'best.par') if 'best.par' in all_par_file_names else None
         self.bayes_file_path = os.path.join(self.model_dir, 'bayes.dat') if 'bayes.dat' in os.listdir(self.model_dir) else None
         if self.best_file_path is None and 'bayes.dat' in os.listdir(self.model_dir) :
-            yesno = input('bayes.dat file found, create best_TEMP.par from bayes file? [Y][N]')
-            if yesno=='Y' :
+            yesno = input('bayes.dat file found, create best_TEMP.par from bayes file? ([Y]/n)')
+            if yesno.lower() in ['y', ''] :
                 make_best_file_from_bayes(self.param_file_path)
                 self.best_file_path = os.path.join(self.model_dir, 'best_TEMP.par')
         
@@ -704,18 +250,11 @@ class lenstool_model :
                           distance=distance, export_dir=export_dir, boost=boost, make_broad_view=make_broad_view, broad_view_params=broad_view_params)
         
     
-    def world_to_relative(self, ra, dec, ref=None) :
-        if ref is None :
-            ref = SkyCoord(self.reference[0], self.reference[1], unit='deg')
-        world_radec = SkyCoord(ra, dec, unit='deg')
-        relative_coord = ( (world_radec.ra - ref.ra)*np.cos(ref.dec.rad), world_radec.dec - ref.dec )
-        return -relative_coord[0].arcsec, relative_coord[1].arcsec
+    def world_to_relative(self, ra, dec) :
+        return world_to_relative(ra, dec, self.reference)
     
     def relative_to_world(self, xr, yr) :
-        ref = SkyCoord(self.reference[0], self.reference[1], unit='deg')
-        dec = ref.dec.deg + yr*u.arcsec.to('deg')
-        ra = ref.ra.deg - xr*u.arcsec.to('deg') / np.cos(dec*u.deg.to('rad'))
-        return ra, dec
+        return relative_to_world(xr, yr, self.reference)
     
     def make_webpage(self) :
         print('in progress')
@@ -763,7 +302,7 @@ class lenstool_model :
         self.dx_map, self.dy_map, self.dmap_wcs = self.dpl_maps[self.lt_z]
         
         mmap, wcs = self.lt_magnification_maps[z]
-        self.get_magnification = make_magnification_function(mmap, wcs)
+        self.get_magnification = MakeFunctionFromMap(mmap, wcs)
         
     def compute_lt_dpl(self, z=None, npix=2000) :
         if z==None :
@@ -911,39 +450,81 @@ class lenstool_model :
     def start_magnification(self) :
         return None
     
-    def add_magnification_column(self, cat=None, which_cat='imported_cat', index=None) :
+    def add_lensing_columns(self, cat=None, which_cat='imported_cat', index=None) :
         if cat is None :
             if index is not None :
                 cat = self.fits_image.imported_cat_list[index].cat
             else :
-                cat = getattr(self.fits_image, which_cat, None)
-        new_col = np.zeros(len(cat))
+                cat = getattr(self.fits_image, which_cat, None).cat
         
-        initial_field = self.lt.get_field([])
-        
-        z_colname = None
-        for name in ['z_spec', 'zspec', 'z_phot', 'zphot'] :
+        check = False
+        for name in ['magnification', 'convergence', 'shear', 'tangential_magnification']:
             if name in cat.colnames :
-                z_colname = name
-                break
-        if z_colname is None :
-            print('Redshift column not found in catalog. Using current source redshift = ' + str(self.lt_z))
-            
-        for i in tqdm(range(len(cat))) :
-            if z_colname is not None :
-                xr, yr = self.world_to_relative(cat['ra'][i], cat['dec'][i])
-                self.lt.set_field([xr-1, xr+1, yr-1, yr+1])
-                z = cat[z_colname][i]
-                print(str(cat['id'][i]) + ': computing magnification map at redshift ' + str(z))
-                mmap, wcs = self.lt.g_ampli(1, 5, z)
-                get_magnification = make_magnification_function(mmap, wcs)
-                new_col[i] = get_magnification(cat['ra'][i], cat['dec'][i])
-            else :
-                new_col[i] = self.get_magnification(cat['ra'][i], cat['dec'][i])
+                check = True
+        if check :
+            yesno = input('Lensing column already exists. Overwrite? [Y]/n')
         
-        self.magnification_column = new_col
-        cat.add_column(new_col, name='magnification')
-        self.lt.set_field(initial_field)
+        if yesno.lower() in ['y', ''] :
+            mu_col = np.full(len(cat), np.nan)
+            gamma_col = np.full(len(cat), np.nan)
+            kappa_col = np.full(len(cat), np.nan)
+            tmu_col = np.full(len(cat), np.nan)
+            rmu_col = np.full(len(cat), np.nan)
+            
+            initial_field = self.lt.get_field([])
+            
+            z_colname = None
+            for name in ['z_spec', 'zspec', 'z_phot', 'zphot'] :
+                if name in cat.colnames :
+                    z_colname = name
+                    break
+            if z_colname is None :
+                print('Redshift column not found in catalog. Using current source redshift = ' + str(self.lt_z))
+                
+            for i in tqdm(range(len(cat))) :
+                if z_colname is not None :
+                    z = cat[z_colname][i]
+                    if z>self.z_lens :
+                        #print(str(cat['id'][i]) + ': computing lensing maps at redshift ' + str(z))
+                        xr, yr = self.world_to_relative(cat['ra'][i], cat['dec'][i])
+                        #delta = 1.
+                        delta = self.fits_image.pix_deg_scale * 3600 / 2
+                        self.lt.set_field([xr-delta, xr+delta, yr-delta, yr+delta])
+                        
+                        #npix = 11
+                        npix = 2
+                        mmap, wcs = self.lt.g_ampli(1, npix, z)
+                        #get_magnification = MakeFunctionFromMap(mmap, wcs)
+                        #mu_col[i] = get_magnification(cat['ra'][i], cat['dec'][i])
+                        mu_col[i] = np.mean(mmap)
+                        
+                        kappa, wcs = self.lt.g_mass(1, npix, self.z_lens, z)
+                        #get_convergence = MakeFunctionFromMap(kappa, wcs)
+                        #kappa_col[i] = get_convergence(cat['ra'][i], cat['dec'][i]) 
+                        kappa_col[i] = np.mean(kappa)
+                        
+                        #shear, wcs = self.lt.g_ampli(6, npix, z)
+                        #get_shear = MakeFunctionFromMap(shear, wcs)
+                        #gamma_col[i] = get_shear(cat['ra'][i], cat['dec'][i])
+                        #gamma_col[i] = np.mean(shear)
+                        gamma_col[i] = ( (1-kappa_col[i])**2 - 1/mu_col[i] )**0.5
+                    #else :
+                        #print(str(cat['id'][i]) + ': redshift ' + str(z) + ' lower than lens redshift --> NaN')
+                else :
+                    mu_col[i] = self.get_magnification(cat['ra'][i], cat['dec'][i])
+                    kappa_col[i] = self.get_convergence(cat['ra'][i], cat['dec'][i])     
+                    gamma_col[i] = self.get_shear(cat['ra'][i], cat['dec'][i])
+                tmu_col[i] = 1 / (1 - kappa_col[i] - gamma_col[i] )
+                rmu_col[i] = 1 / (1 - kappa_col[i] + gamma_col[i] )
+            
+            columns_to_add = [mu_col, kappa_col, gamma_col, tmu_col, rmu_col]
+            names = ['magnification', 'convergence', 'shear', 'tangential_magnification', 'radial_magnification']
+            for i, name in enumerate(names) :
+                if name in cat.colnames :
+                    cat.replace_column(name, columns_to_add[i])
+                else :
+                    cat.add_column(columns_to_add[i], name=name)
+            self.lt.set_field(initial_field)
     
     def compute_lt_curve(self, z=None) :
         if z==None :
@@ -1203,533 +784,27 @@ class lenstool_model :
     
     
     def start_simulate_image(self) :
-        ROI = self.fits_image.image_widget.current_ROI
-        self.fits_image.qt_image.addItem(ROI)
-        
-        x0 = ROI.getState()['pos'][0]
-        y0 = ROI.getState()['pos'][1]
-        a = ROI.getState()['size'][0]
-        b = ROI.getState()['size'][1]
-        angle = ROI.getState()['angle'] *np.pi/180
-        
-        x0, y0, a, b, angle = transform_rectangle(x0, y0, a, b, angle) #x0, y0 at the top left
-        size_y = self.fits_image.image_data.shape[0]
-        y0 = size_y-y0 #Counting pixels from bottom instead of top
-        
-        ra_topleft, dec_topleft = self.fits_image.image_to_world(x0, y0)
-        ra_center, dec_center = self.fits_image.image_to_world(x0 + a/2, y0 - b/2)
-        
-        xr_topleft, yr_topleft = self.world_to_relative(ra_topleft, dec_topleft)
-        xr_center, yr_center = self.world_to_relative(ra_center, dec_center)
-        
-        offset_arcsec_x = xr_topleft - xr_center
-        offset_arcsec_y = - (yr_topleft - yr_center) #because ROI's anchor corner is top left instead of bottom left
-        
-        #new_field = [xr_center+ra_at_xy_0, xr_center-ra_at_xy_0, yr_center+dec_at_xy_0, yr_center-dec_at_xy_0]
-        offset_pix = np.max(np.abs( [a, b] ))
-        offset_arcsec = np.max(np.abs( [offset_arcsec_x, offset_arcsec_y] ))
-        self._SquareOfInterest_side_arcsec = offset_arcsec * 2
-        self._SquareOfInterest_xr_bottomleft = xr_center - offset_arcsec
-        self._SquareOfInterest_yr_bottomleft = yr_center - offset_arcsec
-        new_field = [xr_center-offset_arcsec, xr_center+offset_arcsec, yr_center-offset_arcsec, yr_center+offset_arcsec]
-        
-        numPix = 100
-        initial_field = self.lt.get_field([])
-        self.lt.set_field(new_field)
-        if self.previous_state_current_ROI is None or self.previous_state_current_ROI != ROI.getState() :
-            self.compute_lt_dpl(npix=numPix)
-        
-        #f, ax = plt.subplots()
-        #ax.imshow(self.dpl_maps[self.lt_z][0], origin='lower')
-        #f, ax = plt.subplots()
-        #ax.imshow(self.fits_image.image_data[round(size_y-y0-b):round(size_y-y0),round(x0):round(x0+a),:], origin='lower')
-        
-        
-        #-------------- Lens model Lenstronomy definitions --------------#
-        
-        deltaPix = abs( self.dpl_maps[6.2][2].wcs.cdelt[0]*3600 )
-        x_grid_interp, y_grid_interp = util.make_grid(numPix, deltaPix)
-        x_axes, y_axes = util.get_axes(x_grid_interp, y_grid_interp)
-        
-        self.LENSTRONOMY_LensModel_kwargs = [{'grid_interp_x': x_axes,
-                                            'grid_interp_y': y_axes,
-                                            'f_x': self.dpl_maps[6.2][0],
-                                            'f_y': self.dpl_maps[6.2][1]}]
-        self.LENSTRONOMY_LensModel_list = ['INTERPOL']
-        self.LENSTRONOMY_LensModel = LensModel(lens_model_list=self.LENSTRONOMY_LensModel_list)
-        
-        #m=4
-        #f, ax = plt.subplots(1, 1, figsize=(10, 10), sharex=False, sharey=False)
-        #lens_plot.lens_model_plot(ax, lensModel=self.LENSTRONOMY_lens_model, kwargs_lens=kwargs_lens,
-        #                          with_caustics=True, fast_caustic=True, coord_inverse=False, numPix=round(numPix/m), deltaPix=deltaPix*m)
-        
-        #-------------- Qt graphics definitions --------------#
-        
-        self.source_plane_widget = DragPlotWidget_special()
-        self.source_plane_widget.setTitle('Source plane')
-        #source_plane_widget.setAspectLocked(lock=True, ratio=1)
-        
-        self.to_plot = self.fits_image.image_data[round(y0-b):round(y0),round(x0):round(x0+a),:][::-1,:,:]
-        self.image_plane_plot = pg.ImageView()
-        self.image_plane_plot.setImage(self.to_plot)
-        #self.image_plane_widget = QWidget(self.image_plane_plot) #pg.PlotWidget()
-        #image_plane_widget.setTitle('Image plane')
-        
-        
-        self._imsim_srcplane_layout = QSplitter(Qt.Vertical)
-        self._imsim_implane_layout = QSplitter(Qt.Vertical)
-        
-        self._imsim_srcplane_layout.addWidget(self.source_plane_widget)
-        self._imsim_implane_layout.addWidget(self.image_plane_plot)
-        
-        self._imsim_layout = QSplitter(Qt.Horizontal)
-        self._imsim_layout.addWidget(self._imsim_srcplane_layout)
-        self._imsim_layout.addWidget(self._imsim_implane_layout)
-        
-        self.window = QMainWindow()
-        self.window.setWindowTitle('Lenstronomy image simulator')
-        self.window.setCentralWidget(self._imsim_layout)
-        self.window.show()
-        
-        
-        self.source_center_coordinates = self.LENSTRONOMY_LensModel.ray_shooting(0, 0, self.LENSTRONOMY_LensModel_kwargs)
-        
-        if self.previous_state_current_ROI is None or self.previous_state_current_ROI != ROI.getState() :
-            self.compute_lt_curve()
-        self.plot_lt_curve(color=[0, 255, 0], which='caustic') #to create self.lt_curve_coords_image_sorted
-        
-        self.lt.set_field(initial_field)
-        
-        
-        caustic_plot = pg.PlotDataItem()
-        caustic_plot.setPen( color=[0,255,0,255], width=4.0001 )
-        coords = break_curves(self.lt_caustic_coords_relative, distance_threshold=8.*self.fits_image.pix_deg_scale*3600)#sort_points(self.lt_caustic_coords_relative, distance_threshold=1.0, angle_threshold=np.pi)
-        x = coords[0] - xr_center - self.source_center_coordinates[0]
-        y = coords[1] - yr_center - self.source_center_coordinates[1]
-        caustic_plot.setData(x, y)
-        self.source_plane_widget.addItem(caustic_plot)
-        self.source_plane_widget.setXRange(-3, 3)
-        self.source_plane_widget.setYRange(-3, 3)
-        
-        self.critical_curve_plot = pg.PlotDataItem()
-        self.critical_curve_plot.setPen( color=[255,0,255,255], width=4.0001 )
-        self._lt_curve_coords_relative_broken = break_curves(self.lt_curve_coords_relative, distance_threshold=8.*self.fits_image.pix_deg_scale*3600)#sort_points(self.lt_curve_coords_relative, distance_threshold=1.0, angle_threshold=np.pi)
-        x = (self._lt_curve_coords_relative_broken[0] - xr_topleft) / (self.fits_image.pix_deg_scale*3600)
-        y = - (self._lt_curve_coords_relative_broken[1] - yr_topleft) / (self.fits_image.pix_deg_scale*3600)
-        
-        self.critical_curve_plot.setData(x, y)
-        self.image_plane_plot.addItem(self.critical_curve_plot)
-        
-        self.filter_source = SourceFilter(self)
-        self.source_plane_widget.installEventFilter(self.filter_source)
-        
-        self.filter_image = ImageFilter(self)
-        self.image_plane_plot.installEventFilter(self.filter_image)
-        
-        
-        #-------------- Plot source positions from multiple image catalog --------------#
-        SX = []
-        SY = []
-        for mult in self.mult.cat :
-            xr, yr = self.world_to_relative( mult['ra'], mult['dec'], ref=SkyCoord(ra_center, dec_center, unit='deg') )
-            sx, sy = self.LENSTRONOMY_LensModel.ray_shooting(xr, yr, self.LENSTRONOMY_LensModel_kwargs)
-            SX.append(sx - self.source_center_coordinates[0])
-            SY.append(sy - self.source_center_coordinates[1])
-        
-        source_coord_plot = pg.ScatterPlotItem()
-        source_coord_plot.setData(SX, SY)
-        self.source_plane_widget.addItem(source_coord_plot)
-        
-            
-        
-        
-        
-        #-------------- Lenstronomy definitions --------------#
-        
-        #-------------- PixelGrid --------------#
-        transform_pix2angle = np.array([[1, 0], [0, 1]]) * self.fits_image.pix_deg_scale*3600
-        
-        npix = round(self._SquareOfInterest_side_arcsec / (self.fits_image.pix_deg_scale*3600))
-        self.LENSTRONOMY_PixelGrid_kwargs = {'nx': npix,
-                                        'ny': npix,  # number of pixels per axis
-                                        'ra_at_xy_0': -offset_arcsec,
-                                        'dec_at_xy_0': -offset_arcsec,
-                                        'transform_pix2angle': transform_pix2angle} 
-        self.LENSTRONOMY_PixelGrid = PixelGrid(**self.LENSTRONOMY_PixelGrid_kwargs)
-        
-        #-------------- DATA --------------#
-        if not hasattr(self, 'filters_added') :
-            if self.fits_image.filters is not None :
-                names = np.array([name for name in self.fits_image.filters])
-                #JWST_names = ['F070W','F090W','F115W','F140M','F150W','F150W2','F162M','F164N','F182M','F200W','F210M','F250M','F277W','F300M','F322W2','F323N','F335M','F356W','F360M','F405N','F410M','F430M','F444W','F460M','F466N','F470N','F480M']
-                #mask = np.array([name in JWST_names for name in names])
-                #names = names[mask]
-                names = ['F200W']
-                i = 0
-                self._exposure_time = 0.
-                data_shape = self.fits_image.filters[names[i]].image_data.shape
-                self.filters_added = np.zeros(data_shape)
-                same_sized_filters = []
-                for name in names :
-                    if self.fits_image.filters[name].image_data.shape == data_shape :
-                        print(f'Adding filter {name}.')
-                        self.filters_added += self.fits_image.filters[name].image_data #need correct units here
-                        self._exposure_time += self.fits_image.filters[name].header['EXPTIME']
-                        same_sized_filters.append(name)
-                if self.fits_image.filters[names[i]].psf is not None :
-                    psf_shape = self.fits_image.filters[names[i]].psf.data.shape
-                    self.psf_added = np.zeros(psf_shape)
-                    for name in same_sized_filters :
-                        print(f'Adding psf {name}.')
-                        self.psf_added += self.fits_image.filters[name].psf.data
-        
-        #-------------- ImageData --------------#
-        if not hasattr(self, '_background_rms') :
-            print('Calculating RMS...')
-            self._background_rms = np.std(self.filters_added)
-        self.LENSTRONOMY_ImageData_kwargs = {'image_data': self.filters_added[round(y0)-npix:round(y0),round(x0):round(x0)+npix],
-                                            'background_rms': self._background_rms,
-                                            'exposure_time': self._exposure_time,
-                                            'transform_pix2angle': transform_pix2angle,
-                                            'ra_at_xy_0': -offset_arcsec,
-                                            'dec_at_xy_0': -offset_arcsec}
-        self.LENSTRONOMY_ImageData = ImageData(**self.LENSTRONOMY_ImageData_kwargs)
-        
-        #-------------- PSF --------------#
-        if hasattr(self, 'psf_added') :
-            self.LENSTRONOMY_PSF_kwargs = {'psf_type': 'PIXEL',
-                                            'kernel_point_source': self.psf_added,
-                                            #'truncation': 35,
-                                            #'point_source_supersampling_factor': 1,
-                                            'pixel_size': self.fits_image.pix_deg_scale*3600}
-        else :
-            self.LENSTRONOMY_PSF_kwargs = {'psf_type': 'GAUSSIAN',
-                                            'fwhm': self.fits_image.pix_deg_scale*3600*2,
-                                            'truncation': 5,
-                                            'pixel_size': self.fits_image.pix_deg_scale*3600}
-        self.LENSTRONOMY_PSF = PSF(**self.LENSTRONOMY_PSF_kwargs)
-        
-        self.LENSTRONOMY_kwargs_numerics = {'supersampling_factor': 8, #ideally, supersampling_factor=16 for light source model, but 8 is ok. Doesn't matter for point source model.
-                                            'supersampling_convolution': True}
-        
-        
-
-        
-        
-        
-        self.previous_state_current_ROI = ROI.getState()
-
-
-
-class SourceFilter(QObject):
-    def __init__(self, lt) :
-        super().__init__()
-        self.lt = lt
-        
-    def eventFilter(self, obj, event):
-        if event.type() == QEvent.KeyPress and event.key() in (Qt.Key_Return, Qt.Key_Enter) :
-            self.lt.LENSTRONOMY_LightModel_source_list = []
-            self.lt.LENSTRONOMY_LightModel_source_kwargs = []
-            
-            for roi in self.lt.source_plane_widget.roi_list :
-                if type(roi).__name__ == 'SelectableEllipseROI' :
-                    self.lt.LENSTRONOMY_LightModel_source_list.append('SERSIC_ELLIPSE')
-                    n_sersic = 3
-                    x_center, y_center, semi_major, semi_minor, angle = transform_ROI_params(roi)
-                    q = semi_minor / semi_major
-                    e = (1-q) / (1+q)
-                    e1 = e * np.cos(2*angle)
-                    e2 = e * np.sin(2*angle)
-                    R_sersic = (semi_major + semi_minor)/2
-                    src_xr = x_center + self.lt.source_center_coordinates[0]
-                    src_yr = y_center + self.lt.source_center_coordinates[1]
-                    to_add = {'amp': 1, 'R_sersic': R_sersic, 'n_sersic': n_sersic, 'e1': e1, 'e2': e2, 'center_x': x_center, 'center_y': y_center}
-                    self.lt.LENSTRONOMY_LightModel_source_kwargs.append(to_add)
-                elif type(roi).__name__ == 'SelectableCircleROI' :
-                    self.lt.LENSTRONOMY_LightModel_source_list.append('GAUSSIAN')
-                    x_center, y_center, semi_major, semi_minor, angle = transform_ROI_params(roi)
-                    src_xr = x_center + self.lt.source_center_coordinates[0]
-                    src_yr = y_center + self.lt.source_center_coordinates[1]
-                    sigma = abs(roi.size()[0])
-                    to_add = {'amp': sigma, 'sigma': 0.00035406470736922506, 'center_x': src_xr, 'center_y': src_yr}
-                    self.lt.LENSTRONOMY_LightModel_source_kwargs.append(to_add)
-                    
-            self.lt.LENSTRONOMY_LightModel_source = LightModel(light_model_list=self.lt.LENSTRONOMY_LightModel_source_list)
-            
-            print('calculate image_model')
-            self.lt.LENSTRONOMY_ImageModel = ImageModel(data_class=self.lt.LENSTRONOMY_PixelGrid, psf_class=self.lt.LENSTRONOMY_PSF,
-                                                        lens_model_class=self.lt.LENSTRONOMY_LensModel,
-                                                        source_model_class=self.lt.LENSTRONOMY_LightModel_source,
-                                                        #point_source_class=point_source,
-                                                        #lens_light_model_class=,
-                                                        kwargs_numerics=self.lt.LENSTRONOMY_kwargs_numerics)
-            
-            print('Start simulating image')
-            self.lt.simulated_image = self.lt.LENSTRONOMY_ImageModel.image(kwargs_source=self.lt.LENSTRONOMY_LightModel_source_kwargs,
-                                                                          #kwargs_ps=kwargs_ps,
-                                                                          #kwargs_lens_light=kwargs_light_lens,
-                                                                          kwargs_lens=self.lt.LENSTRONOMY_LensModel_kwargs, unconvolved=False)
-            self.lt.image_plane_plot.setImage(self.lt.simulated_image[::-1,:])
-            x = (self.lt._lt_curve_coords_relative_broken[0] - self.lt._SquareOfInterest_xr_bottomleft) / (self.lt.fits_image.pix_deg_scale*3600)
-            y = self.lt.simulated_image.shape[0] - (self.lt._lt_curve_coords_relative_broken[1] - self.lt._SquareOfInterest_yr_bottomleft) / (self.lt.fits_image.pix_deg_scale*3600)
-            self.lt.critical_curve_plot.setData(x, y)
-            print('done')
-            
-            #solver = LensEquationSolver(self.lt.LENSTRONOMY_lens_model)
-            
-            
-            
-            
-            kwargs_model = {'lens_model_list': self.lt.LENSTRONOMY_LensModel_list,
-                            #'lens_light_model_list': lens_light_model_list,
-                            'source_light_model_list': self.lt.LENSTRONOMY_LightModel_source_list}
-            kwargs_all = {'kwargs_lens': self.lt.LENSTRONOMY_LensModel_kwargs,
-                            'kwargs_source': self.lt.LENSTRONOMY_LightModel_source_kwargs,
-                            #'kwargs_lens_light': {},
-                            'kwargs_ps': [],
-                            'kwargs_special': {},
-                            'kwargs_extinction': [],
-                            'kwargs_tracer_source': []}
-            
-            if True :
-                modelPlot = ModelPlot([[self.lt.LENSTRONOMY_ImageData_kwargs, self.lt.LENSTRONOMY_PSF_kwargs, self.lt.LENSTRONOMY_kwargs_numerics]], kwargs_model, kwargs_all, arrow_size=0.02, cmap_string="gist_heat")
+        self.lm = lenstronomy_model(self.fits_image)
     
+        
     
-                f, axes = plt.subplots(2, 3, figsize=(16, 8), sharex=False, sharey=False)
-    
-                modelPlot.data_plot(ax=axes[0,0])
-                modelPlot.model_plot(ax=axes[0,1])
-                modelPlot.normalized_residual_plot(ax=axes[0,2], v_min=-6, v_max=6)
-                modelPlot.source_plot(ax=axes[1, 0], deltaPix_source=0.00015, numPix=1000)
-                modelPlot.convergence_plot(ax=axes[1, 1], v_max=1)
-                modelPlot.magnification_plot(ax=axes[1, 2])
-                f.tight_layout()
-                f.subplots_adjust(left=None, bottom=None, right=None, top=None, wspace=0., hspace=0.05)
-                plt.show()
-            
-            
-            if event.modifiers() == Qt.ShiftModifier :
-                print('Starting optimization')
-                
-                kwargs_source_fixed = []
-                kwargs_source_lower = []
-                kwargs_source_upper = []
-                kwargs_source_sigma = []
-                kwargs_source_init = []
-                for i, src in enumerate(self.lt.LENSTRONOMY_LightModel_source_list) :
-                    kwargs = self.lt.LENSTRONOMY_LightModel_source_kwargs[i]
-                    kwargs_fixed = {}
-                    kwargs_lower = {}
-                    kwargs_upper = {}
-                    kwargs_sigma = {}
-                    kwargs_init = {}
-                    if src == 'GAUSSIAN' :
-                        fixed_params = ['center_x', 'center_y']
-                        opt_params = ['amp', 'sigma']
-                        for p in fixed_params :
-                            kwargs_fixed[p] = kwargs[p]
-                            kwargs_fixed[p] = kwargs[p]
-                        for p in opt_params :
-                            kwargs_lower[p] = kwargs[p] /10
-                            kwargs_upper[p] = kwargs[p] *10
-                            kwargs_sigma[p] = kwargs[p] /10
-                            kwargs_init[p] = kwargs[p]
-                    if src == 'SERSIC_ELLIPSE' :
-                        print(None)
-                    
-                    kwargs_source_fixed.append(kwargs_fixed)
-                    kwargs_source_lower.append(kwargs_lower)
-                    kwargs_source_upper.append(kwargs_upper)
-                    kwargs_source_sigma.append(kwargs_sigma)
-                    kwargs_source_init.append(kwargs_init)
+    def save_lenstronomy_model(self) :
+        self.LENSTRONOMY_source_model = save_lenstronomy_model(os.path.join(self.model_dir, "lenstronomy_model.pkl"),
+                                                                self.LENSTRONOMY_models,
+                                                                self.LENSTRONOMY_result_kwargs,
+                                                                self.LENSTRONOMY_center_world)
+        
+    def load_lenstronomy_model(self) :
+        self.LENSTRONOMY_source_model_full = load_lenstronomy_model(os.path.join(self.model_dir, "lenstronomy_model.pkl"), self.LENSTRONOMY_center_world)
+        
+        self.models = copy.deepcopy(self.LENSTRONOMY_models)
+        self.models['source_light_model_list'] = self.LENSTRONOMY_source_model_full['models']['source_light_model_list']
+        
+        self.kwargs = {'kwargs_lens': self.LENSTRONOMY_LensModel_kwargs}
+        self.kwargs['kwargs_source'] = self.LENSTRONOMY_source_model_full['results']['kwargs_source']
+        
+        make_LENSTRONOMY_plot(self, self.models, self.kwargs)
 
-                    
-                        
-                param = Param(kwargs_model,
-                              kwargs_fixed_lens=self.lt.LENSTRONOMY_LensModel_kwargs,
-                              kwargs_fixed_source=kwargs_source_fixed,#self.lt.LENSTRONOMY_fixed_source_kwargs,
-                              #kwargs_fixed_lens_light=kwargs_fixed_lens_light,
-                              #kwargs_fixed_ps=kwargs_fixed_ps, 
-                              kwargs_lower_lens=[{}],
-                              kwargs_lower_source=kwargs_source_lower,
-                              #kwargs_lower_lens_light=kwargs_lower_lens_light,
-                              #kwargs_lower_ps=kwargs_lower_ps,
-                              kwargs_upper_lens=[{}],
-                              kwargs_upper_source=kwargs_source_upper,
-                              #kwargs_upper_lens_light=kwargs_upper_lens_light,
-                              #kwargs_upper_ps=kwargs_upper_ps
-                              #, kwargs_lens_init=kwargs_lens
-                              #, joint_lens_with_light: [[0, 0, ['center_x', 'center_y']]]
-                              )
-                param.print_setting()
-
-
-                kwargs_model = {'lens_model_list': self.lt.LENSTRONOMY_LensModel_list,
-                                #'lens_light_model_list': self.lt.LENSTRONOMY_LensModel_light_list,
-                                'source_light_model_list': self.lt.LENSTRONOMY_LightModel_source_list}
-                
-                kwargs_lens_empty = [{} for _ in self.lt.LENSTRONOMY_LensModel_list]
-                lens_params = [kwargs_lens_empty, kwargs_lens_empty, self.lt.LENSTRONOMY_LensModel_kwargs, kwargs_lens_empty, kwargs_lens_empty]
-                source_params = [kwargs_source_init, kwargs_source_sigma, kwargs_source_fixed, kwargs_source_lower, kwargs_source_upper]
-
-                kwargs_params = {'lens_model': lens_params,
-                                 #'lens_light_model': lens_light_params,
-                                 'source_model': source_params}
-
-                kwargs_likelihood = {'source_marg': False}
-                single_band = [[self.lt.LENSTRONOMY_ImageData_kwargs, self.lt.LENSTRONOMY_PSF_kwargs, self.lt.LENSTRONOMY_kwargs_numerics]]
-                kwargs_data_joint = {'multi_band_list': single_band, 'multi_band_type': 'multi-linear'}
-                
-                fitting_seq = FittingSequence(kwargs_data_joint, kwargs_model, {}, kwargs_likelihood, kwargs_params, mpi=False)
-
-                fitting_kwargs_list = [['PSO', {'sigma_scale': 1., 'n_particles': 100, 'n_iterations': 100}]]
-
-                chain_list = fitting_seq.fit_sequence(fitting_kwargs_list)
-                self.lt.LENSTRONOMY_result_kwargs = fitting_seq.best_fit()
-
-                self.lt.LENSTRONOMY_modelPlot = ModelPlot([[self.lt.LENSTRONOMY_ImageData_kwargs, self.lt.LENSTRONOMY_PSF_kwargs, self.lt.LENSTRONOMY_kwargs_numerics]], kwargs_model, self.lt.LENSTRONOMY_result_kwargs, arrow_size=0.02, cmap_string="gist_heat")
-                
-    
-                f, axes = plt.subplots(2, 3, figsize=(16, 8), sharex=False, sharey=False)
-    
-                self.lt.LENSTRONOMY_modelPlot.data_plot(ax=axes[0,0])
-                self.lt.LENSTRONOMY_modelPlot.model_plot(ax=axes[0,1])
-                self.lt.LENSTRONOMY_modelPlot.normalized_residual_plot(ax=axes[0,2], v_min=-6, v_max=6)
-                self.lt.LENSTRONOMY_modelPlot.source_plot(ax=axes[1, 0], deltaPix_source=0.00015, numPix=1000)
-                self.lt.LENSTRONOMY_modelPlot.convergence_plot(ax=axes[1, 1], v_max=1)
-                self.lt.LENSTRONOMY_modelPlot.magnification_plot(ax=axes[1, 2])
-                f.tight_layout()
-                f.subplots_adjust(left=None, bottom=None, right=None, top=None, wspace=0., hspace=0.05)
-                plt.show()
-
-
-
-
-
-
-            
-            return True  # Stop propagation
-        return False     # Let other events pass through  
-
-            
-
-class ImageFilter(QObject):
-    def __init__(self, lt) :
-        super().__init__()
-        self.lt = lt
-    def eventFilter(self, obj, event):
-        if event.type() == QEvent.KeyPress and event.key() == Qt.Key_Space:
-            print("Hello world!")
-            return True  # Stop propagation
-        return False     # Let other events pass through
-
-
-
-
-
-
-def find_families(image_ids):
-    family_ids = image_ids.copy()
-    confidence = np.full(len(family_ids), 2)
-    for i, name in enumerate(family_ids) :
-        if name.startswith('cc') :
-            family_ids[i] = name[2:]
-            confidence[i] = 0
-        elif name.startswith('c') :
-            family_ids[i] = name[1:]
-            confidence[i] = 1
-    
-    families = find_families_part2(family_ids)
-    
-    combined_families = families.copy()
-    for i, family in enumerate(families) :
-        prefix1 = family.split('.')[0]
-        for fam in families :
-            prefix2 = fam.split('.')[0]
-            if prefix1==prefix2 and family!=fam :
-                combined_families[i] = prefix1 + '.'
-    #combined_families = np.unique(combined_families)
-    
-    broad_families = combined_families.copy()
-    letter_id = []
-    for i, family in enumerate(combined_families) :
-        if family[0].isalpha() :
-            letter_id.append(i)
-            for fam in combined_families :
-                if fam[0]==family[0] :
-                    broad_families[i] = family[0]
-    
-    
-    
-    families_int = families.copy()
-    for i in letter_id :
-        families_int[i] = str( ord( families[i][0].lower() )-96 )
-    
-    families_sorted, indices = np.unique(families, return_index=True)
-    families_sorted_int = np.array(families_int)[indices]
-    
-    families_sorted_int = [int(family.split('.')[0]) for family in families_sorted_int]
-    families_sorted = families_sorted[np.argsort(families_sorted_int)]
-    
-    
-    
-    broad_families_int = broad_families.copy()
-    for i in letter_id :
-        broad_families_int[i] = str( ord( broad_families[i][0].lower() )-96 )
-    
-    broad_families_sorted, indices = np.unique(broad_families, return_index=True)
-    broad_families_sorted_int = np.array(broad_families_int)[indices]
-    
-    broad_families_sorted_int = [int(family.split('.')[0]) for family in broad_families_sorted_int]
-    broad_families_sorted = broad_families_sorted[np.argsort(broad_families_sorted_int)]
-    
-    return families, broad_families, families_sorted.tolist(), broad_families_sorted.tolist(), confidence
-
-
-def find_families_part2(image_ids) :
-    # Step 1: Initial guess by chopping last character
-    id_to_family = {img_id: img_id[:-1] for img_id in image_ids}
-    
-    # Step 2: Group by these tentative families
-    family_groups = defaultdict(list)
-    for img_id, fam in id_to_family.items():
-        family_groups[fam].append(img_id)
-
-    # Step 3: Merge singleton families if their name starts with another family name
-    updated = True
-    while updated:
-        updated = False
-        singletons = {fam for fam, ids in family_groups.items() if len(ids) == 1}
-        for fam in list(singletons):
-            for target in family_groups:
-                if fam != target and fam.startswith(target):
-                    family_groups[target].extend(family_groups[fam])
-                    del family_groups[fam]
-                    updated = True
-                    break
-            if updated:
-                break
-
-    # Step 4: Merge families with 'alt' in original IDs if the ID starts with another family name
-    for fam in list(family_groups):
-        for img_id in family_groups[fam]:
-            if 'alt' in img_id:
-                for target in family_groups:
-                    if fam != target and img_id.startswith(target):
-                        family_groups[target].extend(family_groups[fam])
-                        del family_groups[fam]
-                        break
-                break  # Only need to check one 'alt' image to trigger a merge
-
-    # Step 5: Build final output mapping
-    final_map = {}
-    for fam, ids in family_groups.items():
-        for img_id in ids:
-            final_map[img_id] = fam
-
-    return [final_map[img_id] for img_id in image_ids]
-
-    
 
 
 

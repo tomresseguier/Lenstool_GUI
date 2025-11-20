@@ -64,7 +64,7 @@ class DragWidget(QWidget):
             make_handles(self.current_ROI)
             self.qt_image.view.setMouseEnabled(x=True, y=True)
             if self.cat is not None :
-                self.cat.make_cleaner_ROI()
+                self.cat.make_selection_ROI()
             
     def mouse_moved(self, pos):
         if self.drawing and self.current_ROI is not None:

@@ -15,7 +15,7 @@ from .source_extraction.match_cat import run_match
 from .utils.utils_astro.cat_manip import match_cat2
 from .utils.utils_plots.plot_utils_general import *
 from .utils.utils_Qt.selectable_classes import SelectableEllipse, SelectableScatter, SelectSources, ellipse_maker_ROI
-from .utils.utils_Qt.utils_general import *
+from .utils.utils_Qt.utils_general import make_handles, InRectangle, make_full_color
 from .utils.utils_general.utils_general import find_close_coord, make_colnames_dict
 from .utils.utils_plots.plt_framework import plt_framework
 from .utils.utils_Lenstool.redshift_extractors import make_source_z_dict, find_param_file
@@ -115,7 +115,7 @@ def initialize_catalog(cat, self) :
 
 
 class catalog :
-    def __init__(self, cat, fits_image, color=[1., 1., 0.], mag_colnames=['magAB_F814W', 'magAB_F435W'], use_default_names=True, units=None) :
+    def __init__(self, cat, fits_image, color=[0., 1., 1., 0., 0.5], mag_colnames=['magAB_F814W', 'magAB_F435W'], use_default_names=True, units=None) :
         self.fits_image = fits_image
         
         self.mag_colnames = mag_colnames
@@ -127,7 +127,7 @@ class catalog :
         #self.qtItems = [PyQt5.QtWidgets.QGraphicsEllipseItem() for _ in range(len(self.cat))]
         self.qtItems_column = [] #np.empty(len(self.cat), dtype=pg.TextItem)
         #self.qtItems = np.empty(len(self.cat), dtype=utils.utils_classes.selectable_ellipse.SelectableEllipse)
-        self.color = color
+        self.color = color if color is not None else [0., 1., 1., 0., 0.5]
         self.selection_mask = np.full(len(self.cat), False)
         self.selection_regions = []
         self.Scatter_widget = None
@@ -188,10 +188,8 @@ class catalog :
             print(f"Column '{text_column}' not found in catalog")
             return
         
-        if color is None:
-            color = list(np.array(self.color[:3])*255)
-        else:
-            color = list(np.array(color[:3])*255)
+        color = self.color if color is None else color
+        color = list(np.array(self.color[:3])*255)
         
         for i in tqdm(range(len(self.cat))) :
             to_plot = self.cat[text_column][i]
@@ -240,10 +238,8 @@ class catalog :
     
     def plot_one_object(self, x, y, semi_major, semi_minor, angle, idx, color=None, linewidth=3, marker=None, size=15) :
         if color is None :
-            color = list(np.array(self.color)*255)
-        else :
-            color = list(np.array(color)*255)
-        #make the flip to accomosate pyqtgraph's strange plotting conventions
+            color = self.color
+        #make the flip to accomosate pyqtgraph's plotting conventions
         y = self.fits_image.image_data.shape[0] - y
         angle = -angle
         #####################################################################
@@ -252,21 +248,20 @@ class catalog :
                 scatter_pos = None
             else :
                 scatter_pos = (self.x_axis_cleaned[idx], self.y_axis_cleaned[idx])
-            to_plot = SelectableEllipse(x-semi_major/2, y-semi_minor/2, semi_major, semi_minor, idx, self.selection_mask, \
-                                        self.qtItems, color, scatter_pos=scatter_pos, \
-                                        Scatter_widget=self.Scatter_widget, linewidth=linewidth)
+            to_plot = SelectableEllipse(x-semi_major/2, y-semi_minor/2, semi_major, semi_minor, idx, self.selection_mask, 
+                                        color, linewidth=linewidth, scatter_pos=scatter_pos, 
+                                        Scatter_widget=self.Scatter_widget)
             to_plot.setTransformOriginPoint( PyQt5.QtCore.QPointF(x, y) )
             to_plot.setRotation(angle)
         else :
             to_plot = pg.ScatterPlotItem(size=size, symbol=marker)
-            if color[-1]==0 : #filled_markers==False
-                to_plot.setPen( pg.mkPen(color[:-1], width=2) ) #no outline
+            color = make_full_color(color)
+            if color[3]==0 : #filled_markers==False
+                to_plot.setPen( pg.mkPen(color[:3], width=2) ) #no outline
                 to_plot.setBrush( pg.mkBrush([0,0,0,0]) )
             else :
-                to_plot.setPen( pg.mkPen([0,0,0,0]) )
-                #to_plot.setPen( pg.mkPen(color[:-1]) ) #outline makes cross thicker
-                to_plot.setBrush( pg.mkBrush(color[:-1]) )
-                to_plot.setPen(width=0.1)
+                to_plot.setPen( pg.mkPen([0,0,0,0], width=0.1) ) #outline makes cross thicker
+                to_plot.setBrush( pg.mkBrush(color[:-2]) )
                 
             to_plot.setData([x], [y])
         
@@ -276,9 +271,7 @@ class catalog :
     def make_selection_panel(self, xy_axes=None) :
         self.make_mask_naninf(xy_axes=xy_axes)
         
-        xy = (self.x_axis_cleaned, self.y_axis_cleaned)
-        self.Scatter_widget = SelectableScatter(xy, self.selection_mask, \
-                                                qtItems=self.qtItems, color=list(np.array(self.color)*255))
+        self.Scatter_widget = SelectableScatter(self)
         #self.Scatter_widget.setTitle('Red sequence')
         
         self.Scatter_widget.setAspectLocked(lock=True, ratio=1)
@@ -286,11 +279,12 @@ class catalog :
         #self.Scatter_widget.setSizePolicy(pg.QtWidgets.QSizePolicy.Fixed, pg.QtWidgets.QSizePolicy.Expanding)
         self.fits_image.qt_layout.addWidget(self.Scatter_widget)
         
-        self.Scatter_widget.setLabel('bottom', xy_axes[0])
-        self.Scatter_widget.setLabel('left', xy_axes[1])
+        if xy_axes is not None :
+            self.Scatter_widget.setLabel('bottom', xy_axes[0])
+            self.Scatter_widget.setLabel('left', xy_axes[1])
         
         #self.selection_mask = np.full(len(self.mag_F444W_cleaned), False)
-        self.plot(color=self.color + [0])
+        self.plot()
     
     def remove_selection_panel(self) :
         self.Scatter_widget.hide()
@@ -307,13 +301,12 @@ class catalog :
         make_handles(self.image_ROI)
         self.fits_image.qt_image.addItem(self.image_ROI)
         
-    def make_cleaner_ROI(self) :
+    def make_selection_ROI(self) :
         """
         Creates a rectangle ROI to select all sources inside of it.
         """
         self.fits_image.image_widget.cat = self
-        self.select_sources = SelectSources(self.cat, self.fits_image.qt_image, self.fits_image.image_widget.current_ROI, self.selection_mask, self.selection_regions, \
-                                            window=self.fits_image.window, qtItems=self.qtItems, color=list(np.array(self.color)*255))
+        self.select_sources = SelectSources(self)
         
     def save_selection_mask(self, path=None) :
         self.selection_mask_path = self.make_path(path, self.ref_path, 'selection_mask.npy')

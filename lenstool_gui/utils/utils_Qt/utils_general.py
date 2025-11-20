@@ -89,7 +89,14 @@ def InRectangle(x_array, y_array, rect_params) :
     return full_mask
 
 
-
+def make_full_color(color) :
+    full_color = color.copy()
+    if len(full_color)==3 :
+        full_color = full_color + [0]
+    if len(full_color)==4 :
+        edge_color = 0.5 + round(full_color[-1]/2)
+        full_color = full_color + [edge_color]
+    return list(np.array(full_color)*255)
 
 
 

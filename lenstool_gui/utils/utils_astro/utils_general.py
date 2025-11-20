@@ -193,8 +193,8 @@ def orientation_angle_diff(image_ref_path, image2_path) :
 def world_to_relative(ra, dec, reference) :
     ref = SkyCoord(reference[0], reference[1], unit='deg')
     world_radec = SkyCoord(ra, dec, unit='deg')
-    relative_coord = ( (world_radec.ra - ref.ra)*np.cos(ref.dec.rad), world_radec.dec - ref.dec )
-    return -relative_coord[0].arcsec, relative_coord[1].arcsec
+    relative_coord = ( (ref.ra - world_radec.ra)*np.cos(world_radec.dec.rad), world_radec.dec - ref.dec )
+    return relative_coord[0].arcsec, relative_coord[1].arcsec
 
 def relative_to_world(xr, yr, reference) :
     ref = SkyCoord(reference[0], reference[1], unit='deg')

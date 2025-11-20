@@ -289,7 +289,7 @@ class fits_image :
         to_return = catalog(cat, self, color=color, mag_colnames=mag_colnames, units=units)
         return to_return
     
-    def import_catalog(self, cat, color=[1., 1., 0], mag_colnames=['magAB_F814W', 'magAB_F435W'], units='pixel') :
+    def import_catalog(self, cat, color=None, mag_colnames=['magAB_F814W', 'magAB_F435W'], units='pixel') :
         self.imported_cat = self.make_catalog(cat, color=color, mag_colnames=mag_colnames, units=units)
         self.imported_cat_list.append(self.imported_cat)
         
