@@ -5,8 +5,8 @@ import sys
 import os
 
 
-from ..utils_astro.get_cosmology import get_cosmo
 from .redshift_extractors import make_source_z_dict
+from ...utils.utils_astro.get_cosmology import get_cosmo
 cosmo = get_cosmo()
 
 

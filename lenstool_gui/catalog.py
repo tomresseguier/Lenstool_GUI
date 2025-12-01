@@ -10,17 +10,12 @@ from astropy.table import Table
 import pandas as pd
 
 ###############################################################################
-from .source_extraction.source_extract import source_extract, source_extract_DIM
 from .source_extraction.match_cat import run_match
 from .utils.utils_astro.cat_manip import match_cat2
 from .utils.utils_plots.plot_utils_general import *
 from .utils.utils_Qt.selectable_classes import SelectableEllipse, SelectableScatter, SelectSources, ellipse_maker_ROI
 from .utils.utils_Qt.utils_general import make_handles, InRectangle, make_full_color
-from .utils.utils_general.utils_general import find_close_coord, make_colnames_dict
-from .utils.utils_plots.plt_framework import plt_framework
-from .utils.utils_Lenstool.redshift_extractors import make_source_z_dict, find_param_file
-from .utils.utils_Lenstool.param_extractors import read_potfile, read_bayes_file, make_param_latex_table
-from .utils.utils_Qt.selectable_classes import DragPlotWidget
+from .utils.utils_general.utils_general import make_colnames_dict
 
 
 

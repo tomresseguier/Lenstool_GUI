@@ -4,7 +4,6 @@ from io import StringIO
 import numpy as np
 import math
 import os
-import sys
 import shutil
 import astropy.units as u
 from astropy.table import Table
@@ -12,8 +11,8 @@ from astropy.io import fits
 from astropy.wcs import WCS
 import subprocess
 import pylenstool
-from ..utils_astro.get_cosmology import get_cosmo
-from ..utils_astro.utils_general import world_to_relative
+from ...utils.utils_astro.utils_general import world_to_relative
+from ...utils.utils_astro.get_cosmology import get_cosmo
 cosmo = get_cosmo()
 
 
@@ -255,11 +254,11 @@ def make_param_latex_table(param_file_path, convert_to_kpc=True, z=None) :
     open(param_latex_table, 'w').write(table_str)
     return table_str
 
-def find_ref(lenstool_file_path) :
-    with open(lenstool_file_path, 'r') as text_file :
-        bestopt_full_string = text_file.read()
+def find_ref(param_file_path) :
+    with open(param_file_path, 'r') as text_file :
+        full_string = text_file.read()
     pattern = re.compile(r"reference\s+\d+\s+([-+]?\d*\.\d+)\s+([-+]?\d*\.\d+)")
-    match = pattern.search(bestopt_full_string)
+    match = pattern.search(full_string)
     if match :
         ra = float(match.group(1))
         dec = float(match.group(2))
@@ -555,6 +554,66 @@ def get_lenstool_WCS(param_file_path) :
 
 
 
+def parse_lenstool_parameter_file(path):
+    def convert_token(tok):
+        """Try to convert to int or float; otherwise return string."""
+        try:
+            if '.' in tok or 'e' in tok.lower():
+                return float(tok)
+            return int(tok)
+        except ValueError:
+            return tok
+
+    data = {}
+    current_section = None
+    current_subsection = None
+
+    with open(path, 'r') as f:
+        for line in f:
+            # Remove comments
+            line = line.split('#')[0].strip()
+            if not line:
+                continue
+
+            tokens = line.split()
+
+            # END of current section
+            if tokens[0].lower() == 'end':
+                current_section = None
+                current_subsection = None
+                continue
+
+            # New section begins
+            if current_section is None:
+                section = line
+                current_section = section
+                data.setdefault(section, {})
+                current_subsection = None
+                continue
+
+            # Inside a section
+            key = tokens[0]
+            values = tokens[1:]
+
+            # Convert tokens to int/float/str
+            values = [convert_token(v) for v in values]
+
+            # Where to store?
+            target = data[current_section]
+            if current_subsection is not None:
+                target = target[current_subsection]
+
+            # If the key appears multiple times → store as list of entries
+            if key in target:
+                if isinstance(target[key], list):
+                    target[key].append(values)
+                else:
+                    target[key] = [target[key], values]
+            else:
+                # Single or multi-value
+                target[key] = values if len(values) > 1 else values[0]
+                
+    return data
 
 
 """

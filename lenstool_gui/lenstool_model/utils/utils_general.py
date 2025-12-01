@@ -9,11 +9,11 @@ from astropy.table import Table
 from collections import defaultdict
 from PyQt5.QtCore import QRectF
 
-from .utils_plots.plot_utils_general import make_palette, adjust_luminosity, adjust_contrast, plot_scale_bar, plot_image_mpl
-from .utils_astro.utils_general import relative_to_world
-from .utils_astro.cat_manip import match_cat2
-from .utils_general.utils_general import find_close_coord
-from .utils_plots.plt_framework import plt_framework
+from ...utils.utils_plots.plot_utils_general import make_palette, adjust_luminosity, adjust_contrast, plot_scale_bar, plot_image_mpl
+from ...utils.utils_astro.utils_general import relative_to_world
+from ...utils.utils_astro.cat_manip import match_cat2
+from ...utils.utils_general.utils_general import find_close_coord
+from ...utils.utils_plots.plt_framework import plt_framework
 
 
 
@@ -47,6 +47,20 @@ def make_full_color_function(families) :
             full_colors_dict[family] = colors[i]
         return full_colors_dict
     return make_full_color_dict
+
+
+def get_lenstool_file_path(model_dir, name) :
+    path_list = glob.glob( os.path.join(model_dir, f"*{name}*.lenstool") )
+    if len(path_list)==0 :
+        return None
+    else :
+        if len(path_list)==1 :
+            print(f"{name} file found: '" + path_list[0] + "'")
+        elif len(path_list)>1 :
+            print(f"Several {name} files found: ")
+            print(path_list)
+            print("Using first item in list: '" + path_list[0] + "'")
+        return path_list[0]
 
 
 def import_multiple_images(self, mult_file_path, fits_image, units=None, AttrName='mult', filled_markers=False, saturation=None) :
@@ -558,5 +572,34 @@ def find_families_part2(image_ids) :
 
     return [final_map[img_id] for img_id in image_ids]
 
+
+
+
+def import_lenstool_files(self) :
+    arclets_path_list = glob.glob( os.path.join(self.model_dir, "*arclet*.lenstool") )
+    if len(arclets_path_list)==1 :
+        arclets_path = arclets_path_list[0]
+        print(f"{os.path.basename(arclets_path)} found and used as arclets.")
+        import_multiple_images(self, arclets_path, self.fits_image, AttrName='arclets', units='pixel', filled_markers=False)
+    else :
+        self.arclets = None
+                
+    predicted_images_path = os.path.join(self.model_dir, 'image.dat')
+    if os.path.isfile(predicted_images_path) :
+        import_multiple_images(self, predicted_images_path, self.fits_image, AttrName='image', units='pixel', filled_markers=False)
+        import_multiple_images(self, predicted_images_path, self.fits_image, AttrName='image_filtered', units='pixel', filled_markers=False)
+        self.filter_image()
+    else :
+        self.image = None
+        self.image_filtered = None
     
+    curves_dir = os.path.join(self.model_dir, 'curves')
+    if os.path.isdir(curves_dir) :
+        self.curves = curves(curves_dir, self, self.fits_image, which_critcaus='critical', join=False, size=2)
+    else :
+        self.curves = None
+    
+    predicted_sources_path = os.path.join(self.model_dir, 'source.dat')
+    if os.path.isfile(predicted_sources_path) :
+        import_sources(self, predicted_sources_path, self.fits_image, AttrName='source', units='pixel', filled_markers=False)
 

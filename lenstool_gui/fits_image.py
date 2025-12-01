@@ -11,47 +11,26 @@ import astropy.constants as c
 from reproject import reproject_interp
 #from astropy.visualization.wcsaxes import *
 from astropy.coordinates import SkyCoord
-from astropy.visualization import ZScaleInterval, ImageNormalize
-from matplotlib.patches import Ellipse, Polygon, Circle
 from tqdm import tqdm
-import requests
-import types
 from speclite import filters as specfilters
 
 import PyQt5
-from PyQt5.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QGraphicsEllipseItem, QGraphicsScene, QGraphicsView, QGraphicsSceneMouseEvent, QApplication, QSplitter
+from PyQt5.QtWidgets import QMainWindow, QSplitter
 import pyqtgraph as pg
 from PyQt5.QtCore import Qt
-from pyqtgraph.Qt import QtCore
 from astropy.table import Table
-import pandas as pd
-
-###############################################################################
-import sys
 
 from .catalog import catalog
-from .lenstool_model import lenstool_model
+from .lenstool_model.lenstool_model import lenstool_model
 from .source_extraction.source_extract import source_extract, source_extract_DIM
-from .source_extraction.match_cat import run_match
 from .utils.utils_fits.utils_fits_image import open_image
 from .utils.utils_plots.plot_utils_general import *
 from .utils.utils_Qt.selectable_classes import *
 from .utils.utils_Qt.drag_widgets import DragWidget
 from .utils.utils_Qt.utils_general import *
-from .utils.utils_general.utils_general import find_close_coord, make_colnames_dict, extract_line
-from .utils.utils_plots.plt_framework import plt_framework
-from .utils.utils_Lenstool.redshift_extractors import make_source_z_dict, find_param_file
-from .utils.utils_Lenstool.param_extractors import read_potfile, read_bayes_file, make_param_latex_table
 from .utils.utils_astro.get_cosmology import get_cosmo
-###############################################################################
 
-"""
-from source_extraction.source_extract import source_extract
-from utils.utils_plots.plot_utils_general import *
-from utils.utils_Qt.selectable_classes import *
-from utils.utils_Qt.utils_general import *
-from utils.utils_general.utils import flux_muJy_to_magAB
-"""
+
 
 
 pg.setConfigOption('imageAxisOrder', 'row-major')
@@ -315,9 +294,11 @@ class fits_image :
     
     
         
-    def import_lenstool(self, model_dir) :
+    def import_lenstool(self, model_dir, use_wrapper=None) :
         #self.lt_dir = model_dir
-        self.lt = lenstool_model(model_dir, self)
+        #if hasattr(self, 'lt'):
+        #    del self.lt
+        self.lt = lenstool_model(model_dir, self, use_wrapper=use_wrapper)
     
     
     

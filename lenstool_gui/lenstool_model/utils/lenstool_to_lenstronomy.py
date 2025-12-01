@@ -5,9 +5,8 @@ from astropy import units as u
 from astropy import constants as astro_constants
 from lenstronomy.LensModel.lens_model import LensModel
 
-#sys.path.append( os.path.join(os.path.expanduser("~"), 'Library/Mobile Documents/com~apple~CloudDocs/RESEARCH/PROCESS/') )
-from lenstool_gui.utils.utils_astro.utils_general import world_to_relative
-from lenstool_gui.utils.utils_astro.utils_lensing import SigmaCrit
+from ....utils.utils_astro.utils_general import world_to_relative
+from ....utils.utils_astro.utils_lensing import SigmaCrit
 #from lenstool_gui.utils.utils_astro.get_cosmology import get_cosmo
 #cosmo = get_cosmo()
 

@@ -1,4 +1,6 @@
 import numpy as np
+import os
+import copy
 import pyqtgraph as pg
 from PyQt5.QtWidgets import QMainWindow, QSplitter
 from PyQt5.QtCore import Qt
@@ -11,11 +13,11 @@ from lenstronomy.Data.psf import PSF
 from lenstronomy.Data.imaging_data import ImageData
 from lenstronomy.Util import util
 
-from .utils.utils_astro.utils_general import world_to_relative
-from .utils.utils_general.sort_points import break_curves
-from .utils.utils_simulate_image import SourceFilter, ImageFilter
-from .utils.utils_Qt.drag_widgets import DragPlotWidget_special
-from .utils.utils_Qt.utils_general import transform_rectangle
+from ...utils.utils_astro.utils_general import world_to_relative
+from ...utils.utils_general.sort_points import break_curves
+from ...utils.utils_Qt.drag_widgets import DragPlotWidget_special
+from ...utils.utils_Qt.utils_general import transform_rectangle
+from .utils import SourceFilter, ImageFilter, save_lenstronomy_model, load_lenstronomy_model, make_LENSTRONOMY_plot
 
 
 
@@ -111,7 +113,7 @@ class lenstronomy_model :
 
         self.source_center_coordinates = self.LensModel.ray_shooting(0, 0, self.LensModel_kwargs)
         
-        if self.previous_state_current_ROI is None or self.previous_state_current_ROI != ROI.getState() :
+        if self.previous_state_current_ROI is None or self.previous_state_current_ROI != self.ROI.getState() :
             fits_image.lt.compute_lt_curve()
         fits_image.lt.plot_lt_curve(color=[0, 255, 0], which='caustic') #to create self.lt_curve_coords_image_sorted
                 
@@ -198,7 +200,7 @@ class lenstronomy_model :
                     for name in same_sized_filters :
                         print(f'Adding psf {name}.')
                         self.psf_added += fits_image.filters[name].psf.data
-        self.individual_filter = fits_image.filters['F150W']
+        self.individual_filter = fits_image.filters['F200W']
         #-------------- ImageData --------------#
         if not hasattr(self, '_background_rms') :
             print('Calculating RMS...')
@@ -234,3 +236,21 @@ class lenstronomy_model :
         
         fits_image.lt.lt.set_field(initial_field)
         self.previous_state_current_ROI = self.ROI.getState()
+    
+    
+    def save_lenstronomy_model(self) :
+        self.source_model = save_lenstronomy_model(os.path.join(self.fits_image.lt.model_dir, "lenstronomy_model.pkl"),
+                                                                self.models,
+                                                                self.result_kwargs,
+                                                                self.center_world)
+        
+    def load_lenstronomy_model(self) :
+        self.imported_source_model = load_lenstronomy_model(os.path.join(self.fits_image.lt.model_dir, "lenstronomy_model.pkl"), self.center_world)
+        
+        self.imported_models = copy.deepcopy(self.models)
+        self.imported_models['source_light_model_list'] = self.imported_source_model['models']['source_light_model_list']
+        
+        self.imported_kwargs = {'kwargs_lens': self.LensModel_kwargs}
+        self.imported_kwargs['kwargs_source'] = self.imported_source_model['results']['kwargs_source']
+        
+        make_LENSTRONOMY_plot(self, self.imported_models, self.imported_kwargs)

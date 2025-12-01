@@ -6,48 +6,46 @@ from matplotlib import pyplot as plt
 from astropy.wcs import WCS
 from astropy.coordinates import SkyCoord
 from tqdm import tqdm
-import copy
 
 import PyQt5
 import pyqtgraph as pg
 import pyqtgraph.exporters
 from PyQt5.QtCore import Qt
-from astropy.table import Table
 import pickle
 import lenstool
-import pylenstool
 
 ###############################################################################
-from .utils.utils_astro.utils_general import world_to_relative, relative_to_world
-from .utils.utils_lenstool_model import import_multiple_images, import_sources, export_thumbnails, curves
-from .utils.utils_simulate_image import save_lenstronomy_model, load_lenstronomy_model, make_LENSTRONOMY_plot
-from .utils.utils_plots.plot_utils_general import plot_corner
-from .utils.utils_general.utils_general import extract_line
-from .utils.utils_general.sort_points import break_curves
-from .utils.utils_Lenstool.param_extractors import read_potfile, make_best_file_from_bayes, make_param_latex_table, read_bayes_file
-from .simulate_image import lenstronomy_model
+from ..utils.utils_astro.utils_general import world_to_relative, relative_to_world
+from ..utils.utils_plots.plot_utils_general import plot_corner
+from ..utils.utils_general.utils_general import extract_line
+from ..utils.utils_general.sort_points import break_curves
+from .simulate_image.simulate_image import lenstronomy_model
+from .im2source import start_im2source, stop_im2source
+from .utils.operations import MakeFunctionFromMap
+from .utils.utils_general import import_multiple_images, export_thumbnails, get_lenstool_file_path, import_lenstool_files
+from .utils.param_extractors import read_potfile, make_best_file_from_bayes, make_param_latex_table, read_bayes_file, parse_lenstool_parameter_file
 
-from .utils.utils_Lenstool.file_makers import best_files_maker, make_magnifications_and_curves                  # This import is problematic. The two functions run Lenstool
-                                                                                                                # and are therefore dependent on my own install.
-from .utils.utils_Lenstool.operations import make_image_to_source, MakeFunctionFromMap
-
+from .utils.file_makers import best_files_maker, make_magnifications_and_curves                  # This import is problematic. The two functions run Lenstool
+                                                                                                 # and are therefore dependent on my own install.
 
 
 
 
 class lenstool_model :
-    def __init__(self, model_path, fits_image) :
-        self.safe_mode = False
+    def __init__(self, model_path, fits_image, use_wrapper=None) :
         self.fits_image = fits_image
-        self.saturation = 1
-        self.model_dir = model_path if os.path.isdir(model_path) else os.path.dirname(model_path)
-        all_par_file_paths = glob.glob(os.path.join(self.model_dir, "*.par"))
-        #all_cat_file_paths = glob.glob(os.path.join(self.model_dir, "*.lenstool"))
-        self.param_file_path = None
+        self.saturation = 1.
+        self.lt = None
+        self.mult = None
+        self._safe_mode = False
         
-        if os.path.isfile(model_path) :
-            self.param_file_path = model_path
-        else :
+        # get model directory
+        self.model_dir = model_path if os.path.isdir(model_path) else os.path.dirname(model_path)
+        
+        # get parameter file
+        self.param_file_path = model_path if (os.path.isfile(model_path) and not os.path.basename(model_path)=='best.par') else None
+        all_par_file_paths = glob.glob(os.path.join(self.model_dir, "*.par"))        
+        if self.param_file_path is None :
             for file_path in all_par_file_paths :
                 if not os.path.basename(file_path).startswith('best') :
                     with open(file_path, 'r') as file :
@@ -57,78 +55,169 @@ class lenstool_model :
                                 if stripped_line.startswith('runmode') :
                                     self.param_file_path = file_path
         
-        if self.param_file_path is not None :
-            param_file = pylenstool.lenstool_param_file(self.param_file_path)
-            ref_coord = param_file.get_ref()
-            self.reference = ( float(ref_coord[0]), float(ref_coord[1]) )
+        self.param = parse_lenstool_parameter_file(self.param_file_path) if self.param_file_path is not None else None
         
+        # get best and bayes file paths if they exist
         all_par_file_names = [ os.path.basename(file_path) for file_path in all_par_file_paths ]
-        
         self.has_run = 'best.par' in all_par_file_names
-        self.best_file_path = os.path.join(self.model_dir, 'best.par') if 'best.par' in all_par_file_names else None
+        self.best_file_path = os.path.join(self.model_dir, 'best.par') if self.has_run else None
         self.bayes_file_path = os.path.join(self.model_dir, 'bayes.dat') if 'bayes.dat' in os.listdir(self.model_dir) else None
-        if self.best_file_path is None and 'bayes.dat' in os.listdir(self.model_dir) :
-            yesno = input('bayes.dat file found, create best_TEMP.par from bayes file? ([Y]/n)')
-            if yesno.lower() in ['y', ''] :
-                make_best_file_from_bayes(self.param_file_path)
-                self.best_file_path = os.path.join(self.model_dir, 'best_TEMP.par')
         
-        self.bestopt_file_path = os.path.join(self.model_dir, 'bestopt.par') if 'bestopt.par' in all_par_file_names else None
-        potfile_paths_list = glob.glob(os.path.join(self.model_dir, "*potfile*.lenstool"))
-        self.potfile_path = potfile_paths_list[0] if len(potfile_paths_list)>=1 else None
         
-        if self.potfile_path is not None :
-            potfile_Table = read_potfile(self.potfile_path)
-            self.potfile = fits_image.make_catalog(potfile_Table, color=[1.,0.,0.], units='arcsec')
+        # checks if Lenstool files were found and if so ask user if they want to use Lenstool's wrapper and its capabilities
+        # If so, moves to the model's directory
+        if not self.has_run and self.param_file_path is None :
+            # look for multiple image file and potfile
+            self.mult_path = get_lenstool_file_path(self.model_dir, 'mult')
+            if self.mult_path is not None :
+                import_multiple_images(self, self.mult_path, self.fits_image, units='pixel', filled_markers=True)
+                print("Multiple image file was found. Current instance now has multiple image plotting capabilities.")
+            self.potfile_path = get_lenstool_file_path(self.model_dir, 'potfile')
+            self.load_potfile(self.potfile_path)
+            if self.potfile is not None :
+                print("Potfile was found. Current instance now has potfile plotting capabilities.")
+            if self.mult is None and self.potfile is None :
+                raise ValueError("No valid lenstool file found")
         else :
-            self.potfile = None
+            if not self.has_run :
+                print("Only parameter file was found (looks like lenstool optimization hasn't run yet). Limited capabilities available.")
+            if self.has_run :
+                file_to_use = os.path.basename(self.best_file_path)
+            else :
+                file_to_use = os.path.basename(self.param_file_path)
+                
+                # option to create temporary best file from bayes if optimization hasn't finished
+                if 'bayes.dat' in os.listdir(self.model_dir) :
+                    yesno = input('bayes.dat file found, create best_TEMP.par from bayes file to be used in Lenstool wrapper? ([Y]/n)')
+                    if yesno.lower() in ['y', ''] :
+                        make_best_file_from_bayes(self.param_file_path)
+                        self.best_file_path = os.path.join(self.model_dir, 'best_TEMP.par')
+                        file_to_use = self.best_file_path
+                        
+            if not self.model_dir.endswith('_safe/') :
+                print(f"\nA valid lenstool file was found: {file_to_use}")
+                if use_wrapper is None :
+                    print("Lens modeling tools rely on Lenstool and may modify some of the output files present in your model's directory (image.all, source.dat for example).\n")
+                    yesno = input(f"Continue? Or make a copy of your model's current directory? ({os.path.basename(self.model_dir[:-1])+'_safe'})\n\nYes/copy/no [Y]/c/n\n-- to skip this message use .import_lenstool(dir, use_wrapper=True) --\n")
+                elif use_wrapper :
+                    yesno = 'y'
+                else :
+                    yesno = 'n'
+            else :
+                yesno = 'c'
+            
+            if yesno.lower()=='n' or yesno.lower()=='no' :
+                print("Lens model loaded with limited capabilities.")
+                self.lt = None
+                #Functionalities without Lenstool's wrapper
+                import_lenstool_files(self)
+                
+            elif yesno.lower()=='c' or yesno.lower()=='copy' :
+                self.SafeMode()
+                print(f"Loading {file_to_use}")
+                self.lt = lenstool.Lenstool( file_to_use )
+            else :
+                print('--------------------')
+                print("Moving to " + self.model_dir)
+                print('--------------------')
+                os.chdir(self.model_dir)
+                print(f"Loading {file_to_use}")
+                self.lt = lenstool.Lenstool( file_to_use )
         
-        self.families = []
-        self.broad_families = []
-        self.which = []
+        # get the reference
+        if self.lt is not None :
+            self.reference = (self.lt.M.ref_ra, self.lt.M.ref_dec)
+        elif self.param is not None :
+            self.reference = tuple(self.param['runmode']['reference'][1:])
         
-        mult_path_list = glob.glob( os.path.join(self.model_dir, "*mult*.lenstool") )
-        if len(mult_path_list)==1 :
-            print("Multiple images file found: '" + mult_path_list[0] + "'")
-            self.mult_file_path = mult_path_list[0]
-            import_multiple_images(self, self.mult_file_path, fits_image, units='pixel', filled_markers=True)
+        # get the multiple images and potfile galaxies
+        if self.param is not None :
+            self.mult_path = self.param['image']['multfile'][1] if 'image' in self.param else None
+            if self.mult_path is not None :
+                self.families = []
+                self.broad_families = []
+                self.which = []
+                import_multiple_images(self, self.mult_path, self.fits_image, units='pixel', filled_markers=True)
+            self.potfile_path = self.param['potfile']['filein'][1] if 'potfile' in self.param else None
+            self.load_potfile(self.potfile_path)
+            
+        # get the lens redshift if unique
+        redshifts = []
+        for name in self.param :
+            if 'potential' in name :
+                redshifts.append(self.param[name]['z_lens'])
+        if len(np.unique(redshifts))==1 :
+            self.z_lens = redshifts[0]
+            print(f"Lens redshift fixed at z={self.z_lens}")
         else :
-            self.mult = None
+            print("Several different redshift values found: " + list(np.unique(redshifts)))
+            print("Please define self.z_lens to use all lensing functions.")
+            self.z_lens = None
         
-        arclets_path_list = glob.glob( os.path.join(self.model_dir, "*arclet*.lenstool") )
-        if len(arclets_path_list)==1 :
-            arclets_path = arclets_path_list[0]
-            import_multiple_images(self, arclets_path, fits_image, AttrName='arclets', units='pixel', filled_markers=False)
-        else :
-            self.arclets = None
-        
-        if len(arclets_path_list)==1 and len(mult_path_list)==1 :
-            import_multiple_images(self, self.mult_file_path, fits_image, units='pixel', filled_markers=True)
-            import_multiple_images(self, arclets_path, fits_image, AttrName='arclets', units='pixel', filled_markers=False)
-        
-        #dot_all_paths = glob.glob(os.path.join(self.model_dir, "*.all"))
-        predicted_images_path = os.path.join(self.model_dir, 'image.dat')
-        if os.path.isfile(predicted_images_path) :
-            import_multiple_images(self, predicted_images_path, fits_image, AttrName='image', units='pixel', filled_markers=False)
-            import_multiple_images(self, predicted_images_path, fits_image, AttrName='image_filtered', units='pixel', filled_markers=False)
-            self.filter_image()
-        else :
-            self.image = None
-            self.image_filtered = None
-        
-        curves_dir = os.path.join(self.model_dir, 'curves')
-        if os.path.isdir(curves_dir) :
-            self.curves = curves(curves_dir, self, fits_image, which_critcaus='critical', join=False, size=2)
-        else :
-            self.curves = None
-        
-        predicted_sources_path = os.path.join(self.model_dir, 'source.dat')
-        if os.path.isfile(predicted_sources_path) :
-            import_sources(self, predicted_sources_path, fits_image, AttrName='source', units='pixel', filled_markers=False)
-        
+        # some useful initializations
         self.curve_plot = None
+        self.magnification_res = 1000
+        self.magnification_line_ax = None
+        self.previous_state_current_ROI = None
+        self.LENSTRONOMY_fixed_source_kwargs = []
         
-        self.lt = None
+        # load maps if some have been saved to save compute time
+        self.load_saved_maps()
+        
+        # compute sources and images from multiple images
+        if self.mult is not None :
+            print("Computing sources")
+            _initial_ngrid_value = self.lt.G.ngrid
+            self.lt.set_grid(256, 0)
+            
+            ## TO DO ##
+            
+            self.lt.set_grid(_initial_ngrid_value, 0)
+        
+        
+    
+    def world_to_relative(self, ra, dec) :
+        return world_to_relative(ra, dec, self.reference)
+    
+    def relative_to_world(self, xr, yr) :
+        return relative_to_world(xr, yr, self.reference)
+    
+    def SafeMode(self) :
+        if self._safe_mode :
+            print("Already in safe directory")
+        elif self.model_dir.endswith('_safe/') :
+            print("Safe directory already selected, moving to it")
+            os.chdir(self.model_dir)
+            self._safe_mode = True
+        else :
+            safe_dir = self.model_dir.rstrip('/') + '_safe/'
+            if os.path.exists(safe_dir) :
+                print("Safe directory already exists, moving to it")
+                self.__init__(safe_dir, self.fits_image)
+                os.chdir(safe_dir)
+                self._safe_mode = True
+            else :
+                os.makedirs(safe_dir, exist_ok=False)
+                for item in os.listdir(self.model_dir):
+                    s = os.path.join(self.model_dir, item)
+                    d = os.path.join(safe_dir, item)
+                    if os.path.isdir(s):
+                        shutil.copytree(s, d, dirs_exist_ok=True)
+                    else:
+                        shutil.copy2(s, d)
+                self.__init__(safe_dir, self.fits_image)
+                os.chdir(safe_dir)
+                self._safe_mode = True
+        print("Now in " + os.getcwd())
+    
+    def load_potfile(self, path) :
+        if hasattr(self, 'potfile') :
+            self.potfile.clear()
+        if path is not None :        
+            potfile_Table = read_potfile(path)
+            self.potfile = self.fits_image.make_catalog(potfile_Table, color=[1.,0.,0.], units='arcsec')
+    
+    def load_saved_maps(self) :
         #######################################################################
         self.dpl_maps_path = os.path.join(self.model_dir, 'dpl_maps.pkl')
         if os.path.exists(self.dpl_maps_path) :
@@ -161,45 +250,9 @@ class lenstool_model :
                 self.lt_caustics = pickle.load(f)
         else :
             self.lt_caustics = {}
-        
-        self.z_lens = None
-        self.magnification_res = 1000
-        self.magnification_line_ax = None
-        self.previous_state_current_ROI = None
-        self.LENSTRONOMY_fixed_source_kwargs = []
-        
     
-    def SafeMode(self) :
-        if self.safe_mode :
-            print("Already in safe directory")
-        elif self.model_dir.endswith('_safe/') :
-            print("Safe directory already selected, moving to it")
-            os.chdir(self.model_dir)
-            self.safe_mode = True
-        else :
-            safe_dir = self.model_dir.rstrip('/') + '_safe/'
-            if os.path.exists(safe_dir) :
-                print("Safe directory already exists, moving to it")
-                self.__init__(safe_dir, self.fits_image)
-                os.chdir(safe_dir)
-                self.safe_mode = True
-            else :
-                os.makedirs(safe_dir, exist_ok=False)
-                for item in os.listdir(self.model_dir):
-                    s = os.path.join(self.model_dir, item)
-                    d = os.path.join(safe_dir, item)
-                    if os.path.isdir(s):
-                        shutil.copytree(s, d, dirs_exist_ok=True)
-                    else:
-                        shutil.copy2(s, d)
-                self.__init__(safe_dir, self.fits_image)
-                os.chdir(safe_dir)
-                self.safe_mode = True
-        print("Now in " + os.getcwd())
-    
-    
-    def select_multiple_images(self) :
-        return 'in progress'
+    #def select_multiple_images(self) :
+    #    print('function to be implemented in the future')
     
     def plot(self, which=None) :
         if which is not None :
@@ -240,7 +293,7 @@ class lenstool_model :
         #self.clear()
         #self.plot()
         
-    def make_files(self) :
+    def __make_files(self) : #You can probably remove this function now that we are using Lenstool's wrapper
         best_files_maker(self.model_dir)
         make_magnifications_and_curves(self.model_dir)
     
@@ -248,16 +301,9 @@ class lenstool_model :
     def export_thumbnails(self, group_images=True, square_thumbnails=True, square_size=150, margin=50, distance=200, export_dir=None, boost=True, make_broad_view=True, broad_view_params=None) :
         export_thumbnails(self.mult, group_images=group_images, square_thumbnails=square_thumbnails, square_size=square_size, margin=margin, \
                           distance=distance, export_dir=export_dir, boost=boost, make_broad_view=make_broad_view, broad_view_params=broad_view_params)
-        
     
-    def world_to_relative(self, ra, dec) :
-        return world_to_relative(ra, dec, self.reference)
-    
-    def relative_to_world(self, xr, yr) :
-        return relative_to_world(xr, yr, self.reference)
-    
-    def make_webpage(self) :
-        print('in progress')
+    #def make_webpage(self) :
+    #    print('function to be implemented in the future')
         
     def make_latex(self) :
         latex_str = make_param_latex_table(self.param_file_path, convert_to_kpc=True, z=self.z_lens)
@@ -265,8 +311,6 @@ class lenstool_model :
     
     
     def set_lt_z(self, z, color=[255,100,255], recompute=False) :
-        if not self.safe_mode :
-            self.SafeMode()
         #if self.curve_plot is not None :
         #    self.fits_image.qt_image.removeItem(self.curve_plot)
         
@@ -315,137 +359,10 @@ class lenstool_model :
     
     
     def start_im2source(self) :
-        self.lt.set_grid(50, 0)
-        
-        self.transform_coords_radec = make_image_to_source(self.dx_map, self.dy_map, self.dmap_wcs)
-        
-        def transform_coords(x, y) :
-            ra, dec = self.fits_image.image_to_world(x, y)
-            
-            ra_source, dec_source = self.transform_coords_radec(ra, dec)
-            x_source, y_source = self.fits_image.world_to_image(ra_source, dec_source)
-            return x_source, y_source, ra_source, dec_source
-            
-        self.transform_coords = transform_coords
-        
-        # Set up label if needed (optional)
-        if not hasattr(self, 'transform_label'):
-            self.transform_label = pg.TextItem(anchor=(0, 1), color='w')
-            self.fits_image.qt_image.addItem(self.transform_label)
-        
-        # Create scatter point for transformed location
-        self.transformed_point = pg.ScatterPlotItem(size=10, brush='r')
-        self.fits_image.qt_image.addItem(self.transformed_point)
-        
-        self.images_scatter = pg.ScatterPlotItem(size=10, symbol='+', brush='g')
-        self.fits_image.qt_image.addItem(self.images_scatter)
-    
-        # Ensure view does not auto-range when updating
-        self.fits_image.qt_image.getView().enableAutoRange(pg.ViewBox.XAxis, False)
-        self.fits_image.qt_image.getView().enableAutoRange(pg.ViewBox.YAxis, False)
-    
-        # Mouse tracking setup
-        def mouse_moved(evt):
-            pos = evt[0]
-            if self.fits_image.qt_image.getView().sceneBoundingRect().contains(pos):
-                mouse_point = self.fits_image.qt_image.getView().mapSceneToView(pos)
-                x, y_flipped = mouse_point.x(), mouse_point.y()
-                x, y = x, self.fits_image.image_data.shape[0] - y_flipped
-                try:
-                    x_source, y_source, ra_source, dec_source = self.transform_coords(x, y)
-                    xr_source, yr_source = self.world_to_relative(ra_source, dec_source)
-                    
-                    #if int( importlib.metadata.version('lenstool').split('.')[1] )>=6 :
-                        ### For Lenstool version 8.6.3 ###
-                    #print(str(ra_source)[3:], str(dec_source)[3:])
-                    source = Table( rows=[('test', ra_source, dec_source, 1, 1, 0, self.lt_z, 25)],names=['n','x','y','a','b','theta','z','mag'], dtype=['str',*['float',]*7] )
-                    #else :
-                        ### For Lenstool version ?? ###
-                        #source = Table( rows=[('test', xr_source, yr_source, 1, 1, 0, self.lt_z, 25)],names=['n','x','y','a','b','theta','z','mag'], dtype=['str',*['float',]*7] )
-                    
-                    self.lt.set_sources(source)
-                    self.lt.e_lensing()
-                    image_cat = self.lt.get_images()
-                    
-                    x_images = []
-                    y_images = []
-                    for image in image_cat :
-                        ra_image, dec_image = self.relative_to_world(image['x'], image['y'])
-                        x_image, y_image = self.fits_image.world_to_image(ra_image, dec_image)
-                        x_images.append(x_image)
-                        y_images.append(y_image)
-                        
-                        #ellipse = QGraphicsEllipseItem(x_image, self.fits_image.image_data.shape[0] - y_image, image['a'], image['b'])
-                        #ellipse.setTransformOriginPoint( PyQt5.QtCore.QPointF(x_image, self.fits_image.image_data.shape[0] - y_image) )
-                        #ellipse.setRotation(-image['theta'])
-                    self.images_scatter.setData( x_images, self.fits_image.image_data.shape[0] - np.array(y_images) )
-                    
-                    self.transformed_point.setData([x_source], [self.fits_image.image_data.shape[0] - y_source])
-                    self.transform_label.setText(f"({x:.2f}, {y:.2f}) → ({x_source:.2f}, {y_source:.2f})")
-                    self.transform_label.setPos(x, y_flipped)
-                    
-                    self._last_transform_coords = {'x': x, 'y': y, 'x_source': x_source, 'y_source': y_source}
-                except Exception as e:
-                    self.transform_label.setText(f"Error: {e}")
-                    self.transform_label.setPos(x, y_flipped)
-        
-        self._transform_proxy = pg.SignalProxy(self.fits_image.qt_image.getView().scene().sigMouseMoved, rateLimit=60, slot=mouse_moved)
-        
-        
-        
-        
-        self.doubleclick_image_marker = pg.ScatterPlotItem(size=12, symbol='s', brush='g', pen='g')
-        self.doubleclick_source_marker = pg.ScatterPlotItem(size=12, symbol='+', brush='r', pen='r')
-        self.fits_image.qt_image.addItem(self.doubleclick_image_marker)
-        self.fits_image.qt_image.addItem(self.doubleclick_source_marker)
-        
-        self.source_markers_x = []
-        self.source_markers_y = []
-        
-        def mouse_clicked(evt):
-            if evt.double():
-                if hasattr(self, '_last_transform_coords'):
-                    coords = self._last_transform_coords
-                    x, y = coords['x'], coords['y']
-                    x_source, y_source = coords['x_source'], coords['y_source']
-                    
-                    self.source_markers_x.append(x_source)
-                    self.source_markers_y.append(self.fits_image.image_data.shape[0] - y_source)
-                    
-                    self.doubleclick_image_marker.setData([x], [self.fits_image.image_data.shape[0] - y])
-                    #self.doubleclick_source_marker.setData([x_source], [self.fits_image.image_data.shape[0] - y_source])
-                    self.doubleclick_source_marker.setData(self.source_markers_x, self.source_markers_y)
-        self._doubleclick_connection = self.fits_image.qt_image.scene.sigMouseClicked.connect(mouse_clicked)
-        
-        
-        def keyPressEvent(event):
-            if event.key() == Qt.Key_Escape or event.key() == Qt.Key_Space :
-                self.stop_im2source()
-        
-        self._original_keyPressEvent = self.fits_image.window.keyPressEvent
-        self.fits_image.window.keyPressEvent = keyPressEvent
+        start_im2source(self)
         
     def stop_im2source(self) :
-        self.fits_image.qt_image.removeItem(self.images_scatter)
-        self.fits_image.qt_image.removeItem(self.transformed_point)
-        self.fits_image.qt_image.removeItem(self.transform_label)
-        self._transform_proxy.disconnect()
-        del self._transform_proxy
-        del self.images_scatter
-        del self.transformed_point
-        del self.transform_label
-        self.fits_image.window.keyPressEvent = self._original_keyPressEvent
-        if hasattr(self, 'doubleclick_image_marker'):
-            self.fits_image.qt_image.removeItem(self.doubleclick_image_marker)
-            del self.doubleclick_image_marker
-        if hasattr(self, 'doubleclick_source_marker'):
-            self.fits_image.qt_image.removeItem(self.doubleclick_source_marker)
-            del self.doubleclick_source_marker
-        if hasattr(self, '_doubleclick_connection'):
-            self.fits_image.qt_image.scene.sigMouseClicked.disconnect(self._doubleclick_connection)
-            del self._doubleclick_connection
-        print('Interactive source & images viewer closed.')
-    
+        stop_im2source(self)
     
     def start_magnification(self) :
         return None
@@ -788,22 +705,7 @@ class lenstool_model :
     
         
     
-    def save_lenstronomy_model(self) :
-        self.LENSTRONOMY_source_model = save_lenstronomy_model(os.path.join(self.model_dir, "lenstronomy_model.pkl"),
-                                                                self.LENSTRONOMY_models,
-                                                                self.LENSTRONOMY_result_kwargs,
-                                                                self.LENSTRONOMY_center_world)
-        
-    def load_lenstronomy_model(self) :
-        self.LENSTRONOMY_source_model_full = load_lenstronomy_model(os.path.join(self.model_dir, "lenstronomy_model.pkl"), self.LENSTRONOMY_center_world)
-        
-        self.models = copy.deepcopy(self.LENSTRONOMY_models)
-        self.models['source_light_model_list'] = self.LENSTRONOMY_source_model_full['models']['source_light_model_list']
-        
-        self.kwargs = {'kwargs_lens': self.LENSTRONOMY_LensModel_kwargs}
-        self.kwargs['kwargs_source'] = self.LENSTRONOMY_source_model_full['results']['kwargs_source']
-        
-        make_LENSTRONOMY_plot(self, self.models, self.kwargs)
+
 
 
 

@@ -173,6 +173,7 @@ class DragPlotWidget_special(pg.PlotWidget):
         self.roi_list = []
         self.drawing1 = False
         self.drawing2 = False
+        self.drawing3 = False
         
     def initUI(self):
         self.timer = QTimer()
@@ -180,12 +181,27 @@ class DragPlotWidget_special(pg.PlotWidget):
         self.timer.timeout.connect(self.checkLongPress)
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton and event.modifiers() == Qt.ShiftModifier:
+        if event.button() == Qt.LeftButton and (event.modifiers() & Qt.ShiftModifier) and (event.modifiers() & Qt.ControlModifier):
+            self.view.setMouseEnabled(x=False, y=False)
+            self.timer.start()
+            mouse_point = self.view.mapSceneToView(event.pos()) # Convert click position to data coordinates
+            self.start_pos = QPointF(mouse_point.x(), mouse_point.y())
+            self.last_roi = SelectableCircleROI([self.start_pos.x(), self.start_pos.y()], radius=1e-9, pen='b', invertible=True)
+            self.last_roi.type = 3
+            self.roi_list.append(self.last_roi)
+            for handle in self.last_roi.handles:
+                self.last_roi.removeHandle(handle['item'])
+            self.addItem(self.last_roi)
+            self.drawing3 = True
+        elif event.button() == Qt.LeftButton and event.modifiers() == Qt.AltModifier:
+            print('Alt modifier function not yet implemented')
+        elif event.button() == Qt.LeftButton and event.modifiers() == Qt.ShiftModifier:
             self.view.setMouseEnabled(x=False, y=False)
             self.timer.start()
             mouse_point = self.view.mapSceneToView(event.pos()) # Convert click position to data coordinates
             self.start_pos = QPointF(mouse_point.x(), mouse_point.y())
             self.last_roi = SelectableEllipseROI([self.start_pos.x(), self.start_pos.y()], [1e-9, 1e-9], pen='r', invertible=True)
+            self.last_roi.type = 1
             self.roi_list.append(self.last_roi)
             for handle in self.last_roi.handles:
                 self.last_roi.removeHandle(handle['item'])
@@ -197,6 +213,7 @@ class DragPlotWidget_special(pg.PlotWidget):
             mouse_point = self.view.mapSceneToView(event.pos()) # Convert click position to data coordinates
             self.start_pos = QPointF(mouse_point.x(), mouse_point.y())
             self.last_roi = SelectableCircleROI([self.start_pos.x(), self.start_pos.y()], radius=1e-9, pen='g', invertible=True)
+            self.last_roi.type = 2
             self.roi_list.append(self.last_roi)
             for handle in self.last_roi.handles:
                 self.last_roi.removeHandle(handle['item'])
@@ -230,6 +247,7 @@ class DragPlotWidget_special(pg.PlotWidget):
         if not (QApplication.mouseButtons() & Qt.LeftButton) and not (QApplication.mouseButtons() & Qt.ControlModifier):
             self.drawing1 = False
             self.drawing2 = False
+            self.drawing3 = False
             if self.timer.isActive():
                 self.timer.stop()
             if len(self.roi_list)>0:
@@ -247,6 +265,15 @@ class DragPlotWidget_special(pg.PlotWidget):
             height = max( mouse_point.y() - self.start_pos.y(), 1e-9, key=abs )
             self.last_roi.setSize([width, height])
         if self.drawing2 :
+            mouse_point = self.view.mapSceneToView(pos)
+            w2 = abs(mouse_point.x() - self.start_pos.x())
+            h2 = abs(mouse_point.y() - self.start_pos.y())
+            radius = max( (w2**2 + h2**2)**0.5, 1e-9 )
+            new_corner_x = self.start_pos.x() - radius
+            new_corner_y = self.start_pos.y() - radius
+            self.last_roi.setPos([new_corner_x, new_corner_y])
+            self.last_roi.setSize([2*radius, 2*radius])
+        if self.drawing3 :
             mouse_point = self.view.mapSceneToView(pos)
             w2 = abs(mouse_point.x() - self.start_pos.x())
             h2 = abs(mouse_point.y() - self.start_pos.y())

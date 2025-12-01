@@ -12,8 +12,8 @@ from lenstronomy.Sampling.parameters import Param
 from lenstronomy.Plots.model_plot import ModelPlot
 from lenstronomy.Workflow.fitting_sequence import FittingSequence
 
-from .utils_astro.utils_general import world_to_relative, relative_to_world
-from .utils_Qt.utils_general import transform_ROI_params
+from ...utils.utils_astro.utils_general import world_to_relative, relative_to_world
+from ...utils.utils_Qt.utils_general import transform_ROI_params
 
 
 
@@ -29,7 +29,7 @@ class SourceFilter(QObject):
             self.lm.LightModel_source_kwargs = []
             
             for roi in self.lm.source_plane_widget.roi_list :
-                if type(roi).__name__ == 'SelectableEllipseROI' :
+                if roi.type==1 :
                     self.lm.LightModel_source_list.append('SERSIC_ELLIPSE')
                     n_sersic = 3
                     x_center, y_center, semi_major, semi_minor, angle = transform_ROI_params(roi)
@@ -40,15 +40,24 @@ class SourceFilter(QObject):
                     R_sersic = (semi_major + semi_minor)/2
                     src_xr = x_center + self.lm.source_center_coordinates[0]
                     src_yr = y_center + self.lm.source_center_coordinates[1]
-                    to_add = {'amp': 1, 'R_sersic': R_sersic, 'n_sersic': n_sersic, 'e1': e1, 'e2': e2, 'center_x': x_center, 'center_y': y_center}
+                    to_add = {'amp': 1, 'R_sersic': R_sersic, 'n_sersic': n_sersic, 'e1': e1, 'e2': e2, 'center_x': src_xr, 'center_y': src_yr}
                     self.lm.LightModel_source_kwargs.append(to_add)
-                elif type(roi).__name__ == 'SelectableCircleROI' :
+                elif roi.type==2 :
                     self.lm.LightModel_source_list.append('GAUSSIAN')
                     x_center, y_center, semi_major, semi_minor, angle = transform_ROI_params(roi)
                     src_xr = x_center + self.lm.source_center_coordinates[0]
                     src_yr = y_center + self.lm.source_center_coordinates[1]
                     sigma = abs(roi.size()[0])
                     to_add = {'amp': sigma, 'sigma': self.lm.sigma, 'center_x': src_xr, 'center_y': src_yr}
+                    self.lm.LightModel_source_kwargs.append(to_add)
+                if roi.type==3 :
+                    self.lm.LightModel_source_list.append('SERSIC')
+                    n_sersic = 3
+                    x_center, y_center, semi_major, semi_minor, angle = transform_ROI_params(roi)
+                    src_xr = x_center + self.lm.source_center_coordinates[0]
+                    src_yr = y_center + self.lm.source_center_coordinates[1]
+                    R_sersic = abs(roi.size()[0])
+                    to_add = {'amp': 1, 'R_sersic': R_sersic, 'n_sersic': n_sersic, 'center_x': src_xr, 'center_y': src_yr}
                     self.lm.LightModel_source_kwargs.append(to_add)
                     
             self.lm.LightModel_source = LightModel(light_model_list=self.lm.LightModel_source_list)
@@ -117,7 +126,30 @@ class SourceFilter(QObject):
                         kwargs_init['sigma'] = self.lm.sigma/2
                             
                     if src == 'SERSIC_ELLIPSE' :
-                        print(None)
+                        fixed_params = ['center_x', 'center_y']
+                        opt_params = ['amp', 'R_sersic', 'n_sersic', 'e1', 'e2']
+                        for p in fixed_params :
+                            #kwargs_fixed[p] = kwargs[p]
+                            #kwargs_fixed[p] = kwargs[p]
+                            
+                            kwargs_lower[p] = kwargs[p] -0.001
+                            kwargs_upper[p] = kwargs[p] +0.001
+                            kwargs_sigma[p] = 0.0001
+                            kwargs_init[p] = kwargs[p]
+                        for p in opt_params :
+                            if p=='n_sersic' :
+                                kwargs_lower[p] = 0.5
+                                kwargs_upper[p] = 10.
+                                kwargs_sigma[p] = 0.2
+                            elif p=='e1' or p=='e2' :
+                                kwargs_lower[p] = -1.
+                                kwargs_upper[p] = 1.
+                                kwargs_sigma[p] = 0.1
+                            else :
+                                kwargs_lower[p] = kwargs[p] /10
+                                kwargs_upper[p] = kwargs[p] *10
+                                kwargs_sigma[p] = kwargs[p] /10
+                            kwargs_init[p] = kwargs[p]                        
                     
                     kwargs_source_fixed.append(kwargs_fixed)
                     kwargs_source_lower.append(kwargs_lower)
@@ -205,7 +237,7 @@ def make_LENSTRONOMY_plot(self, models, kwargs) :
     
 
     f, axes = plt.subplots(2, 3, figsize=(16, 8), sharex=False, sharey=False)
-
+    
     self.modelPlot.data_plot(ax=axes[0,0])
     self.modelPlot.model_plot(ax=axes[0,1])
     self.modelPlot.normalized_residual_plot(ax=axes[0,2], v_min=-6, v_max=6)
@@ -215,6 +247,9 @@ def make_LENSTRONOMY_plot(self, models, kwargs) :
     f.tight_layout()
     f.subplots_adjust(left=None, bottom=None, right=None, top=None, wspace=0., hspace=0.05)
     plt.show()
+    
+    fig, ax = plt.subplots()
+    self.modelPlot.source_plot(ax=ax, deltaPix_source=0.0003, numPix=4000)
 
 
 def save_lenstronomy_model(path, models, results, LENSTRONOMY_center_world) :
