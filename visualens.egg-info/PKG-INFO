@@ -1,0 +1,34 @@
+Metadata-Version: 2.4
+Name: visualens
+Version: 0.1.1
+Summary: A visual interface to explore and manipulate astronomical images, catalogs, and lens models created using Lenstool.
+Author-email: Tom Resseguier <tresseg1@jhu.edu>
+Project-URL: Homepage, https://github.com/tomresseguier/Lenstool_GUI/
+Project-URL: Issues, https://github.com/tomresseguier/Lenstool_GUI/issues
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+Requires-Dist: numpy>=1.21
+Requires-Dist: astropy>=5.0
+Requires-Dist: matplotlib>=3.5
+Requires-Dist: PyQt5>=5.15
+Requires-Dist: pyqtgraph>=0.12
+Requires-Dist: scipy>=1.7
+Requires-Dist: pandas>=1.4
+Requires-Dist: tqdm>=4.60
+Requires-Dist: corner>=2.2
+Requires-Dist: stsynphot>=0.3
+Requires-Dist: lenstronomy>=1.1
+Requires-Dist: reproject
+Requires-Dist: speclite
+
+# Lenstool GUI
+
+A visual interface to explore astronomical images, catalogs, and lens models created using Lenstool.
+
+
+
+
+
+
+Notes:
+- If you install Spyder in a conda virtual environment where you have previously installed visualens with pip, it might crash (this is because of pyQt5's install required by visualens). Instead, install Spyder first and everything should be fine.

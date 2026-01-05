@@ -1,23 +1,32 @@
-[build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
-
 [project]
-name = "lenstool_gui"
-version = "3.0.0"
+name = "visualens"
+version = "0.1.1"
 authors = [
   { name="Tom Resseguier", email="tresseg1@jhu.edu" },
 ]
-description = "A visual interface to explore astronomical images, catalogs, and lens models created using Lenstool."
+description = "A visual interface to explore and manipulate astronomical images, catalogs, and lens models created using Lenstool."
 readme = "README.md"
 requires-python = ">=3.8"
-classifiers = [
-    "Programming Language :: Python :: 3",
-    "Operating System :: OS Independent",
+dependencies = [
+  "numpy>=1.21",
+  "astropy>=5.0",
+  "matplotlib>=3.5",
+  "PyQt5>=5.15",
+  "pyqtgraph>=0.12",
+  "scipy>=1.7",
+  "pandas>=1.4",
+  "tqdm>=4.60",
+  "corner>=2.2",
+  "stsynphot>=0.3",
+  "lenstronomy>=1.1",
+  "reproject",
+  "speclite"
 ]
 
 [project.urls]
 "Homepage" = "https://github.com/tomresseguier/Lenstool_GUI/"
-"Bug Tracker" = "https://github.com/tomresseguier/Lenstool_GUI/issues"
+"Issues" = "https://github.com/tomresseguier/Lenstool_GUI/issues"
 
-
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
