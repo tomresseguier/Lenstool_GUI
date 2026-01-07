@@ -6,7 +6,8 @@ import copy
 from lenstronomy.Plots.model_plot import ModelPlot
 
 from ...utils.utils_astro.utils_general import world_to_relative, relative_to_world
-
+from ...utils.utils_Qt.drag_widgets import SelectableCircleROI, SelectableEllipseROI
+from ...utils.utils_Qt.sliders import TripleSlider
 
 
 
@@ -138,5 +139,88 @@ class lenstronomy_model :
     def remove_source(self, index) :
         del self.local['models']['source_light_model_list'][index]
         del self.local['kwargs']['kwargs_source'][index]
-
-
+    
+    
+    def send_to_imsim(self) :
+        PlotWidget = self.imsim.source_plane_widget
+        for i, model in enumerate(self.local['models']['source_light_model_list']) :
+            if model=='GAUSSIAN' :
+                kwargs = self.local['kwargs']['kwargs_source'][i]
+                x = kwargs['center_x'] - self.imsim.source_center_coordinates[0]
+                y = kwargs['center_y'] - self.imsim.source_center_coordinates[1]
+                sigma = kwargs['sigma']
+                x_corner = x - sigma
+                y_corner = y - sigma
+                
+                PlotWidget.last_roi = SelectableCircleROI([x_corner, y_corner], PlotWidget=PlotWidget, radius=sigma, pen='g', invertible=True)
+                PlotWidget.last_roi.type = 2
+                PlotWidget.roi_list.append(PlotWidget.last_roi)
+                for handle in PlotWidget.last_roi.handles:
+                    PlotWidget.last_roi.removeHandle(handle['item'])
+                PlotWidget.addItem(PlotWidget.last_roi)
+                                
+                # Add sliders to control light source parameters
+                param = 'amp'
+                min_range, max_range = PlotWidget.ranges_dict[param][0], PlotWidget.ranges_dict[param][1]
+                PlotWidget.last_roi.sliders = {param : TripleSlider(min_range, max_range, PlotWidget=PlotWidget, label=param, roi=self.last_roi)}
+                PlotWidget.last_roi.sliders[param].vmid = kwargs[param]
+                PlotWidget.last_roi.sliders[param].setParentItem(PlotWidget.last_roi)
+        
+            if model=='SERSIC' :
+                kwargs = self.local['kwargs']['kwargs_source'][i]
+                x = kwargs['center_x'] - self.imsim.source_center_coordinates[0]
+                y = kwargs['center_y'] - self.imsim.source_center_coordinates[1]
+                R_sersic = kwargs['R_sersic']
+                x_corner = x - R_sersic
+                y_corner = y - R_sersic
+                
+                PlotWidget.last_roi = SelectableCircleROI([x_corner, y_corner], PlotWidget=PlotWidget, radius=R_sersic, pen='b', invertible=True)
+                PlotWidget.last_roi.type = 3
+                PlotWidget.roi_list.append(PlotWidget.last_roi)
+                for handle in PlotWidget.last_roi.handles:
+                    PlotWidget.last_roi.removeHandle(handle['item'])
+                PlotWidget.addItem(PlotWidget.last_roi)
+                                
+                # Add sliders to control light source parameters
+                params = ['amp', 'n_sersic']
+                for i, param in enumerate(params) : #, 'R_sersic'
+                    min_range, max_range = PlotWidget.ranges_dict[param][0], PlotWidget.ranges_dict[param][1]
+                    if not hasattr(PlotWidget.last_roi, 'sliders') :
+                        PlotWidget.last_roi.sliders = {param : TripleSlider(min_range, max_range, PlotWidget=PlotWidget, label=param, roi=self.last_roi)}
+                    else :
+                        offset = PlotWidget.last_roi.sliders[params[i-1]].offset + PlotWidget.last_roi.sliders[params[i-1]].bounding_height + PlotWidget.last_roi.sliders[params[i-1]].offset_text
+                        PlotWidget.last_roi.sliders[param] = TripleSlider(min_range, max_range, PlotWidget=PlotWidget, label=param, roi=self.last_roi, offset=offset)
+                    PlotWidget.last_roi.sliders[param].vmid = kwargs[param]
+                    PlotWidget.last_roi.sliders[param].setParentItem(PlotWidget.last_roi)
+                
+            if model=='SERSIC_ELLIPSE' :
+                kwargs = self.local['kwargs']['kwargs_source'][i]
+                x = kwargs['center_x'] - self.imsim.source_center_coordinates[0]
+                y = kwargs['center_y'] - self.imsim.source_center_coordinates[1]
+                R_sersic = kwargs['R_sersic']
+                e1, e2 = kwargs['e1'], kwargs['e2']
+                x_corner = x - R_sersic # check if this works with ellipticity...
+                y_corner = y - R_sersic
+                
+                PlotWidget.last_roi = SelectableEllipseROI([x_corner, y_corner], [e1, e2], PlotWidget=PlotWidget, radius=R_sersic, pen='r', invertible=True)
+                PlotWidget.last_roi.type = 1
+                PlotWidget.roi_list.append(PlotWidget.last_roi)
+                for handle in PlotWidget.last_roi.handles:
+                    PlotWidget.last_roi.removeHandle(handle['item'])
+                PlotWidget.addItem(PlotWidget.last_roi)
+                                
+                # Add sliders to control light source parameters
+                params = ['amp', 'n_sersic']
+                for i, param in enumerate(params) : #, 'R_sersic'
+                    min_range, max_range = PlotWidget.ranges_dict[param][0], PlotWidget.ranges_dict[param][1]
+                    if not hasattr(PlotWidget.last_roi, 'sliders') :
+                        PlotWidget.last_roi.sliders = {param : TripleSlider(min_range, max_range, PlotWidget=PlotWidget, label=param, roi=self.last_roi)}
+                    else :
+                        offset = PlotWidget.last_roi.sliders[params[i-1]].offset + PlotWidget.last_roi.sliders[params[i-1]].bounding_height + PlotWidget.last_roi.sliders[params[i-1]].offset_text
+                        PlotWidget.last_roi.sliders[param] = TripleSlider(min_range, max_range, PlotWidget=PlotWidget, label=param, roi=self.last_roi, offset=offset)
+                    PlotWidget.last_roi.sliders[param].vmid = kwargs[param]
+                    PlotWidget.last_roi.sliders[param].setParentItem(PlotWidget.last_roi)
+                    
+                    
+                    
+                    

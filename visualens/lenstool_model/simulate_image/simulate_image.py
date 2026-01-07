@@ -17,7 +17,8 @@ from ...utils.utils_astro.utils_general import world_to_relative
 from ...utils.utils_general.sort_points import break_curves
 from ...utils.utils_Qt.drag_widgets import DragPlotWidget_special
 from ...utils.utils_Qt.utils_general import transform_rectangle
-from .utils import SourceFilter, ImageFilter, format_lm_local
+from .event_filters import SourceFilter, ImageFilter
+from .utils import format_lm_local
 from .lenstronomy_model import lenstronomy_model
 
 

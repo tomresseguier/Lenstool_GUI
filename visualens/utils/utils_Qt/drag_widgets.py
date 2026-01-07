@@ -203,10 +203,10 @@ class DragPlotWidget_special(pg.PlotWidget):
             for i, param in enumerate(params) : #, 'R_sersic'
                 min_range, max_range = self.ranges_dict[param][0], self.ranges_dict[param][1]
                 if not hasattr(self.last_roi, 'sliders') :
-                    self.last_roi.sliders = {param : TripleSlider(min_range, max_range, PlotWidget=self, label=param)}
+                    self.last_roi.sliders = {param : TripleSlider(min_range, max_range, PlotWidget=self, label=param, roi=self.last_roi)}
                 else :
                     offset = self.last_roi.sliders[params[i-1]].offset + self.last_roi.sliders[params[i-1]].bounding_height + self.last_roi.sliders[params[i-1]].offset_text
-                    self.last_roi.sliders[param] = TripleSlider(min_range, max_range, PlotWidget=self, label=param, offset=offset)
+                    self.last_roi.sliders[param] = TripleSlider(min_range, max_range, PlotWidget=self, label=param, roi=self.last_roi, offset=offset)
                 self.last_roi.sliders[param].setParentItem(self.last_roi)
         # 
         elif event.button() == Qt.LeftButton and event.modifiers() == Qt.AltModifier:
@@ -230,10 +230,10 @@ class DragPlotWidget_special(pg.PlotWidget):
             for i, param in enumerate(params) : #, 'R_sersic'
                 min_range, max_range = self.ranges_dict[param][0], self.ranges_dict[param][1]
                 if not hasattr(self.last_roi, 'sliders') :
-                    self.last_roi.sliders = {param : TripleSlider(min_range, max_range, PlotWidget=self, label=param)}
+                    self.last_roi.sliders = {param : TripleSlider(min_range, max_range, PlotWidget=self, label=param, roi=self.last_roi)}
                 else :
                     offset = self.last_roi.sliders[params[i-1]].offset + self.last_roi.sliders[params[i-1]].bounding_height + self.last_roi.sliders[params[i-1]].offset_text
-                    self.last_roi.sliders[param] = TripleSlider(min_range, max_range, PlotWidget=self, label=param, offset=offset)
+                    self.last_roi.sliders[param] = TripleSlider(min_range, max_range, PlotWidget=self, label=param, roi=self.last_roi, offset=offset)
                 self.last_roi.sliders[param].setParentItem(self.last_roi)
         # Gaussian light source
         elif event.button() == Qt.LeftButton and event.modifiers() == Qt.ControlModifier:
@@ -252,7 +252,7 @@ class DragPlotWidget_special(pg.PlotWidget):
             # Add sliders to control light source parameters
             param = 'amp'
             min_range, max_range = self.ranges_dict[param][0], self.ranges_dict[param][1]
-            self.last_roi.sliders = {param : TripleSlider(min_range, max_range, PlotWidget=self, label=param)}
+            self.last_roi.sliders = {param : TripleSlider(min_range, max_range, PlotWidget=self, label=param, roi=self.last_roi)}
             self.last_roi.sliders[param].setParentItem(self.last_roi)
         else:
             super().mousePressEvent(event) #Default PlotWidget behavior, so that the user is still able to move around by click & drag

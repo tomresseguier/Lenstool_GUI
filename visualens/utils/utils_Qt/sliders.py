@@ -1,21 +1,24 @@
 from PyQt5.QtCore import Qt, pyqtSignal, QRectF, QPointF
-from PyQt5.QtGui import QPainter, QColor, QPen, QBrush, QPainterPath, QTransform, QFont, QFontMetricsF
-from PyQt5.QtWidgets import QWidget, QLabel, QGraphicsProxyWidget, QVBoxLayout, QGraphicsItem
+from PyQt5.QtGui import QPainter, QColor, QPen, QBrush, QTransform, QFont, QFontMetricsF
+from PyQt5.QtWidgets import QWidget, QGraphicsItem
 import pyqtgraph as pg
+import numpy as np
 
 
 
 
 class TripleSlider(pg.GraphicsObject):
     valuesChanged = pyqtSignal(float, float, float)  # min, mid, max
-    def __init__(self, min_range=0, max_range=10, label=None, above_text=None, PlotWidget=None, offset=0.) :
+    def __init__(self, min_range=0, max_range=10, label=None, above_text=None, PlotWidget=None, roi=None, offset=0.) :
         super().__init__()
+        #self.roi = roi
         self.offset = offset
         self.offset_text = 0. if above_text is None else 20.
         self.slider_width, self.slider_height = 100, 20
         self._bottom_margin = 9
         self.bounding_width, self.bounding_height = self.slider_width, self.slider_height + self._bottom_margin
-
+        self.total_offset = -self.offset - self.offset_text - self.bounding_height
+        
         self.min_range = min_range
         self.max_range = max_range
 
@@ -39,19 +42,27 @@ class TripleSlider(pg.GraphicsObject):
         self.setAcceptHoverEvents(True)
         self.setFlag(QGraphicsItem.ItemIsFocusable)
         
-        # Ensure size is constant
         if PlotWidget is not None :
             self.PlotWidget = PlotWidget
             self.viewbox = PlotWidget.getViewBox()
-            
             def data_to_pixel_func() :
                 x0 = self.viewbox.mapViewToScene(pg.Point(0, 0)).x()
                 x1 = self.viewbox.mapViewToScene(pg.Point(1, 0)).x()
                 return x1-x0
             self.data_to_pixel = data_to_pixel_func
             
-            PlotWidget.getViewBox().sigRangeChanged.connect(self.update_scale)
-            self.update_scale()
+            # Ensure the anchor point scales with the ROI when handles are dragged
+            if roi is not None :
+                self.roi = roi
+                def anchor_func() :
+                    a, b = self.roi.size()/2
+                    return (1 + 2**-0.5)*a, (1 - 2**-0.5)*b
+                self.get_anchor = anchor_func
+                self.roi.sigRegionChanged.connect(self.adjust_all)
+            
+            # Ensure size is constant
+            PlotWidget.getViewBox().sigRangeChanged.connect(self.adjust_all)
+            self.adjust_all()
         
         if above_text is not None :
             self.add_above_text(above_text)
@@ -81,12 +92,27 @@ class TripleSlider(pg.GraphicsObject):
         self.above_text.setParentItem(self)
         self.above_text.setPos( 0, self.bounding_height + self.offset_text )
     
-    def update_scale(self):
-        """Update slider scale to maintain constant size regardless of zoom level"""        
-        self.setTransform(QTransform.fromScale(1.0/self.data_to_pixel(), 1.0/self.data_to_pixel()))
-        # Move the slider so that it's top matches the bottom of the ROI
-        self.setPos(0, (-self.offset - self.offset_text - self.bounding_height) / self.data_to_pixel())
-        
+    def update_tranform(self):
+        """Update slider rotation to maintain constant horizontal orientation"""
+        self.Transform = QTransform.fromScale(1.0/self.data_to_pixel(), 1.0/self.data_to_pixel())
+        if self.roi is not None :
+            self.Transform.rotate( -self.roi.angle() )
+        self.setTransform(self.Transform)
+    
+    def update_position(self) :
+        anchor = self.get_anchor() if self.roi is not None else (0, 0)
+        offset = self.total_offset / self.data_to_pixel()
+        offset_x = np.sin( np.deg2rad(self.roi.angle()) )*offset
+        offset_y = np.cos( np.deg2rad(self.roi.angle()) )*offset
+        self.setPos( anchor[0] + offset_x, anchor[1] + offset_y )
+    
+    def adjust_all(self) :
+        """Update slider scale to maintain constant size regardless of zoom level"""
+        # Update transform to account for scale and rotation
+        self.update_tranform()
+        # Move the slider so that it's top matches the anchor point
+        self.update_position()
+    
     def val_to_x(self, v):
         w = self.slider_width * (1 - self._left_pad_frac - self._right_pad_frac)
         return self._label_width + self.slider_width * self._left_pad_frac + (v - self.min_range) / (self.max_range - self.min_range) * w
