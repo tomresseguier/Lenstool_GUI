@@ -22,12 +22,12 @@ class SourceFilter(QObject):
         
     def eventFilter(self, obj, event):
         if event.type() == QEvent.KeyPress and event.key() in (Qt.Key_Return, Qt.Key_Enter) :
-            self.imsim.LightModel_source_list = []
-            self.imsim.LightModel_source_kwargs = []
+            LightModel_source_list = []
+            LightModel_source_kwargs = []
             
             for roi in self.imsim.source_plane_widget.roi_list :
                 if roi.type==1 :
-                    self.imsim.LightModel_source_list.append('SERSIC_ELLIPSE')
+                    LightModel_source_list.append('SERSIC_ELLIPSE')
                     amp = roi.sliders['amp'].vmid
                     n_sersic = roi.sliders['n_sersic'].vmid
                     x_center, y_center, semi_major, semi_minor, angle = transform_ROI_params(roi)
@@ -39,18 +39,18 @@ class SourceFilter(QObject):
                     src_xr = x_center + self.imsim.source_center_coordinates[0]
                     src_yr = y_center + self.imsim.source_center_coordinates[1]
                     to_add = {'amp': amp, 'R_sersic': R_sersic, 'n_sersic': n_sersic, 'e1': e1, 'e2': e2, 'center_x': src_xr, 'center_y': src_yr}
-                    self.imsim.LightModel_source_kwargs.append(to_add)
+                    LightModel_source_kwargs.append(to_add)
                 elif roi.type==2 :
-                    self.imsim.LightModel_source_list.append('GAUSSIAN')
+                    LightModel_source_list.append('GAUSSIAN')
                     amp = roi.sliders['amp'].vmid
                     x_center, y_center, semi_major, semi_minor, angle = transform_ROI_params(roi)
                     src_xr = x_center + self.imsim.source_center_coordinates[0]
                     src_yr = y_center + self.imsim.source_center_coordinates[1]
                     sigma = abs(roi.size()[0])
                     to_add = {'amp': amp, 'sigma': sigma, 'center_x': src_xr, 'center_y': src_yr}
-                    self.imsim.LightModel_source_kwargs.append(to_add)
+                    LightModel_source_kwargs.append(to_add)
                 if roi.type==3 :
-                    self.imsim.LightModel_source_list.append('SERSIC')
+                    LightModel_source_list.append('SERSIC')
                     amp = roi.sliders['amp'].vmid
                     n_sersic = roi.sliders['n_sersic'].vmid
                     x_center, y_center, semi_major, semi_minor, angle = transform_ROI_params(roi)
@@ -58,44 +58,43 @@ class SourceFilter(QObject):
                     src_yr = y_center + self.imsim.source_center_coordinates[1]
                     R_sersic = abs(roi.size()[0])
                     to_add = {'amp': amp, 'R_sersic': R_sersic, 'n_sersic': n_sersic, 'center_x': src_xr, 'center_y': src_yr}
-                    self.imsim.LightModel_source_kwargs.append(to_add)
+                    LightModel_source_kwargs.append(to_add)
             
             
+            ######### Create the current lenstronomy model class #########
+            lm_dict = {}
+            lm_dict['models'] = {'lens_model_list': self.imsim.LensModel_list,
+                                 #'lens_light_model_list': self.imsim.LensModel_light_list,
+                                 'source_light_model_list': LightModel_source_list}
+            lm_dict['kwargs'] = {'kwargs_lens': self.imsim.LensModel_kwargs, 
+                                 'kwargs_source': LightModel_source_kwargs}
+            self.imsim.lm_current = lenstronomy_model(lm_dict, self.imsim)
             
-            self.imsim.LightModel_source = LightModel(light_model_list=self.imsim.LightModel_source_list)
             
-            print('calculate image_model')
-            self.imsim.ImageModel = ImageModel(data_class=self.imsim.PixelGrid, psf_class=self.imsim.PSF,
-                                                        lens_model_class=self.imsim.LensModel,
-                                                        source_model_class=self.imsim.LightModel_source,
-                                                        #point_source_class=point_source,
-                                                        #lens_light_model_class=,
-                                                        kwargs_numerics=self.imsim.kwargs_numerics)
+            ######### Plot the simulated image #########
+            LightModel_source = LightModel(light_model_list=LightModel_source_list)
+            
+            self.imsim.ImageModel = ImageModel( data_class=self.imsim.PixelGrid, psf_class=self.imsim.PSF,
+                                                lens_model_class=self.imsim.LensModel,
+                                                source_model_class=LightModel_source,
+                                                #point_source_class=point_source,
+                                                #lens_light_model_class=,
+                                                kwargs_numerics=self.imsim.kwargs_numerics )
             
             print('Start simulating image')
-            self.imsim.simulated_image = self.imsim.ImageModel.image(kwargs_source=self.imsim.LightModel_source_kwargs,
-                                                                #kwargs_ps=kwargs_ps,
-                                                                #kwargs_lens_light=kwargs_light_lens,
-                                                                kwargs_lens=self.imsim.LensModel_kwargs, unconvolved=False)
+            self.imsim.simulated_image = self.imsim.ImageModel.image(kwargs_source=LightModel_source_kwargs,
+                                                                     #kwargs_ps=kwargs_ps,
+                                                                     #kwargs_lens_light=kwargs_light_lens,
+                                                                     kwargs_lens=self.imsim.LensModel_kwargs, unconvolved=False)
             self.imsim.image_plane_plot.setImage(self.imsim.simulated_image[::-1,:])
+            
+            ######### Plot the critical curve #########
             x = (self.imsim._lt_curve_coords_relative_broken[0] - self.imsim._SquareOfInterest_xr_bottomleft) / (self.imsim.fits_image.pix_deg_scale*3600)
             y = self.imsim.simulated_image.shape[0] - (self.imsim._lt_curve_coords_relative_broken[1] - self.imsim._SquareOfInterest_yr_bottomleft) / (self.imsim.fits_image.pix_deg_scale*3600)
             self.imsim.critical_curve_plot.setData(x, y)
             print('done')
             
             #solver = LensEquationSolver(self.imsim.lens_model)
-            
-            
-            
-            self.imsim.models = {'lens_model_list': self.imsim.LensModel_list,
-                                            #'lens_light_model_list': self.imsim.LensModel_light_list,
-                                            'source_light_model_list': self.imsim.LightModel_source_list}
-            
-            kwargs = {'kwargs_lens': self.imsim.LensModel_kwargs, 'kwargs_source': self.imsim.LightModel_source_kwargs}
-            
-            lm_dict = format_lm_local(self.imsim.models, kwargs)
-            
-            self.imsim.lm_current = lenstronomy_model(lm_dict, self.imsim)
             
             
             if event.modifiers() == Qt.ShiftModifier :
@@ -106,8 +105,8 @@ class SourceFilter(QObject):
                 kwargs_source_upper = []
                 kwargs_source_sigma = []
                 kwargs_source_init = []
-                for i, src in enumerate(self.imsim.LightModel_source_list) :
-                    kwargs = self.imsim.LightModel_source_kwargs[i]
+                for i, src in enumerate(LightModel_source_list) :
+                    kwargs = LightModel_source_kwargs[i]
                     kwargs_fixed = {}
                     kwargs_lower = {}
                     kwargs_upper = {}
@@ -117,7 +116,7 @@ class SourceFilter(QObject):
                     
                     fixed_params = ['center_x', 'center_y']
                     self.imsim.source_plane_widget.roi_list[i]
-                    opt_params = self.imsim.LightModel_source_kwargs.keys()
+                    opt_params = LightModel_source_kwargs.keys()
                     for param in fixed_params :
                         opt_params.remove(param)
                     for param in fixed_params :

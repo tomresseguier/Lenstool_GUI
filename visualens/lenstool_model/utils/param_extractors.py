@@ -551,8 +551,6 @@ def get_lenstool_WCS(param_file_path) :
 
 
 
-
-
 def parse_lenstool_parameter_file(path):
     def convert_token(tok):
         """Try to convert to int or float; otherwise return string."""
@@ -569,7 +567,7 @@ def parse_lenstool_parameter_file(path):
 
     with open(path, 'r') as f:
         for line in f:
-            # Remove comments
+            # Remove comments and whitespace
             line = line.split('#')[0].strip()
             if not line:
                 continue
@@ -592,29 +590,28 @@ def parse_lenstool_parameter_file(path):
 
             # Inside a section
             key = tokens[0]
-            values = tokens[1:]
+            values = [convert_token(v) for v in tokens[1:]]
 
-            # Convert tokens to int/float/str
-            values = [convert_token(v) for v in values]
-
-            # Where to store?
+            # Logic to handle target nesting
             target = data[current_section]
             if current_subsection is not None:
                 target = target[current_subsection]
 
-            # If the key appears multiple times → store as list of entries
+            # --- UPDATED LOGIC ---
             if key in target:
-                if isinstance(target[key], list):
+                # If it's already a list of lists, just append
+                if isinstance(target[key], list) and any(isinstance(i, list) for i in target[key]):
                     target[key].append(values)
                 else:
-                    target[key] = [target[key], values]
+                    # Convert existing single entry into a list of lists, then add the new one
+                    # We ensure 'values' is always treated as a list representing the line
+                    target[key] = [target[key] if isinstance(target[key], list) else [target[key]], values]
             else:
-                # Single or multi-value
+                # First time seeing this key: store values as a single entry
+                # If values has only 1 item, we store that item; otherwise the whole list
                 target[key] = values if len(values) > 1 else values[0]
                 
     return data
-
-
 
 
 

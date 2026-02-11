@@ -81,6 +81,7 @@ def import_multiple_images(self, mult_file_path_or_cat, fits_image, units=None, 
         multiple_images = mult_file_path_or_cat.copy()
         
     multiple_images['family'], multiple_images['broad_family'], local_families, local_broad_families, multiple_images['confidence'] = find_families(multiple_images['id'])
+    add_optimized_redshifts(multiple_images, self.param_best)
     setattr(self, AttrName, fits_image.make_catalog(multiple_images, units=units))
     
     if AttrName=='mult' :
@@ -306,7 +307,7 @@ def import_multiple_images(self, mult_file_path_or_cat, fits_image, units=None, 
             print('No imported_cat')
     
     getattr(self, AttrName).transfer_ids = types.MethodType(transfer_ids, getattr(self, AttrName))
-    
+        
     
 def import_sources(self, predicted_sources_path, fits_image, AttrName='source', units='pixel', filled_markers=False) :
     with open(predicted_sources_path) as file :
@@ -394,8 +395,31 @@ def export_thumbnails(self, group_images=True, square_thumbnails=True, square_si
         print('Done')
     ##############################
 
-        
 
+def add_optimized_redshifts(mult, param_best) :
+    if param_best is not None :
+        if 'image' in param_best :
+            if 'z_m_limit' in param_best['image'] :
+                for l in param_best['image']['z_m_limit'] :
+                    if type(l[1]) is str :
+                        names = []
+                        i = 1
+                        while type(l[i]) is str :
+                            names.append(l[i])
+                            i+=1
+                    else :
+                        names = [str(l[1])]
+                        i=2
+                    
+                    z = l[i+1]
+                    for name in names :
+                        fam = mult[mult['id']==name][0]['family']
+                        mult['z'][mult['family']==fam] = z
+    else :
+        print('Some multiple images have unknown redshifts --> setting to z=1. to create catalogs of sources and predicted images, and lensing quantities.')
+        for m in mult :
+            if m['z']==0. :
+                m['z'] = 1.
 
 
 class curves :
@@ -473,7 +497,6 @@ class curves :
                 self.fits_image.qt_image.removeItem(qtItem)
                 self.qtItems[name] = None
                 
-    
     
 
 

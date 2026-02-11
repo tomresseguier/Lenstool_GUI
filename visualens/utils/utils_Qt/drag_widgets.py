@@ -1,8 +1,7 @@
-from PyQt5.QtWidgets import QWidget, QApplication, QHBoxLayout, QVBoxLayout, QLabel, QGraphicsProxyWidget
+from PyQt5.QtWidgets import QWidget, QApplication, QHBoxLayout
 from PyQt5.QtCore import Qt, QTimer, QPointF
 import pyqtgraph as pg
 from pyqtgraph.Qt import QtCore
-import numpy as np
 
 from .utils_general import make_handles
 from .sliders import TripleSlider
@@ -161,12 +160,71 @@ class DragPlotWidget(pg.PlotWidget):
             self.last_roi.setSize([width, height])
 
 
-class DragPlotWidget_special(pg.PlotWidget):
+
+
+class ThrottledPlotWidget(pg.PlotWidget) :
+    """
+    Touchpad scrolls to zoom in/out trigger too many heavy repaints and can overload pyQt and crash the pyQt app (not an issue when using discrete mouse scrolls).
+    This class fixes the issue by overwritting the native scroll behaviour.
+    """
+    def __init__(self, throttle_mode=0, min_scroll_increment=0.) :
+        super().__init__()
+        self._throttle_mode = throttle_mode
+        if throttle_mode==1 :
+            self._update_rate = 20 # ms (~50 Hz)
+            self._min_scroll_increment = min_scroll_increment if min_scroll_increment!=0. else 0.
+        if throttle_mode==2 :
+            self._update_rate = 20 # ms (~25 Hz)
+            self._min_scroll_increment = min_scroll_increment if min_scroll_increment!=0. else 0.5
+        if throttle_mode==3 :
+            self._update_rate = 40 # ms (~25 Hz)
+            self._min_scroll_increment = min_scroll_increment if min_scroll_increment!=0. else 1.
+        if throttle_mode!=0 :
+            self._wheel_delta = 0
+            self._wheel_timer = QtCore.QTimer(self)
+            self._wheel_timer.setInterval(self._update_rate)
+            self._wheel_timer.timeout.connect(self._applyWheelZoom)
+
+    def wheelEvent(self, ev) :
+        if not self._throttle_mode :
+            super().wheelEvent(ev)
+        else :
+            delta = ev.angleDelta().y() or ev.pixelDelta().y()
+            self._wheel_delta += delta
+            self._mouse_pos = ev.position()
+            if not self._wheel_timer.isActive() :
+                self._wheel_timer.start()
+                self._stop_timer = False
+            ev.accept()
+
+    def _applyWheelZoom(self) :
+        if self._throttle_mode :
+            if self._stop_timer:
+                self._wheel_timer.stop()
+                return
+            
+            # Convert accumulated delta to a zoom factor
+            steps = self._wheel_delta / 60.0 #120.0
+            if abs(steps)>self._min_scroll_increment : # _min_scroll_increment = 0.5 to 1. reduces number of repaints while conserving a decent zooming experience
+                scale = 1.15**steps
+                
+                # to zoom in around where the mouse is pointing
+                vb = self.getViewBox()
+                mouse_point = vb.mapSceneToView(self._mouse_pos)
+                vb.scaleBy((1 / scale, 1 / scale), center=mouse_point)
+                #self.getViewBox().scaleBy((1 / scale, 1 / scale))
+                
+                self._wheel_delta = 0
+                
+            self._stop_timer = True
+
+
+class DragPlotWidget_special(ThrottledPlotWidget):
     """
     Same as DragPlotWidget but with selecatble elliptical and two different types of circular ROI.
     """
-    def __init__(self):
-        super().__init__()
+    def __init__(self, dpos_slider=True, throttle_mode=0):
+        super().__init__(throttle_mode=throttle_mode)
         self.scene().sigMouseMoved.connect(self.mouse_moved)
         self.view = self.getViewBox()
         self.view.setAspectLocked(True)
@@ -177,10 +235,13 @@ class DragPlotWidget_special(pg.PlotWidget):
         self.drawing2 = False
         self.drawing3 = False
         self.ranges_dict = get_light_model_ranges()
+        self.dpos_slider = dpos_slider
+        # This line because the many paint events can crash pyQt
+        #self._run_low_performance_settings()
         
     def initUI(self):
         self.timer = QTimer()
-        self.timer.setInterval(1) #Check every 10 ms
+        self.timer.setInterval(16) #Check every 16 ms
         self.timer.timeout.connect(self.checkLongPress)
 
     def mousePressEvent(self, event):
@@ -199,15 +260,8 @@ class DragPlotWidget_special(pg.PlotWidget):
             self.drawing3 = True
             
             # Add sliders to control light source parameters
-            params = ['amp', 'n_sersic']
-            for i, param in enumerate(params) : #, 'R_sersic'
-                min_range, max_range = self.ranges_dict[param][0], self.ranges_dict[param][1]
-                if not hasattr(self.last_roi, 'sliders') :
-                    self.last_roi.sliders = {param : TripleSlider(min_range, max_range, PlotWidget=self, label=param, roi=self.last_roi)}
-                else :
-                    offset = self.last_roi.sliders[params[i-1]].offset + self.last_roi.sliders[params[i-1]].bounding_height + self.last_roi.sliders[params[i-1]].offset_text
-                    self.last_roi.sliders[param] = TripleSlider(min_range, max_range, PlotWidget=self, label=param, roi=self.last_roi, offset=offset)
-                self.last_roi.sliders[param].setParentItem(self.last_roi)
+            params = ['amp', 'n_sersic']#, 'R_sersic']
+            attach_sliders(self, params)
         # 
         elif event.button() == Qt.LeftButton and event.modifiers() == Qt.AltModifier:
             print('Alt modifier function not yet implemented')
@@ -227,14 +281,7 @@ class DragPlotWidget_special(pg.PlotWidget):
             
             # Add sliders to control light source parameters
             params = ['amp', 'n_sersic']
-            for i, param in enumerate(params) : #, 'R_sersic'
-                min_range, max_range = self.ranges_dict[param][0], self.ranges_dict[param][1]
-                if not hasattr(self.last_roi, 'sliders') :
-                    self.last_roi.sliders = {param : TripleSlider(min_range, max_range, PlotWidget=self, label=param, roi=self.last_roi)}
-                else :
-                    offset = self.last_roi.sliders[params[i-1]].offset + self.last_roi.sliders[params[i-1]].bounding_height + self.last_roi.sliders[params[i-1]].offset_text
-                    self.last_roi.sliders[param] = TripleSlider(min_range, max_range, PlotWidget=self, label=param, roi=self.last_roi, offset=offset)
-                self.last_roi.sliders[param].setParentItem(self.last_roi)
+            attach_sliders(self, params)
         # Gaussian light source
         elif event.button() == Qt.LeftButton and event.modifiers() == Qt.ControlModifier:
             self.view.setMouseEnabled(x=False, y=False)
@@ -250,10 +297,8 @@ class DragPlotWidget_special(pg.PlotWidget):
             self.drawing2 = True
             
             # Add sliders to control light source parameters
-            param = 'amp'
-            min_range, max_range = self.ranges_dict[param][0], self.ranges_dict[param][1]
-            self.last_roi.sliders = {param : TripleSlider(min_range, max_range, PlotWidget=self, label=param, roi=self.last_roi)}
-            self.last_roi.sliders[param].setParentItem(self.last_roi)
+            params = ['amp']
+            attach_sliders(self, params)
         else:
             super().mousePressEvent(event) #Default PlotWidget behavior, so that the user is still able to move around by click & drag
 
@@ -317,6 +362,13 @@ class DragPlotWidget_special(pg.PlotWidget):
             new_corner_y = self.start_pos.y() - radius
             self.last_roi.setPos([new_corner_x, new_corner_y])
             self.last_roi.setSize([2*radius, 2*radius])
+    
+    #def _run_low_performance_settings(self) :
+    #    vb = self.getViewBox()
+    #    vb.setMouseEnabled(x=True, y=True)
+    #    vb.enableAutoRange(False)
+    #    pg.setConfigOptions(antialias=False)
+        
 
 
 class SelectableRectangleROI(pg.ROI):
@@ -388,7 +440,21 @@ class SelectableCircleROI(pg.CircleROI):
         else:
             super().mouseClickEvent(event)
 
-
+def attach_sliders(self, params) :
+    for i, param in enumerate(params) :
+        min_range, max_range = self.ranges_dict[param][0], self.ranges_dict[param][1]
+        if not hasattr(self.last_roi, 'sliders') :
+            self.last_roi.sliders = {param : TripleSlider(min_range, max_range, PlotWidget=self, label=param, roi=self.last_roi)}
+        else :
+            offset = self.last_roi.sliders[params[i-1]].offset + self.last_roi.sliders[params[i-1]].bounding_height + self.last_roi.sliders[params[i-1]].offset_text
+            self.last_roi.sliders[param] = TripleSlider(min_range, max_range, PlotWidget=self, label=param, roi=self.last_roi, offset=offset)
+        self.last_roi.sliders[param].setParentItem(self.last_roi)
+    if self.dpos_slider :
+        param = 'dpos'
+        min_range, max_range = self.ranges_dict[param][0], self.ranges_dict[param][1]
+        offset = self.last_roi.sliders[params[-1]].offset + self.last_roi.sliders[params[-1]].bounding_height + self.last_roi.sliders[params[-1]].offset_text
+        self.last_roi.sliders[param] = TripleSlider(min_range, max_range, PlotWidget=self, label=param, roi=self.last_roi, offset=offset)
+        self.last_roi.sliders[param].setParentItem(self.last_roi)
 
 
 

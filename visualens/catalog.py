@@ -432,6 +432,7 @@ class catalog :
     
     def export_to_potfile(self, file_path=None, units='pixel') :
         cat = self.cat[self.selection_mask] if True in self.selection_mask else self.cat
+        cat = cat.copy()
         
         if units=='pixel' :
             cat['a'] *= self.fits_image.pix_deg_scale*3600

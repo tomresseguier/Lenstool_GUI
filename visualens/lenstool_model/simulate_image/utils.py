@@ -25,7 +25,7 @@ def format_lm_local(models, kwargs) :
 
 
 def get_light_model_ranges() :
-    ranges = {'amp': [0, 100], 'n_sersic': [1, 10]}
+    ranges = {'amp': [0, 100], 'n_sersic': [1, 10], 'dpos': [-1e-6, 0.2]}
     return ranges
     
     
