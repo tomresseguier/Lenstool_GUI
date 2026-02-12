@@ -12,7 +12,6 @@ from reproject import reproject_interp
 #from astropy.visualization.wcsaxes import *
 from astropy.coordinates import SkyCoord
 from tqdm import tqdm
-from speclite import filters as specfilters
 
 import PyQt5
 from PyQt5.QtWidgets import QMainWindow, QSplitter
@@ -395,7 +394,7 @@ class fits_image :
         
 
 
-        
+
 
 class FilterImage(fits_image) :
     def __init__(self, image_path, main_window=None, plot_image=False) :
@@ -407,9 +406,7 @@ class FilterImage(fits_image) :
             self.psf = PSF(psf_path)
         else :
             self.psf = None
-
-    # ------------------ internal methods ------------------ #
-
+            
     def _get_filter_name(self):
         """Extract filter name from header or filename."""
         # Try header first
@@ -420,37 +417,25 @@ class FilterImage(fits_image) :
                     return val
 
         # Try filename
-        m = re.search(r'F\d{3,4}[WMN]*', os.path.basename(self.path).upper())
+        m = re.search(r'F\d{3,4}[WMN]*', os.path.basename(self.image_path).upper())
         if m:
             return m.group(0)
 
-        print(f"Could not determine filter name for {os.path.basename(self.path)}.")
+        print(f"Could not determine filter name for {os.path.basename(self.image_path)}.")
         return "UNKNOWN"
-
+    
     def _get_pivot_wavelength(self):
-        """Find pivot/effective wavelength using speclite or FITS header."""
         lam = None
         f_lower = self.filter.lower()
-
-        for prefix in ['jwst_nircam_', 'jwst_miri_', 'jwst_niriss_',
-                       'hst_acs_', 'hst_wfc3_', 'hst_wfpc2_']:
-            try:
-                fobj = specfilters.load_filter(prefix + f_lower)
-                lam = fobj.effective_wavelength.value
+        
+        for key in ['PHOTPLAM', 'PIVOTWL', 'WAVELENGTH']:
+            if key in self.header:
+                lam = self.header[key]
                 break
-            except Exception:
-                continue
-
-        # Fallback: header info
-        if lam is None:
-            for key in ['PHOTPLAM', 'PIVOTWL', 'WAVELENGTH']:
-                if key in self.header:
-                    lam = self.header[key]
-                    break
 
         if lam is None:
             lam = np.nan
-            print(f"Could not determine wavelength for {self.filter} ({self.path}).")
+            print(f"Could not determine wavelength for {self.filter} ({self.image_path}).")
 
         return lam
     
@@ -488,35 +473,14 @@ class FilterImage(fits_image) :
                 print(f"No PSF file found for filter {self.filter} in {psf_dir}.")
 
         return None
-        
-    # ------------------ user-facing methods ------------------ #
 
-    def plot_throughput(self):
-        """Plot the filter's transmission curve using speclite."""
-        f_lower = self.filter.lower()
-        for prefix in ['jwst_nircam_', 'jwst_miri_', 'jwst_niriss_',
-                       'hst_acs_', 'hst_wfc3_', 'hst_wfpc2_']:
-            try:
-                fobj = specfilters.load_filter(prefix + f_lower)
-                lam = fobj.wavelength.value
-                trans = fobj.throughput
-                plt.figure(figsize=(6, 4))
-                plt.plot(lam, trans, label=f"{self.filter}")
-                plt.xlabel("Wavelength [Å]")
-                plt.ylabel("Throughput")
-                plt.title(f"Filter Throughput: {self.filter}")
-                plt.grid(True, alpha=0.3)
-                plt.legend()
-                plt.tight_layout()
-                plt.show()
-                return
-            except Exception:
-                continue
 
-        print(f"Could not plot throughput for {self.filter} (not found in speclite).")
-        
-        
-        
+class PSF :
+    def __init__(self, psf_path) :
+        with fits.open(psf_path) as hdu :
+            self.data = hdu[0].data
+            self.wcs = WCS(hdu[0].header)
+            
 
 def load_filters(path):
     """
@@ -587,18 +551,6 @@ def load_filters(path):
     filters_list.sort(key=lambda f: np.inf if np.isnan(f.wavelength) else f.wavelength)
 
     return {f.filter: f for f in filters_list}
-
-
-
-
-
-
-class PSF :
-    def __init__(self, psf_path) :
-        with fits.open(psf_path) as hdu :
-            self.data = hdu[0].data
-            self.wcs = WCS(hdu[0].header)
-
 
 
 

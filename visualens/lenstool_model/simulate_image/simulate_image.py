@@ -233,16 +233,21 @@ class image_simulator :
             self.individual_filter.rms = np.std(self.individual_filter.image_data)
             if not hasattr(self.individual_filter, 'wcs') : # test if is instance of filter_lite instead of full filter class
                 fits_image.rms = self.individual_filter.rms
+        if 'EXPTIME' not in self.individual_filter.header :
+            print('\nCareful: EXPTIME not found in header. Using arbitrary value EXPTIME=1ks.')
+            exptime = 1000.
+        else :
+            exptime = self.individual_filter.header['EXPTIME']
         self.ImageData_kwargs = {'image_data': self.individual_filter.image_data[round(y0)-npix:round(y0),round(x0):round(x0)+npix],
                                 'background_rms': self.individual_filter.rms,
-                                'exposure_time': self.individual_filter.header['EXPTIME'],
+                                'exposure_time': exptime,
                                 'transform_pix2angle': transform_pix2angle,
                                 'ra_at_xy_0': -offset_arcsec,
                                 'dec_at_xy_0': -offset_arcsec}
         self.ImageData = ImageData(**self.ImageData_kwargs)
         
         #-------------- PSF --------------#
-        if hasattr(self.individual_filter, 'psf') :
+        if self.individual_filter.psf is not None :
             self.PSF_kwargs = {'psf_type': 'PIXEL',
                                             'kernel_point_source': self.individual_filter.psf.data,
                                             #'truncation': 35,
@@ -291,6 +296,7 @@ class filter_lite() :
     def __init__(self, image_data, exptime=1000.) :
         self.image_data = image_data
         self.header = {'EXPTIME': exptime}
+        self.psf = None
 
 
 #class SpecialWindow(QMainWindow):

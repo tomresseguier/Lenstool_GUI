@@ -1,0 +1,118 @@
+runmode
+	 reference 3 47.2332780 26.7604953
+	 inverse 3 0.5 200
+	 source 0
+	 mass 1 1000 0.356 convergence.fits
+	 mass 4 1000 0.356 mass.fits
+	 ampli 1 1000 6.2 magnification.fits
+	 image 1 MACS0308_mult_images.lenstool
+	 verbose 1
+	 restart 1 42568
+	 end
+image
+	 multfile 1 MACS0308_mult_images.lenstool
+	 forme -10
+	 z_m_limit 0 1.1   3 1.270 0 0
+	 z_m_limit 1 B1a B2a B3a B4a  1 1.7 2.7 0.01
+	 z_m_limit 1 3.1   1 1.4 2.8 0.01
+	 z_m_limit 0 D1a   3 6.200 0 0
+	 z_m_limit 1 6.1   1 2.0 5.0 0.01
+	 z_m_limit 0 7.2a  3 3.39 0 0
+	 z_m_limit 0 8.1   3 3.38 0 0
+	 z_m_limit 1 I1a I2a 1 1.2 3.2 0.01
+	 z_m_limit 1 10.1a 1 1.7 2.5 0.01
+	 z_m_limit 0 K1a K2a  3 3.29 0 0
+	 z_m_limit 0 12.1 1 5.56 0 0
+	 z_m_limit 1 13.1 1 6.0 7.8 0.01
+	 z_m_limit 1 14.1 1 1.7 2.65 0.01
+	 z_m_limit 1 15.1 1 4.8 8.6 0.01
+	 end
+grid
+	 nlens 143
+	 nlens_opt 3
+	 nlens_crit 143
+	 number 256
+	 end
+potentiel P01
+	 profile 81
+	 x_centre 0.0
+	 y_centre 0.0
+	 z_lens 0.356
+	 ellipticite 0.0
+	 angle_pos 0.0
+	 core_radius_kpc 30
+	 cut_radius_kpc 1500
+	 v_disp 600
+	 identity P01
+	 end
+limit P01
+	 x_centre 1 -12 12
+	 y_centre 1 -12 12
+	 angle_pos 1 0.0 180
+	 ellipticite 1 0 0.8 #0.01
+	 core_radius_kpc 1 0 200
+	 cut_radius_kpc 0 5000 5000
+	 v_disp 1 400 2000
+	 end
+potentiel G01
+	 profile 81
+	 x_centre 0
+	 y_centre 0
+	 z_lens 0.356
+	 ellipticite 0.193687
+	 angle_pos 67.5
+	 core_radius_kpc 0.15 #0.5
+	 cut_radius_kpc 50
+	 v_disp 200
+	 identity G01
+	 end
+limit G01
+	 x_centre 0 0 0
+	 y_centre 0 0 0
+	 angle_pos 0 67.5 67.5
+	 ellipticite 0 0.193687 0.193687
+	 #core_radius_kpc 1 0 50
+	 core_radius_kpc 0 0.15 0.15
+	 cut_radius_kpc 1 25 700
+	 v_disp 1 100 1000
+	end
+potentiel 2    ## external shear
+    profil      14
+    gamma        0.05
+    angle_pos   0.1
+    kappa        0.0
+    z_lens   0.356
+    end
+limit 2
+    gamma        1 0.0 0.5 0.1
+    angle_pos   1 0.0 180 0.1
+    end
+potfile
+	 filein 3 MACS0308_potfile.lenstool
+	 type 81
+	 zlens 0.356
+	 mag0 17.2
+	 sigma 1 1 200
+	 corekpc 0.15
+	 cutkpc 1 1 500
+	 slope 0 4. 4. #1 2.5 4.
+	 vdslope 0 4. 4.
+	 end
+field
+	 xmin -80.
+	 xmax 80.
+	 ymin -80.
+	 ymax 80.
+	 end
+cosmology
+	 H0 70.
+	 omega 0.3
+	 lambda 0.7
+	 end
+cline
+	 nplan 1 6.2
+     limitHigh   0.5
+     limitLow    0.100000
+     step 0.1
+	 end
+fini

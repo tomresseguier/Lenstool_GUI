@@ -4,13 +4,11 @@ from astropy.wcs import WCS
 import astropy.units as u
 from astropy import constants as astro_constants
 from astropy.coordinates import SkyCoord
-import stsynphot
 import matplotlib.pyplot as plt
 from .get_cosmology import get_cosmo
 cosmo = get_cosmo()
 
 
-#stsynphot.initialize()
 
 def rearrange_points(x, y) :
     """
@@ -52,86 +50,6 @@ def kpc_to_arcsec(separation_kpc, redshift) :
     separation_rad = separation_kpc * u.kpc / ang_diam_dist.to(u.kpc)
     arcsec = separation_rad * u.rad.to(u.arcsec)
     return arcsec
-
-
-def plot_bandpass(band_name='acs,wfc,f814w'):
-    bp = stsynphot.spectrum.ObsBandpass(band_name)
-    plt.figure(figsize=(7, 4))
-    plt.plot(bp.waveset.to('nm'), bp.throughput, color='blue', lw=2)
-    plt.title(f'HST Bandpass: {band_name}', fontsize=14, fontweight='bold')
-    plt.xlabel('Wavelength [nm]', fontsize=12)
-    plt.ylabel('Throughput', fontsize=12)
-    plt.ylim(0, 1.05)
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.show()
-
-
-def counts_to_muJy(electrons_per_second, photflam=None, photplam=None, photmjsr=None, pixel_area_arcsec2=None, band_name=None, return_magAB=False):
-    """
-    Converts counts (electrons/sec) to flux in µJy/arcsec^2 or AB magnitude.
-    Use either PHOTFLAM and PHOTPLAM (or band_name), or PHOTMJSR and pixel_area_arcsec2.
-    Parameters
-    ----------
-    electrons_per_second : float or numpy.ndarray
-        Count rate in electrons per second.
-    photflam : float, optional
-        Inverse sensitivity (erg/s/cm^2/A per e-/s).
-    photplam : float, optional
-        Pivot wavelength in Angstrom. Can be derived from band_name.
-    photmjsr : float, optional
-        Conversion factor from e-/s to MJy/sr.
-    pixel_area_arcsec2 : float, optional
-        Pixel area in arcsec^2.
-    band_name : str, optional
-        Filter name string understood by ObsBandpass, e.g.
-        'acs,wfc,f814w', 'wfc3,uvis1,f606w', 'wfc3,ir,f110w'.
-        Used to calculate photplam if photplam is not provided.
-    return_magAB : bool, optional
-        If True, return AB magnitude instead of flux in µJy/arcsec^2. Default is False.
-    Returns
-    -------
-    flux or magAB : float or numpy.ndarray
-        Flux in µJy/arcsec^2 or AB magnitude.
-    """
-    if band_name is not None and photplam is None:
-        photplam = get_photplam(band_name)
-
-    if photflam is not None and photplam is not None:
-        # Using PHOTFLAM
-        f_lambda = electrons_per_second * photflam # in erg/s/cm^2/A
-        f_nu = f_lambda * (photplam**2 / (astro_constants.c.to(u.AA/u.s).value)) # in erg/s/cm^2/Hz
-        flux_jy_per_pixel = f_nu * 1e23
-        
-        if pixel_area_arcsec2 is None:
-            raise ValueError("pixel_area_arcsec2 must be provided when using PHOTFLAM.")
-        flux_uJy_per_arcsec2 = (flux_jy_per_pixel * 1e6) / pixel_area_arcsec2
-
-        if return_magAB:
-            magAB = -2.5 * np.log10(flux_jy_per_pixel / 3631)
-            return magAB
-        else:
-            return flux_uJy_per_arcsec2
-
-    elif photmjsr is not None and pixel_area_arcsec2 is not None:
-        # Using PHOTMJSR
-        surf_bright_mjy_per_sr = electrons_per_second * photmjsr
-        flux_uJy_per_arcsec2 = surf_bright_mjy_per_sr * (u.MJy/u.sr).to(u.uJy/(u.arcsec**2))
-
-        if return_magAB:
-            pixel_area_sr = pixel_area_arcsec2 * (np.pi / (180.0 * 3600.0))**2
-            flux_mjy = surf_bright_mjy_per_sr * pixel_area_sr
-            flux_jy = flux_mjy * 1e6
-            magAB = -2.5 * np.log10(flux_jy / 3631)
-            return magAB
-        else:
-            return flux_uJy_per_arcsec2
-    else:
-        raise ValueError("Please provide either (photflam and photplam/band_name) or (photmjsr and pixel_area_arcsec2).")
-
-def get_photplam(band_name='acs,wfc,f814w'):
-    bp = stsynphot.spectrum.ObsBandpass(band_name)
-    return bp.pivot().value
 
 
 def flux_cgs_to_magAB(flux_cgs) :
@@ -201,5 +119,6 @@ def relative_to_world(xr, yr, reference) :
     dec = ref.dec.deg + yr*u.arcsec.to('deg')
     ra = ref.ra.deg - xr*u.arcsec.to('deg') / np.cos(dec*u.deg.to('rad'))
     return ra, dec
+
 
 

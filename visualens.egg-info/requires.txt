@@ -7,7 +7,5 @@ scipy>=1.7
 pandas>=1.4
 tqdm>=4.60
 corner>=2.2
-stsynphot>=0.3
 lenstronomy>=1.1
 reproject
-speclite

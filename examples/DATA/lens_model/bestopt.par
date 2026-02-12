@@ -1,0 +1,132 @@
+#Chi2tot: 471.235556
+#Chi2pos: 471.235556
+#Chi2_vel: 0.000000
+#Chi2_mass: 0.000000
+#Chi2formx: 0.000000
+#Chi2formy: 0.000000
+#Chi2l: 0.000000
+#log(Evidence): -262.441317
+runmode
+	reference     3 47.233278 26.760495
+	image     1 MACS0308_mult_images.lenstool
+	inverse   3 0.500000 200
+	mass      4 1000 0.356000 mass.fits
+	ampli	   1 1000 6.200000 magnification.fits
+	end
+image
+	multfile    19 MACS0308_mult_images.lenstool
+	form       -10
+	z_m_limit  1 B1a B2a B3a B4a 3 1.900820 0.056640 0.0100 
+	z_m_limit  2 3.1 3 2.051339 0.115790 0.0100 
+	z_m_limit  3 6.1 3 3.835225 0.310604 0.0100 
+	z_m_limit  4 I1a I2a 3 1.923982 0.036998 0.0100 
+	z_m_limit  5 10.1a 3 1.791522 0.067707 0.0100 
+	z_m_limit  6 13.1 3 7.646843 0.419920 0.0100 
+	z_m_limit  7 14.1 3 2.472662 0.133764 0.0100 
+	z_m_limit  8 15.1 3 5.369516 0.855033 0.0100 
+	sigposArcsec   0.200000
+	end
+grid
+	number      256
+	polar     0
+	nlens   143
+	nlens_opt   3
+	end
+source
+	z_source     0.800000
+	end
+potential O1
+	profile       81
+	x_centre     0.094500
+	y_centre     0.672356
+	ellipticity     0.093079
+	angle_pos       38.519866
+	core_radius_kpc     61.652565
+	cut_radius_kpc     1500.000000
+	v_disp     1108.421261
+	z_lens     0.3560
+	end
+limit O1
+	x_centre     3 0.058547 0.058547 0.000000
+	y_centre     3 0.739975 0.148698 0.000000
+	ellipticity     3 0.084021 0.021096 0.000000
+	angle_pos     3 35.223949 6.727415 0.000000
+	core_radius_kpc     3 62.998959 4.061357 0.000000
+	v_disp    3 1113.265251 21.808241 0.000000
+	end
+potential O2
+	profile       81
+	x_centre     0.000000
+	y_centre     0.000000
+	ellipticity     0.193687
+	angle_pos       67.500000
+	core_radius_kpc     0.150000
+	cut_radius_kpc     487.589023
+	v_disp     394.214532
+	z_lens     0.3560
+	end
+limit O2
+	cut_radius_kpc     3 386.211028 192.368506 0.000000
+	v_disp    3 400.403787 24.384179 0.000000
+	end
+potential O3
+	profile       14
+	gamma     0.1259
+	angle_pos     59.0446
+	kappa         0.0000
+	z_lens     0.3560
+	end
+limit O3
+	gamma     3 0.120899 0.009312 0.000000
+	angle_pos     3 58.903040 1.234303 0.100000
+	end
+potfile0
+	filein  3 MACS0308_potfile.lenstool
+	zlens   0.356000
+	type    81
+	corekpc 0.150000
+	mag0    17.200000
+	sigma   3 140.085541 6.289472
+	cutkpc  3 481.446891 44.840702
+	slope   0 4.000000 4.000000
+	vdslope 0 4.000000 4.000000
+	vdscatter 0 0.000000 0.000000
+	rcutscatter 0 0.000000 0.000000
+	end
+cline
+	nplan    1 6.200000 
+	dmax     0.000000
+	algorithm   MARCHINGSQUARES
+	limitHigh   0.5
+	limitLow    0.100000
+	end
+large
+	iso         0 0 1.000000 0.000000 0.000000
+	name        best
+	profile      0 0
+	contour     0 0
+	velocity    -1
+	large_dist  2.000000
+	end
+cosmology
+	model       1
+	H0         70.000000
+	omegaM     0.300000
+	omegaX     0.700000
+	omegaK     0.
+	wX         -1.000000
+	wa         0.000000
+	end
+cosmolimit
+	omegaM		0 0.000000 0.000000
+	omegaX		0 0.000000 0.000000
+	wX		0 0.000000 0.000000
+	wa 	0 0.000000 0.000000
+	end
+field
+	xmin     -80.000000
+	xmax     80.000000
+	ymin     -80.000000
+	ymax     80.000000
+	end
+finish
