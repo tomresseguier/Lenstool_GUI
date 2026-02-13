@@ -498,7 +498,36 @@ class catalog :
         else:
             print(f'No {which_cat}')
         return match_idx
+    
+    def export_to_LaTeX(self, columns=[]) :
+        if len(columns)==0 :
+            columns = self.cat.colnames
         
+        table_str = ("\\begin{deluxetable*}{l" + " c"*len(columns) + "}\n"
+                     "\\tablecaption{\\label{tab:}}\n"
+                     "\\tablewidth{\\columnwidth}\n"
+                     "\\tablehead{\n")
+        for col in columns :
+            table_str += f"\\colhead{{{col}}} &\n"
+            table_str = table_str[:-3] + "\n"
+        table_str += ("\\vspace{-0.07in}\\\\}\n"
+                      "\\startdata\n")
+        for src in self.cat :
+            for col in columns :
+                if type(src[col]) in [np.str_, str] :
+                    to_parse = src[col]
+                elif col in ['ra', 'dec'] :
+                    to_parse = f"{src[col]:#.8g}"
+                else :
+                    to_parse = f"{src[col]:.3g}"
+                table_str += to_parse + " &\n"
+            table_str = table_str[:-3] + "\n"
+        table_str += ("\\enddata\n"
+                      "\\tablecomments{}\n"
+                      "\\end{deluxetable*}")
+        print(table_str)
+        return table_str
+    
     #def export_thumbnails(self, mask=None, group_images=True) :
     #    if mask is None :
     #        mask = self.selection_mask
