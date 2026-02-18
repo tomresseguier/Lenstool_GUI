@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: visualens
-Version: 0.1.3
+Version: 0.1.5
 Summary: A visual interface to explore and manipulate astronomical images, catalogs, and lens models created using Lenstool.
 Author-email: Tom Resseguier <tresseg1@jhu.edu>
 Project-URL: Homepage, https://github.com/tomresseguier/Lenstool_GUI/
@@ -19,23 +19,34 @@ Requires-Dist: corner>=2.2
 Requires-Dist: lenstronomy>=1.1
 Requires-Dist: reproject
 
-# Lenstool GUI
+# visualens
 
-A visual interface to explore astronomical images, catalogs, and lens models created using Lenstool.
+### A visual, fast interface to explore and manipulate astronomical images, catalogs, and lens models created using Lenstool.
 
+`visualens` uses `PyQt` for fast handling of large astronomical images. Main lensing functionalities include:
+- Fast, easy-to-run lensing calculations using `Lenstool`'s engine,
+- Visual forward modeling based on `lenstronomy`.
 
+---
 
-Installation:
+### Installation:
 
-Many visualens functions rely on Lenstool, which is easy to install through conda (highly recommended).
-We also recommend installing lenstronomy through conda rather than pip, because of common issues with the llvmlite (required by lenstronomy) install through pip(1), although this should not be a problem if using an older version of python (<=3.11).
-If you use a certain IDE like Spyder and want to install it in your conda virtual environment, install it before visualens, as the other way around might result in conflicts between their PyQt requirements. The same may apply to other GUI, so make sure to install these first.
+Many `visualens` functions rely on `Lenstool`, which is easy to install through conda (highly recommended). We also recommend installing `lenstronomy` through conda rather than pip, before installing `visualens`.
 
->> conda create -n visualens_env -c conda-forge lenstool lenstronomy python==3.12.2
->> conda activate visualens_env
-## Install your favorite python GUI
->> pip install visualens
+Some IDEs like Spyder may cause conflicts with PyQt. We suggest installing your favorite IDE in your conda virtual environment before visualens.
 
+**Installation steps:**
 
-Notes:
-(1) Installing lenstronomy through pip, or not installing it prior to installing visualens, may result in building failure due to a lack of pip installable wheels for llvmlite
+> `conda create -n visualens_env -c conda-forge lenstool lenstronomy python==3.12.2`
+
+> `conda activate visualens_env`
+
+Install your favorite python GUI
+
+> `pip install visualens`
+
+---
+
+### Starting guide:
+
+https://github.com/tomresseguier/Lenstool_GUI/tree/main/examples

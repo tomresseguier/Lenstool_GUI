@@ -509,7 +509,7 @@ class catalog :
                      "\\tablehead{\n")
         for col in columns :
             table_str += f"\\colhead{{{col}}} &\n"
-            table_str = table_str[:-3] + "\n"
+        table_str = table_str[:-3] + "\n"
         table_str += ("\\vspace{-0.07in}\\\\}\n"
                       "\\startdata\n")
         for src in self.cat :
@@ -521,7 +521,7 @@ class catalog :
                 else :
                     to_parse = f"{src[col]:.3g}"
                 table_str += to_parse + " &\n"
-            table_str = table_str[:-3] + "\n"
+            table_str = table_str[:-3] + "\\\\\n"
         table_str += ("\\enddata\n"
                       "\\tablecomments{}\n"
                       "\\end{deluxetable*}")

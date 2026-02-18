@@ -511,18 +511,19 @@ class lenstool_model :
                     #npix = 11
                     npix = 2
                     mmap, wcs = self.lt.g_ampli(1, npix, z)
-                    #get_magnification = MakeFunctionFromMap(mmap, wcs)
-                    #mu_col[i] = get_magnification(cat['ra'][i], cat['dec'][i])
                     mu_col[i] = np.mean(mmap)
                     
-                    kappa, wcs = self.lt.g_mass(1, npix, self.z_lens, z)
-                    #get_convergence = MakeFunctionFromMap(kappa, wcs)
-                    #kappa_col[i] = get_convergence(cat['ra'][i], cat['dec'][i]) 
+                    #if False : # this crashes Lenstool if 
+                    try :
+                        kappa, wcs = self.lt.g_mass(1, npix, self.z_lens, z)
+                    except ZeroDivisionError :
+                        self.lt.set_field([xr-1., xr+1., yr-1., yr+1.])
+                        kappa, wcs = self.lt.g_mass(1, 3, self.z_lens, z)
+                        self.lt.set_field([xr-delta, xr+delta, yr-delta, yr+delta])
+                    
                     kappa_col[i] = np.mean(kappa)
                     
                     #shear, wcs = self.lt.g_ampli(6, npix, z)
-                    #get_shear = MakeFunctionFromMap(shear, wcs)
-                    #gamma_col[i] = get_shear(cat['ra'][i], cat['dec'][i])
                     #gamma_col[i] = np.mean(shear)
                     gamma_col[i] = ( (1-kappa_col[i])**2 - 1/mu_col[i] )**0.5
                     
