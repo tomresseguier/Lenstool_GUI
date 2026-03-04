@@ -1,6 +1,6 @@
 [project]
 name = "visualens"
-version = "0.1.5"
+version = "0.1.6"
 authors = [
   { name="Tom Resseguier", email="tresseg1@jhu.edu" },
 ]

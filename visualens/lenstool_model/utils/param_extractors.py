@@ -16,13 +16,87 @@ cosmo = get_cosmo()
 
 
 
+
+
+
+def parse_lenstool_parameter_file(path) :
+    def convert_token(tok):
+        """Try to convert to int or float; otherwise return string."""
+        try :
+            if '.' in tok or 'e' in tok.lower() :
+                return float(tok)
+            return int(tok)
+        except ValueError:
+            return tok
+
+    data = {}
+    current_section = None
+    current_subsection = None
+
+    with open(path, 'r') as f :
+        for line in f :
+            # Remove comments and whitespace
+            line = line.split('#')[0].strip()
+            if not line:
+                continue
+
+            tokens = line.split()
+
+            # END of current section
+            if tokens[0].lower() == 'end' :
+                current_section = None
+                current_subsection = None
+                continue
+
+            # New section begins
+            if current_section is None :
+                section = line if 'potentiel' not in line else line.replace("potentiel", "potential", 1)
+                current_section = section
+                data.setdefault(section, {})
+                current_subsection = None
+                continue
+
+            # Inside a section
+            key = tokens[0] if tokens[0]!='ellipticite' else 'ellipticity'
+            values = [convert_token(v) for v in tokens[1:]]
+
+            # Logic to handle target nesting
+            target = data[current_section]
+            if current_subsection is not None :
+                target = target[current_subsection]
+
+            if key in target :
+                # If it's already a list of lists, just append
+                if isinstance(target[key], list) and any(isinstance(i, list) for i in target[key]) :
+                    target[key].append(values)
+                else :
+                    # Convert existing single entry into a list of lists, then add the new one
+                    # We ensure 'values' is always treated as a list representing the line
+                    target[key] = [target[key] if isinstance(target[key], list) else [target[key]], values]
+            else :
+                # First time seeing this key: store values as a single entry
+                # If values has only 1 item, we store that item; otherwise the whole list
+                target[key] = values if len(values) > 1 else values[0]
+    return data
+
+
+
+
+
 def extract_main_pot_names(param_file_path) :
+    param_dict = parse_lenstool_parameter_file(param_file_path)
     pot_names = []
-    pattern = re.compile(r'^\s*potentiel\s+(\S+)', re.MULTILINE)
-    with open(param_file_path, 'r') as file:
-        content = file.read()
-    pot_names = pattern.findall(content)
+    for name in param_dict :
+        if 'potential' in name : #'potentiel' in name or 
+            pot_names.append(name)
+    #pot_names = []
+    #pattern = re.compile(r'^\s*potentiel\s+(\S+)', re.MULTILINE)
+    #with open(param_file_path, 'r') as file:
+    #    content = file.read()
+    #pot_names = pattern.findall(content)
     return pot_names
+
+
 
 ###############################################################################
 # Goes from bayes.dat file to dataFrame with all the parameters as columns and 
@@ -102,6 +176,7 @@ def make_table_dict_from_bayes(bayes_df) :
         correspondances['core_radius'] = 'rc'
         correspondances['cut_radius'] = 'rcut'
     correspondances['v_disp'] = 'sigma'
+    correspondances['gamma'] = 'gamma'
     
     pot_dict = {}
     for pot in pots :
@@ -131,20 +206,29 @@ def complete_pot_dict(param_file_path, convert_to_kpc=False, z=None) :
     bayes_file_path = os.path.join(model_dir, 'bayes.dat')
     bayes_df = read_bayes_file(bayes_file_path, convert_to_kpc=convert_to_kpc, z=z)
     final_pot_dict = make_table_dict_from_bayes(bayes_df)
-    param_file = pylenstool.lenstool_param_file(param_file_path)
+    #param_file = pylenstool.lenstool_param_file(param_file_path)
+    param_dict = parse_lenstool_parameter_file(param_file_path)
     pot_names_alt = extract_main_pot_names(param_file_path)
     
     for i, pot in enumerate(final_pot_dict.keys()) :
         if pot!='Pot0' :
             for j, value in enumerate(final_pot_dict[pot]['value']) :
                 if value=='...' :
-                    param_line = param_file.get_parameter('potentiel ' + pot_names_alt[i], final_pot_dict[pot]['name'][j])
-                    param_line_kpc = param_file.get_parameter('potentiel ' + pot_names_alt[i], final_pot_dict[pot]['name'][j] + '_kpc')
-                    if param_line!=0 :
-                        final_pot_dict[pot]['value'][j] = param_line[-1]
-                    if param_line_kpc!=0 :
+                    #if final_pot_dict[pot]['name'][j] = 'ellipticity' :
+                    if final_pot_dict[pot]['name'][j] in param_dict[pot_names_alt[i]] :
+                        param_value = param_dict[pot_names_alt[i]][final_pot_dict[pot]['name'][j]]
+                        final_pot_dict[pot]['value'][j] = str(param_value)
+                    if final_pot_dict[pot]['name'][j] + '_kpc' in param_dict[pot_names_alt[i]] :
                         final_pot_dict[pot]['name'][j] = final_pot_dict[pot]['name'][j] + '_kpc'
-                        final_pot_dict[pot]['value'][j] = param_line_kpc[-1]
+                        param_value_kpc = param_dict[pot_names_alt[i]][final_pot_dict[pot]['name'][j]]
+                        final_pot_dict[pot]['value'][j] = str(param_value_kpc)
+                    #param_line = param_file.get_parameter(pot_names_alt[i], final_pot_dict[pot]['name'][j])
+                    #param_line_kpc = param_file.get_parameter(pot_names_alt[i], final_pot_dict[pot]['name'][j] + '_kpc')
+                    #if param_line!=0 :
+                    #    final_pot_dict[pot]['value'][j] = param_line[-1]
+                    #if param_line_kpc!=0 :
+                    #    final_pot_dict[pot]['name'][j] = final_pot_dict[pot]['name'][j] + '_kpc'
+                    #    final_pot_dict[pot]['value'][j] = param_line_kpc[-1]
     return final_pot_dict
 
 ###############################################################################
@@ -169,7 +253,7 @@ def generate_latex_table(final_pot_dict, ref_coord=None) :
                     uncertainty_from_bayes = True
         
         
-        for name in ['x_centre', 'y_centre', 'ellipticity', 'angle_pos', 'core_radius_kpc', 'cut_radius_kpc', 'v_disp'] :
+        for name in ['x_centre', 'y_centre', 'ellipticity', 'angle_pos', 'core_radius_kpc', 'cut_radius_kpc', 'v_disp', 'gamma'] :
             i_array = np.where(df['name']==name)[0]
             if len(i_array)!=0 :
                 i = i_array[0]
@@ -227,9 +311,9 @@ def generate_latex_table(final_pot_dict, ref_coord=None) :
         
     table_str = ( "\\begin{table*}[htb!]\n"
                   "\\begin{center}\n"
-                  "    \\begin{tabular}{c c c c c c c c}\n"
+                  "    \\begin{tabular}{c c c c c c c c c}\n"
                   "        \\hline\\hline\n"
-                  "        Component & $\\Delta$ R.A. (\") & $\\Delta$ Dec (\") & ellipticity & $\\theta$ (deg) & $r_{\\rm core}$ (kpc) & $r_{\\rm cut}$ (kpc) & $\\sigma_0$ (km s$^{-1}$) \\\\\n"
+                  "        Component & $\\Delta$ R.A. (\") & $\\Delta$ Dec (\") & ellipticity & $\\theta$ (deg) & $r_{\\rm core}$ (kpc) & $r_{\\rm cut}$ (kpc) & $\\sigma_0$ (km s$^{-1}$) & $\\gamma$ \\\\\n"
                   "        \\hline\n" ) + \
                 "        " + "\n        ".join(table_rows) + "\n" + \
                 ( "        \\hline\n"
@@ -252,6 +336,25 @@ def make_param_latex_table(param_file_path, convert_to_kpc=True, z=None) :
     param_latex_table = os.path.join(model_dir, 'best_params.latex')
     open(param_latex_table, 'w').write(table_str)
     return table_str
+
+
+
+
+
+
+
+
+
+
+
+
+###############################################################################
+############# CHECK IF FOLLOWING FUNCTIONS ARE STILL USEFUL OR NOT ############
+# + remove pylenstool
+###############################################################################
+
+
+
 
 def find_ref(param_file_path) :
     with open(param_file_path, 'r') as text_file :
@@ -402,7 +505,7 @@ def get_main_pot_z(param_file_path) :
     pot_names = extract_main_pot_names(param_file_path)
     main_pot_z_dict = {}
     for pot_name in pot_names :
-        main_pot_z_dict[pot_name] = float(param_file.get_parameter('potentiel ' + pot_name, 'z_lens')[-1])
+        main_pot_z_dict[pot_name] = float(param_file.get_parameter(pot_name, 'z_lens')[-1])
     return main_pot_z_dict
 
 
@@ -445,7 +548,7 @@ def make_param_str(param_file_path) :
     
     # Add each potential
     for i, (pot_name, pot_df) in enumerate(final_pot_dict.items()) :
-        param_str += f"potential {pot_name}\n"
+        param_str += f"{pot_name}\n"
         param_str += "\tprofile       81\n"  # Assuming all are profile 81
         
         # Add each parameter
@@ -550,68 +653,6 @@ def get_lenstool_WCS(param_file_path) :
     return lenstool_WCS
 
 
-
-def parse_lenstool_parameter_file(path):
-    def convert_token(tok):
-        """Try to convert to int or float; otherwise return string."""
-        try:
-            if '.' in tok or 'e' in tok.lower():
-                return float(tok)
-            return int(tok)
-        except ValueError:
-            return tok
-
-    data = {}
-    current_section = None
-    current_subsection = None
-
-    with open(path, 'r') as f:
-        for line in f:
-            # Remove comments and whitespace
-            line = line.split('#')[0].strip()
-            if not line:
-                continue
-
-            tokens = line.split()
-
-            # END of current section
-            if tokens[0].lower() == 'end':
-                current_section = None
-                current_subsection = None
-                continue
-
-            # New section begins
-            if current_section is None:
-                section = line
-                current_section = section
-                data.setdefault(section, {})
-                current_subsection = None
-                continue
-
-            # Inside a section
-            key = tokens[0]
-            values = [convert_token(v) for v in tokens[1:]]
-
-            # Logic to handle target nesting
-            target = data[current_section]
-            if current_subsection is not None:
-                target = target[current_subsection]
-
-            # --- UPDATED LOGIC ---
-            if key in target:
-                # If it's already a list of lists, just append
-                if isinstance(target[key], list) and any(isinstance(i, list) for i in target[key]):
-                    target[key].append(values)
-                else:
-                    # Convert existing single entry into a list of lists, then add the new one
-                    # We ensure 'values' is always treated as a list representing the line
-                    target[key] = [target[key] if isinstance(target[key], list) else [target[key]], values]
-            else:
-                # First time seeing this key: store values as a single entry
-                # If values has only 1 item, we store that item; otherwise the whole list
-                target[key] = values if len(values) > 1 else values[0]
-                
-    return data
 
 
 

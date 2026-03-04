@@ -259,18 +259,18 @@ class fits_image :
         return 'Magnitudes calculated'
     
     
-    def make_catalog(self, cat, color=[1., 1., 0], mag_colnames=['magAB_F814W', 'magAB_F435W'], units=None) :
+    def make_catalog(self, cat, color=[1., 1., 0], units=None) :
         if self.qt_image is None :
             self.plot_image()
         #to_return = catalog(cat, self.image_data, self.wcs, self.qt_image, window=self.window, image_path=self.image_path, 
         #                            image_widget = self.image_widget, qt_layout=self.qt_layout, color=color, 
         #                            mag_colnames=mag_colnames, mpl_fig=self.fig, mpl_ax=self.ax, 
         #                            pix_deg_scale=self.pix_deg_scale, units=units)
-        to_return = catalog(cat, self, color=color, mag_colnames=mag_colnames, units=units)
+        to_return = catalog(cat, self, color=color, units=units)
         return to_return
     
-    def import_catalog(self, cat, color=None, mag_colnames=['magAB_F814W', 'magAB_F435W'], units='pixel') :
-        self.imported_cat = self.make_catalog(cat, color=color, mag_colnames=mag_colnames, units=units)
+    def import_catalog(self, cat, color=None, units='pixel') :
+        self.imported_cat = self.make_catalog(cat, color=color, units=units)
         self.imported_cat_list.append(self.imported_cat)
         
     ###########################################################################
@@ -480,7 +480,11 @@ class PSF :
         with fits.open(psf_path) as hdu :
             self.data = hdu[0].data
             self.wcs = WCS(hdu[0].header)
-            
+    
+    def plot(self) :
+        fig, ax = plt.subplots()
+        ax.imshow( np.log(self.data) , origin='lower')
+        
 
 def load_filters(path):
     """

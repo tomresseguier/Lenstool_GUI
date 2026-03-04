@@ -81,7 +81,7 @@ def start_im2source(self) :
                 self.transform_label.setText(f"({x:.2f}, {y:.2f}) → ({x_source:.2f}, {y_source:.2f})")
                 self.transform_label.setPos(x, y_flipped)
                 
-                self._last_transform_coords = {'x': x, 'y': y, 'x_source': x_source, 'y_source': y_source}
+                self._last_transform_coords = {'x': x, 'y': y, 'x_source': x_source, 'y_source': y_source, 'x_images': x_images, 'y_images': y_images}
             except Exception as e:
                 self.transform_label.setText(f"Error: {e}")
                 self.transform_label.setPos(x, y_flipped)
@@ -91,13 +91,19 @@ def start_im2source(self) :
     
     
     
-    self.doubleclick_image_marker = pg.ScatterPlotItem(size=12, symbol='s', brush='g', pen='g')
+    self.doubleclick_image_marker = pg.ScatterPlotItem(size=12, symbol='o', brush='b', pen='b')
     self.doubleclick_source_marker = pg.ScatterPlotItem(size=12, symbol='+', brush='r', pen='r')
+    self.doubleclick_images_marker = pg.ScatterPlotItem(size=12, symbol='x', brush='g', pen='g')
     self.fits_image.qt_image.addItem(self.doubleclick_image_marker)
     self.fits_image.qt_image.addItem(self.doubleclick_source_marker)
+    self.fits_image.qt_image.addItem(self.doubleclick_images_marker)
     
+    self.image_markers_x = []
+    self.image_markers_y = []
     self.source_markers_x = []
     self.source_markers_y = []
+    self.images_markers_x = []
+    self.images_markers_y = []
     
     def mouse_clicked(evt):
         if evt.double():
@@ -105,22 +111,32 @@ def start_im2source(self) :
                 coords = self._last_transform_coords
                 x, y = coords['x'], coords['y']
                 x_source, y_source = coords['x_source'], coords['y_source']
+                x_images, y_images = coords['x_images'], coords['y_images']
                 
+                y0 = self.fits_image.image_data.shape[0]
+                self.image_markers_x.append(x)
+                self.image_markers_y.append(y0 - y)
                 self.source_markers_x.append(x_source)
-                self.source_markers_y.append(self.fits_image.image_data.shape[0] - y_source)
+                self.source_markers_y.append(y0 - y_source)
+                self.images_markers_x += x_images
+                self.images_markers_y += [ y0 - y_im for y_im in y_images]
                 
-                self.doubleclick_image_marker.setData([x], [self.fits_image.image_data.shape[0] - y])
-                #self.doubleclick_source_marker.setData([x_source], [self.fits_image.image_data.shape[0] - y_source])
-                self.doubleclick_source_marker.setData(self.source_markers_x, self.source_markers_y)
+                self.doubleclick_image_marker.setData( self.image_markers_x, self.image_markers_y )
+                self.doubleclick_source_marker.setData( self.source_markers_x, self.source_markers_y )
+                self.doubleclick_images_marker.setData( self.images_markers_x, self.images_markers_y )
     self._doubleclick_connection = self.fits_image.qt_image.scene.sigMouseClicked.connect(mouse_clicked)
     
     
     def keyPressEvent(event):
         if event.key() == Qt.Key_Escape or event.key() == Qt.Key_Space :
             self.stop_im2source()
+            
+            self.fits_image.qt_image.keyPressEvent = self._original_keyPressEvent
+            #event.accept()
+            print('im2source stopped')
     
-    self._original_keyPressEvent = self.fits_image.window.keyPressEvent
-    self.fits_image.window.keyPressEvent = keyPressEvent
+    self._original_keyPressEvent = self.fits_image.qt_image.keyPressEvent
+    self.fits_image.qt_image.keyPressEvent = keyPressEvent
     
 def stop_im2source(self) :
     self.lt.set_grid(self._initial_ngrid_value, 0)
@@ -139,6 +155,9 @@ def stop_im2source(self) :
     if hasattr(self, 'doubleclick_source_marker'):
         self.fits_image.qt_image.removeItem(self.doubleclick_source_marker)
         del self.doubleclick_source_marker
+    if hasattr(self, 'doubleclick_images_marker'):
+        self.fits_image.qt_image.removeItem(self.doubleclick_images_marker)
+        del self.doubleclick_images_marker
     if hasattr(self, '_doubleclick_connection'):
         self.fits_image.qt_image.scene.sigMouseClicked.disconnect(self._doubleclick_connection)
         del self._doubleclick_connection

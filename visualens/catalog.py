@@ -85,12 +85,12 @@ def make_uniform_names_cat(cat, self) :
 
 def initialize_catalog(cat, self) :
     ##### Combine or just open the catalog #####
-    ref_path = None
+    path = None
     if isinstance(cat, str) :
-        ref_path = cat
+        path = cat
         cat = open_cat(cat)
     elif isinstance(cat, list) :
-        ref_path = os.path.dirname(cat[0])
+        path = os.path.dirname(cat[0])
         run_match(cat[0], cat[1])
         for i in range(len(cat)-3) :
             run_match('matched_A_B.fits', cat[i+2])
@@ -100,7 +100,7 @@ def initialize_catalog(cat, self) :
     
     ##### Standardize the column names #####
     uniform_names_cat = make_uniform_names_cat(cat, self)
-    return uniform_names_cat, ref_path
+    return uniform_names_cat, path
     
 
 
@@ -110,14 +110,14 @@ def initialize_catalog(cat, self) :
 
 
 class catalog :
-    def __init__(self, cat, fits_image, color=[0., 1., 1., 0., 0.5], mag_colnames=['magAB_F814W', 'magAB_F435W'], use_default_names=True, units=None) :
+    def __init__(self, cat, fits_image, color=[0., 1., 1., 0., 0.5], use_default_names=True, units=None) :
         self.fits_image = fits_image
         
-        self.mag_colnames = mag_colnames
+        self.xy_axes = None
         self.use_default_names = use_default_names
         self.units = units
         
-        self.cat, self.ref_path = initialize_catalog(cat, self)
+        self.cat, self.path = initialize_catalog(cat, self)
         self.qtItems = [] #np.empty(len(self.cat), dtype=PyQt5.QtWidgets.QGraphicsEllipseItem)
         #self.qtItems = [PyQt5.QtWidgets.QGraphicsEllipseItem() for _ in range(len(self.cat))]
         self.qtItems_column = [] #np.empty(len(self.cat), dtype=pg.TextItem)
@@ -133,20 +133,9 @@ class catalog :
         #self.is_plotted_column = False
     
     
-    def make_mask_naninf(self, xy_axes=None) :
-        #mag_F444W = flux_muJy_to_magAB(self.cat['f444w_tot_0'])
-        #mag_F090W = flux_muJy_to_magAB(self.cat['f090w_tot_0'])
-        #x_axis = mag_F444W
-        #y_axis = mag_F090W - mag_F444W
-        
-        if xy_axes is None :
-            mag_F814W = self.cat[self.mag_colnames[0]]
-            mag_F435W = self.cat[self.mag_colnames[1]]
-            x_axis = mag_F814W
-            y_axis = mag_F435W - mag_F814W
-        else :
-            x_axis = self.cat[xy_axes[0]]
-            y_axis = self.cat[xy_axes[1]]
+    def make_mask_naninf(self, xy_axes) :
+        x_axis = self.cat[xy_axes[0]]
+        y_axis = self.cat[xy_axes[1]]
         
         nan_mask = np.logical_not(np.isnan(x_axis)) & np.logical_not(np.isnan(y_axis))
         inf_mask = (x_axis!=np.inf) & (y_axis!=np.inf)
@@ -264,7 +253,16 @@ class catalog :
         return to_plot
     
     def make_selection_panel(self, xy_axes=None) :
-        self.make_mask_naninf(xy_axes=xy_axes)
+        if xy_axes is None :
+            xy_axes = []
+            xy_axes.append( input('select x axis among: ' + str(self.cat.colnames)) )
+            xy_axes.append( input('select y axis among: ' + str(self.cat.colnames)) )
+        else :
+            x_axis = self.cat[xy_axes[0]]
+            y_axis = self.cat[xy_axes[0]]
+        self.xy_axes = xy_axes
+        
+        self.make_mask_naninf(xy_axes)
         
         self.Scatter_widget = SelectableScatter(self)
         #self.Scatter_widget.setTitle('Red sequence')
@@ -304,12 +302,12 @@ class catalog :
         self.select_sources = SelectSources(self)
         
     def save_selection_mask(self, path=None) :
-        self.selection_mask_path = self.make_path(path, self.ref_path, 'selection_mask.npy')
+        self.selection_mask_path = self.make_path(path, self.path, 'selection_mask.npy')
         np.save(self.selection_mask_path, self.selection_mask)
         print("Selection mask saved at " + self.selection_mask_path)
         
     def load_selection_mask(self, path=None) :
-        self.selection_mask_path = self.make_path(path, self.ref_path, 'selection_mask.npy')
+        self.selection_mask_path = self.make_path(path, self.path, 'selection_mask.npy')
         self.selection_mask = np.load(self.selection_mask_path)
         
     def save_selection_regions(self, path=None) :
@@ -403,29 +401,41 @@ class catalog :
         
         header = "#REFERENCE 0\n## id   RA      Dec        a         b         theta     z         mag\n"
         
+        
+        theta_colname, z_colname, mag_colname = None, None, None
+        
+        # Check for theta column
         if 'THETA_WORLD' in sub_cat.colnames :
             theta_colname = 'THETA_WORLD'
-        elif 'theta' in sub_cat.colnames :
-            theta_colname = 'theta'
-            print("Using 'theta' column in exported catalog, make sure theta is relative to world coordinates and not image coordinates!!")
         else :
-            theta_colname = None
+            for name in sub_cat.colnames :
+                if 'theta' in name.lower() :
+                    theta_colname = name
+                    print(f"Using {theta_colname} column in exported catalog, make sure {theta_colname} is relative to world coordinates and not image coordinates!")
+                    break
+        
+        # Check for redshift colum
+        for name in ['z', 'z_spec', 'zspec', 'z_phot', 'zphot', 'zb', 'redshift'] :
+            colnames_lower = [name.lower() for name in sub_cat.colnames]
+            if name in colnames_lower :
+                z_colname = sub_cat.colnames[colnames_lower.index(name)]
+                break
+        
+        # Check for magnitude column
+        for name in sub_cat.colnames :
+            if 'mag' in name.lower() :
+                mag_colname = name
+                break
         
         with open(file_path, 'w') as f :
             f.write(header)
             for index, row in enumerate(sub_cat) :
-                if theta_colname is not None :
-                    if 'zb' in sub_cat.colnames and 'f814w_mag' in sub_cat.colnames :
-                        line = (f"{row['id']:<3}  {row['ra']:10.6f}  {row['dec']:10.6f}  "
-                                f"{row['a']:8.6f}  {row['b']:8.6f}  {row[theta_colname]:8.6f}  "
-                                f"{row['zb']:8.6f}  {row['f814w_mag']:8.6f}\n")
-                    else :
-                        line = (f"{row['id']:<3}  {row['ra']:10.6f}  {row['dec']:10.6f}  "
-                                f"{row['a']:8.6f}  {row['b']:8.6f}  {row[theta_colname]:8.6f}  "
-                                "0.0  0.0\n")
-                else :
-                    line = (f"{row['id']:<3}  {row['ra']:10.6f}  {row['dec']:10.6f}  "
-                            "0.0  0.0  0.0  0.0  0.0\n")
+                theta = row[theta_colname] if theta_colname is not None else 0.0
+                z = row[z_colname] if z_colname is not None else 0.0
+                mag = row[mag_colname] if mag_colname is not None else 0.0
+                line = (f"{row['id']:<3}  {row['ra']:10.6f}  {row['dec']:10.6f}  "
+                        f"{row['a']:8.6f}  {row['b']:8.6f}  {theta:8.6f}  "
+                        f"{z:8.6f}  {mag:8.6f}\n")
                 f.write(line)
         print('Selected sources exported at ' + file_path)
                 
@@ -446,21 +456,27 @@ class catalog :
             if units!='arcsec' :
                 print("Units not recognized, exporting as is")
         
-        mag_col = self.mag_colnames[0] if self.mag_colnames[0] in cat.colnames else 'mag'
-        print(f"Using '{mag_col}' as mag column")
-        sort_array = np.argsort(cat[mag_col])
-        sorted_cat = cat[sort_array]
+        mag_col = self.xy_axes[0] if self.xy_axes is not None else input('select magnitude column to be used in Lenstool potfile (press return directly to just populate with zeros): ' + str(self.cat.colnames))
+        if mag_col in self.cat.colnames :
+            print(f"Using '{mag_col}' as mag column")
+            sort_array = np.argsort(cat[mag_col])
+            sorted_cat = cat[sort_array]
+        else :
+            mag_col = None
+            print("No valid column selected. Creating potfile without magnitude information.")
+            sorted_cat = cat.copy()
         
         lines = []
         lines.append('#REFERENCE 0\n')
         lines.append('## id   RA   Dec        a        b        theta     mag       lum\n')
         
         for i, galaxy in enumerate(sorted_cat) :
-            lines.append( '%d %f %f %f %f %f %f 0.\n' % (i+1, galaxy['ra'], galaxy['dec'], galaxy['a'], galaxy['b'], galaxy['theta']-self.fits_image.orientation, galaxy[mag_col]) )
+            mag = galaxy[mag_col] if mag_col is not None else 0.0
+            lines.append( '%d %f %f %f %f %f %f 0.\n' % (i+1, galaxy['ra'], galaxy['dec'], galaxy['a'], galaxy['b'], galaxy['theta']-self.fits_image.orientation, mag) )
         
         if file_path is None :
-            if self.ref_path is not None :
-                file_path = os.path.join( os.path.dirname(self.ref_path), 'exported_potfile.lenstool')
+            if self.path is not None :
+                file_path = os.path.join( os.path.dirname(self.path), 'exported_potfile.lenstool')
             else :
                 file_path = os.path.join( os.path.dirname(self.fits_image.image_path), 'exported_potfile.lenstool')
         print('Exporting selected sources to ' + file_path)
@@ -488,7 +504,7 @@ class catalog :
     
         if source_cat is not None:
             if col_to_transfer in source_cat.cat.colnames:
-                temp_cat, match_idx = match_cat2([self.cat, source_cat.cat], keep_all_col=True, fill_in_value=-1.0, return_match_idx=True)
+                temp_cat, match_idx = match_cat2([self.cat, source_cat.cat], keep_all_col=True, return_match_idx=True) #, fill_in_value=-1.0
                 if col_to_transfer in self.cat.colnames:
                     col_to_transfer = col_to_transfer + '_CAT2'
                 self.cat[col_to_transfer] = temp_cat[col_to_transfer]

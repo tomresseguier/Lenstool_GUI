@@ -2,6 +2,7 @@ import os
 import numpy as np
 from astropy.io import fits
 from astropy.wcs import WCS
+#import time
 
 
 def open_image(image_path) :
@@ -58,7 +59,12 @@ def open_image(image_path) :
                 data_red = selected_hdus[0].data
                 data_green = selected_hdus[1].data
                 data_blue = selected_hdus[2].data
-                image = np.dstack((data_red, data_green, data_blue))
+                
+                #start1 = time.thread_time()
+                #start2 = time.perf_counter()
+                image = np.stack((data_red, data_green, data_blue), axis=2)
+                #print(time.thread_time()-start1)
+                #print(time.perf_counter()-start2)
             else :
                 print("Using first hdu.")
                 image = selected_hdus[0].data

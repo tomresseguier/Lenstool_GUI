@@ -231,6 +231,7 @@ class image_simulator :
         if not hasattr(self.individual_filter, 'rms') :
             print('Calculating RMS...')
             self.individual_filter.rms = np.std(self.individual_filter.image_data)
+            print('done: ' + str(self.individual_filter.rms))
             if not hasattr(self.individual_filter, 'wcs') : # test if is instance of filter_lite instead of full filter class
                 fits_image.rms = self.individual_filter.rms
         if 'EXPTIME' not in self.individual_filter.header :

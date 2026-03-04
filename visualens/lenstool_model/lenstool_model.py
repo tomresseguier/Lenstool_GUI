@@ -35,6 +35,7 @@ from .im2source import start_im2source, stop_im2source
 from .utils.operations import MakeFunctionFromMap
 from .utils.utils_general import import_multiple_images, export_thumbnails, get_lenstool_file_path, import_lenstool_files
 from .utils.param_extractors import read_potfile, make_best_file_from_bayes, make_param_latex_table, read_bayes_file, parse_lenstool_parameter_file
+from ..utils.utils_Qt.utils_general import transform_rectangle
 
 from .utils.file_makers import best_files_maker, make_magnifications_and_curves                  # This import is problematic. The two functions run Lenstool
                                                                                                  # and are therefore dependent on my own install.
@@ -435,7 +436,8 @@ class lenstool_model :
         ######## Displacement maps ########
         if self.lt_z not in self.dpl_maps.keys() or recompute :
             self.compute_lt_dpl()
-        self.dx_map, self.dy_map, self.dmap_wcs = self.dpl_maps[self.lt_z]
+        else :
+            self.dx_map, self.dy_map, self.dmap_wcs = self.dpl_maps[self.lt_z]
         
         mmap, wcs = self.lt_magnification_maps[z]
         self.get_magnification = MakeFunctionFromMap(mmap, wcs)
@@ -445,6 +447,7 @@ class lenstool_model :
             z = self.lt_z
         print('Computing displacement maps (can take a little while)...')
         self.dpl_maps[self.lt_z] = self.lt.g_dpl(npix, z)
+        self.dx_map, self.dy_map, self.dmap_wcs = self.dpl_maps[self.lt_z]
         print('done')
         with open(self.dpl_maps_path, 'wb') as f:
             pickle.dump(self.dpl_maps, f)
@@ -759,18 +762,25 @@ class lenstool_model :
                         end = WCS.world_to_pixel(self.magnification_wcs, self.magnification_temp_SkyCoords[1])
                         self.magnification_line_end = (end[0]*1., end[1]*1.)
                         self.magnification_line = extract_line( self.magnification_line_start, self.magnification_line_end, self.magnification_map )
-                        magnification_wcs = self.lt_magnification_maps[self.lt_z][1]
+                        magnification_wcs = self.magnification_wcs
                         cd = magnification_wcs.wcs.cdelt[np.newaxis, :] * magnification_wcs.wcs.pc
                         deg_per_pix = np.sqrt((cd**2).sum(axis=0))[0]
                         self.magnification_line[0] = np.array(self.magnification_line[0]) * deg_per_pix * 3600 #x axis in arcsec
-                        if self.magnification_line_ax==None :
+                        if True : #self.magnification_line_ax==None :
+                            self.magnification_line_distances = []
+                            
+                            plt.close()
                             print('Creating new magnification plot')
                             self.magnification_line_fig, self.magnification_line_ax = plt.subplots()
                             self.magnification_line_ax.set_yscale('log')
+                            
+                            #self.magnification_line_ax_xlim = self.magnification_line_ax.get_xlim()
+                            #self.magnification_line_ax_ylim = self.magnification_line_ax.get_ylim()
+                            
                         self.magnification_line_ax.clear()
                         self.magnification_line_ax.plot(self.magnification_line[0], np.abs(self.magnification_line[1]))
                         #self.magnification_line_fig.show()
-            if evt.button()==PyQt5.QtCore.Qt.MiddleButton :
+            elif evt.button()==PyQt5.QtCore.Qt.MiddleButton :
                 pos = evt.scenePos()
                 print(pos)
                 mouse_point = self.fits_image.qt_image.getView().mapSceneToView(pos)
@@ -781,8 +791,22 @@ class lenstool_model :
                 self.source_magnification_marker.setData(self.magnification_source_markers_x, self.magnification_source_markers_y)
                 
                 distance = ( (self.magnification_markers_x[0] - x)**2 + (self.magnification_markers_y[0] - y_flipped)**2 )**0.5 * self.fits_image.pix_deg_scale*3600 #in arcsec
-                print("self.magnification_line_ax", self.magnification_line_ax)
-                self.magnification_line_ax.plot(np.full(10, distance), np.linspace(0, np.max(self.magnification_line[1]), 10), ls='--', c='grey')
+                self.magnification_line_distances.append(distance)
+                
+                if True : # remove this when plot update available
+                    plt.close()
+                    print('Creating new magnification plot')
+                    self.magnification_line_fig, self.magnification_line_ax = plt.subplots()
+                    self.magnification_line_ax.set_yscale('log')
+                    self.magnification_line_ax.plot(self.magnification_line[0], np.abs(self.magnification_line[1]))
+                    
+                    #self.magnification_line_ax_xlim = self.magnification_line_ax.get_xlim()
+                    #self.magnification_line_ax_ylim = self.magnification_line_ax.get_ylim()
+                    self.magnification_line_ax.set_xlim(self.magnification_line_ax.get_xlim())
+                    self.magnification_line_ax.set_ylim(self.magnification_line_ax.get_ylim())
+                
+                for distance in self.magnification_line_distances :
+                    self.magnification_line_ax.plot(np.full(10, distance), np.linspace(0, np.max(self.magnification_line[1]), 10), ls='--', c='grey')
                 
                 
         
@@ -801,11 +825,11 @@ class lenstool_model :
                     self.fits_image.qt_image.scene.sigMouseClicked.disconnect(self._doubleclick_connection)
                     del self._doubleclick_connection
                 self.magnification_temp_SkyCoords = []
-                self.fits_image.window.keyPressEvent = self._original_keyPressEvent
+                self.fits_image.qt_image.keyPressEvent = self._original_keyPressEvent
                 print('Magnification line extraction stopped.')
         
-        self._original_keyPressEvent = self.fits_image.window.keyPressEvent
-        self.fits_image.window.keyPressEvent = keyPressEvent
+        self._original_keyPressEvent = self.fits_image.qt_image.keyPressEvent
+        self.fits_image.qt_image.keyPressEvent = keyPressEvent
     
     
     def send_to_source_plane(self) :
@@ -814,15 +838,48 @@ class lenstool_model :
             row['x'], row['y'] = self.fits_image.world_to_image(row['ra'], row['dec'])
     
     
-    
-    
-    
-    
     def start_simulate_image(self, which_filter=None, throttle_mode=0) :
         self.imsim = image_simulator(self.fits_image, which_filter=which_filter, throttle_mode=throttle_mode)
-    
         
     
+    def compute_mass_map(self, z=None, npix=1000) :
+        z = self.lt_z if z is None else z
+        self.mass_map, self.mass_map_wcs = self.lt.g_mass(1, npix, self.z_lens, z)
+        fig, ax = plt.subplots()
+        ax.imshow(np.arctan(self.mass_map), origin='lower')
+    
+    def compute_magnification_map(self, z=None, npix=1000) :
+        z = self.lt_z if z is None else z
+        self.magnification_map, self.magnification_wcs = self.lt.g_ampli(1, npix, z)
+        fig, ax = plt.subplots()
+        ax.imshow(np.arctan(np.abs(self.magnification_map)), origin='lower')
+    
+    
+    def set_field(self) :
+        # Careful, this function only works when the ROI is flat and image in world frame
+        
+        self.ROI = self.fits_image.image_widget.current_ROI
+        x0 = self.ROI.getState()['pos'][0]
+        y0 = self.ROI.getState()['pos'][1]
+        a = self.ROI.getState()['size'][0]
+        b = self.ROI.getState()['size'][1]
+        angle = self.ROI.getState()['angle'] *np.pi/180
+        
+        x0, y0, a, b, angle = transform_rectangle(x0, y0, a, b, angle) #x0, y0 at the top left
+        size_y = self.fits_image.image_data.shape[0]
+        y0 = size_y-y0 #Counting pixels from bottom instead of top
+        
+        ra_left, dec_top = self.fits_image.image_to_world(x0, y0)
+        ra_right, dec_bottom = self.fits_image.image_to_world(x0 + a, y0 - b)
+        
+        xr_left, yr_top = self.world_to_relative(ra_left, dec_top)
+        xr_right, yr_bottom = self.world_to_relative(ra_right, dec_bottom)
+        
+        self._previous_field = self.lt.get_field([])
+        self.lt.set_field([xr_left, xr_right, yr_bottom, yr_top])
+        
+
+
 
 
 

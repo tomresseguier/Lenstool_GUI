@@ -35,8 +35,8 @@ class SelectableEllipse(QGraphicsEllipseItem) :
 
     def mousePressEvent(self, event: QGraphicsSceneMouseEvent):
         if event.button() == Qt.LeftButton:
-            print(f"Object {self.idx} selected")
             self.is_selected = not self.is_selected
+            print(f"Object {self.idx} selected") if self.is_selected else print(f"Object {self.idx} deselected")
             
             self.selection_mask[self.idx] = not self.selection_mask[self.idx]
             if self.is_selected :

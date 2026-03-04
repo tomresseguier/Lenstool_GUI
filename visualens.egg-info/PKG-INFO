@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: visualens
-Version: 0.1.5
+Version: 0.1.6
 Summary: A visual interface to explore and manipulate astronomical images, catalogs, and lens models created using Lenstool.
 Author-email: Tom Resseguier <tresseg1@jhu.edu>
 Project-URL: Homepage, https://github.com/tomresseguier/Lenstool_GUI/

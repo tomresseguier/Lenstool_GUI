@@ -71,7 +71,7 @@ def match_cat2(cats, match_radius=0.5, fill_in_value=np.nan, return_match_idx=Fa
         else :
             fill_in_value_matched_type = fill_in_value
         if colname not in matched_cat.colnames:
-            print(f'Adding column: {colname}')
+            #print(f'Adding column: {colname}')
             if col_type == np.ndarray :
                 matched_cat[colname] = [np.full(len(cat_giver[colname][0]), fill_in_value_matched_type) for i in range(len(matched_cat))] #np.full(len(matched_cat), np.full(len(cat_giver[colname][0]), fill_in_value))
             else :
@@ -79,7 +79,7 @@ def match_cat2(cats, match_radius=0.5, fill_in_value=np.nan, return_match_idx=Fa
             matched_cat[colname][match_mask] = cat_giver[colname][idx[match_mask]]
         elif keep_all_col:
             new_colname = f"{colname}_CAT2"
-            print(f'Adding column: {new_colname}')
+            #print(f'Adding column: {new_colname}')
             if col_type == np.ndarray :
                 matched_cat[new_colname] = [np.full(len(cat_giver[colname][0]), fill_in_value_matched_type) for i in range(len(matched_cat))] #np.full(len(matched_cat), np.full(len(cat_giver[colname][0]), fill_in_value))
             else :

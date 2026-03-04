@@ -1,0 +1,16 @@
+\begin{table*}[htb!]
+\begin{center}
+    \begin{tabular}{c c c c c c c c c}
+        \hline\hline
+        Component & $\Delta$ R.A. (") & $\Delta$ Dec (") & ellipticity & $\theta$ (deg) & $r_{\rm core}$ (kpc) & $r_{\rm cut}$ (kpc) & $\sigma_0$ (km s$^{-1}$) & $\gamma$ \\
+        \hline
+        O1 & $0.06^{+0.06}_{-0.06}$ & $0.74^{+0.05}_{-0.05}$ & $0.084^{+0.007}_{-0.007}$ & $35^{+2}_{-2}$ & $63^{+1}_{-1}$ & ... & $1113^{+8}_{-7}$ & ... \\
+        O2 & ... & ... & ... & ... & ... & $386^{+75}_{-50}$ & $400^{+7}_{-9}$ & ... \\
+        O3 & ... & ... & ... & $58.9^{+0.4}_{-0.4}$ & ... & ... & ... & $0.121^{+0.003}_{-0.003}$ \\
+        Pot0 & ... & ... & ... & ... & ... & $485^{+11}_{-18}$ & $141^{+2}_{-2}$ & ... \\
+        \hline
+    \end{tabular}
+    \caption{Parameters of the lens model.}
+    \label{tab:SL_params}
+\end{center}
+\end{table*}
