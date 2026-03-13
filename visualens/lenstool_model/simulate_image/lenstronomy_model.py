@@ -4,19 +4,25 @@ import matplotlib.pyplot as plt
 import pickle
 import copy
 from lenstronomy.Plots.model_plot import ModelPlot
+from lenstronomy.Plots import chain_plot
 
 from ...utils.utils_astro.utils_general import world_to_relative, relative_to_world
 from ...utils.utils_Qt.drag_widgets import SelectableCircleROI, SelectableEllipseROI, attach_sliders
 from ...utils.utils_Qt.sliders import TripleSlider
+from ...utils.utils_Qt.utils_general import transform_ROI_params_inverse, make_handles
 
 
 
 class lenstronomy_model :
-    def __init__(self, lm_dict_or_str, imsim) :
+    def __init__(self, lm_dict_or_str, imsim, chain_list=None) :
         # lm is a dictionary containing the parameters of a source model, either in local or world coordinates.
         self.imsim = imsim
+        self.chain_list = chain_list
         if type(lm_dict_or_str)==str :
             lm_dict_or_str = self.load_lm(path=lm_dict_or_str)
+        if 'chain_list' in lm_dict_or_str :
+            self.chain_list = lm_dict_or_str['chain_list']
+            del lm_dict_or_str['chain_list']
         if 'lens_model_list' in lm_dict_or_str['models'] :
             self.local = lm_dict_or_str
             self.world = self.to_world()
@@ -55,7 +61,12 @@ class lenstronomy_model :
             
             f3, a3 = plt.subplots()
             a3.imshow( np.exp(source_array), vmax=0.06, origin="lower", cmap='gray' )
-            
+        
+        
+        if self.chain_list is not None :
+            for i in range(len(self.chain_list)):
+                chain_plot.plot_chain_list(self.chain_list, 0)
+        
         #return ax, source_array
         return source_array
         
@@ -118,15 +129,27 @@ class lenstronomy_model :
         
         #full_model = join_lenstronomy_model(existing_model, formatted_model)
         
+        path = make_model_path(path)
+        
+        to_write = self.world.copy()
+        
+        if self.chain_list is not None :
+            to_write['chain_list'] = self.chain_list
+        
         with open(path, 'wb') as file :
-            pickle.dump(self.world, file)
+            pickle.dump(to_write, file)
         print('Model saved at ' + path)
 
 
     def load_lm(self, path='./lenstronomy_model.pkl') :
+        path = make_model_path(path)
+        if os.path.exists(path) :
+            print('Source model found at: ' + path)
+        
         with open(path, 'rb') as file :
             imported_model_world = pickle.load(file)
         
+        # For backward compatibility
         if 'results' in imported_model_world :
             imported_model_world['kwargs'] = copy.deepcopy(imported_model_world['results'])
             del imported_model_world['results']
@@ -154,33 +177,45 @@ class lenstronomy_model :
                 x_corner = x - R_sersic
                 y_corner = y - R_sersic
                 
-                PlotWidget.last_roi = SelectableCircleROI([x_corner, y_corner], PlotWidget=PlotWidget, radius=R_sersic, pen='b', invertible=True)
+                PlotWidget.last_roi = SelectableCircleROI([x_corner, y_corner], radius=R_sersic, pen='b', invertible=True)
                 PlotWidget.last_roi.type = 3
+                PlotWidget.last_roi.type_str = 'SERSIC'
                 PlotWidget.roi_list.append(PlotWidget.last_roi)
-                #for handle in PlotWidget.last_roi.handles:
-                #    PlotWidget.last_roi.removeHandle(handle['item'])
+                for handle in PlotWidget.last_roi.handles:
+                    PlotWidget.last_roi.removeHandle(handle['item'])
                 PlotWidget.addItem(PlotWidget.last_roi)
-                                
+                
+                PlotWidget.last_roi.addScaleHandle([0.5+2**-1.5, 0.5+2**-1.5], [0.5, 0.5])
+                
                 # Add sliders to control light source parameters
                 params = ['amp', 'n_sersic']#, 'R_sersic']
                 attach_sliders(PlotWidget, params)
                 
             if model=='SERSIC_ELLIPSE' :
                 kwargs = self.local['kwargs']['kwargs_source'][i]
-                x = kwargs['center_x'] - self.imsim.source_center_coordinates[0]
-                y = kwargs['center_y'] - self.imsim.source_center_coordinates[1]
+                x_center = kwargs['center_x'] - self.imsim.source_center_coordinates[0]
+                y_center = kwargs['center_y'] - self.imsim.source_center_coordinates[1]
                 R_sersic = kwargs['R_sersic']
                 e1, e2 = kwargs['e1'], kwargs['e2']
-                x_corner = x - R_sersic # check if this works with ellipticity...
-                y_corner = y - R_sersic
                 
-                PlotWidget.last_roi = SelectableEllipseROI([x_corner, y_corner], [e1, e2], PlotWidget=PlotWidget, radius=R_sersic, pen='r', invertible=True)
+                e = (e1**2 + e2**2)**0.5
+                q = (1-e) / (1+e)
+                a = 2*R_sersic / (1+q)
+                b = a*q
+                theta = 0.5*np.arctan(e2/e1)
+                
+                x_corner, y_corner, a, b, angle = transform_ROI_params_inverse(x_center, y_center, a, b, theta)
+                
+                PlotWidget.last_roi = SelectableEllipseROI([x_corner, y_corner], [a, b], angle=angle, pen='r', invertible=True)
                 PlotWidget.last_roi.type = 1
+                PlotWidget.last_roi.type_str = 'SERSIC_ELLIPSE'
                 PlotWidget.roi_list.append(PlotWidget.last_roi)
-                #for handle in PlotWidget.last_roi.handles:
-                #    PlotWidget.last_roi.removeHandle(handle['item'])
+                for handle in PlotWidget.last_roi.handles:
+                    PlotWidget.last_roi.removeHandle(handle['item'])
                 PlotWidget.addItem(PlotWidget.last_roi)
-                                
+                
+                make_handles(PlotWidget.last_roi)
+                
                 # Add sliders to control light source parameters
                 params = ['amp', 'n_sersic']
                 attach_sliders(PlotWidget, params)
@@ -193,16 +228,29 @@ class lenstronomy_model :
                 x_corner = x - sigma
                 y_corner = y - sigma
                 
-                PlotWidget.last_roi = SelectableCircleROI([x_corner, y_corner], PlotWidget=PlotWidget, radius=sigma, pen='g', invertible=True)
+                PlotWidget.last_roi = SelectableCircleROI([x_corner, y_corner], radius=sigma, pen='g', invertible=True)
                 PlotWidget.last_roi.type = 2
+                PlotWidget.last_roi.type_str = 'GAUSSIAN'
                 PlotWidget.roi_list.append(PlotWidget.last_roi)
-                #for handle in PlotWidget.last_roi.handles:
-                #    PlotWidget.last_roi.removeHandle(handle['item'])
+                for handle in PlotWidget.last_roi.handles:
+                    PlotWidget.last_roi.removeHandle(handle['item'])
                 PlotWidget.addItem(PlotWidget.last_roi)
-                                
+                
+                PlotWidget.last_roi.addScaleHandle([0.5+2**-1.5, 0.5+2**-1.5], [0.5, 0.5])
+                
                 # Add sliders to control light source parameters
                 params = ['amp']
                 attach_sliders(PlotWidget, params)
-                    
-                    
-                    
+                
+                
+
+
+
+
+def make_model_path(path) :
+    if not os.path.isdir( os.path.dirname(path) ) :
+        path = os.path.join('./', path)
+        extension = '.pkl'
+        if not extension in path :
+            path += extension
+    return path

@@ -9,21 +9,27 @@ import numpy as np
 
 class TripleSlider(pg.GraphicsObject):
     valuesChanged = pyqtSignal(float, float, float)  # min, mid, max
-    def __init__(self, min_range=0, max_range=10, label=None, above_text=None, PlotWidget=None, roi=None, offset=0.) :
+    def __init__(self, min_range=0, max_range=10, label=None, above_text=None,
+                 PlotWidget=None, roi=None, offset=0., log_scale=False,
+                 single_handle=False) :
         super().__init__()
         #self.roi = roi
         self.offset = offset
         self.offset_text = 0. if above_text is None else 20.
         self.slider_width, self.slider_height = 100, 20
         self._bottom_margin = 9
+        self.eps = 1e-8
         self.bounding_width, self.bounding_height = self.slider_width, self.slider_height + self._bottom_margin
         self.total_offset = -self.offset - self.offset_text - self.bounding_height
         
         self.min_range = min_range
         self.max_range = max_range
+        self.log_scale = log_scale
+        # If True, only the middle handle (vmid) is shown and draggable
+        self.single_handle = single_handle
 
         self.vmin = min_range
-        self.vmid = (min_range + max_range) / 2
+        self.vmid = (min_range + max_range) / 2 if not log_scale else 10**((np.log10(min_range) + np.log10(max_range)) / 2)
         self.vmax = max_range
 
         self.dragging = None
@@ -31,6 +37,7 @@ class TripleSlider(pg.GraphicsObject):
         # fraction of width/height for bar/handles
         self._left_pad_frac = 0.1   # 5% padding
         self._right_pad_frac = 0.1
+        self.slider_width_effective = self.slider_width * (1 - self._left_pad_frac - self._right_pad_frac)
         self._bar_height_frac = 0.3
         self._handle_width_frac = 0.06
         self._handle_height_frac = 0.6
@@ -67,6 +74,7 @@ class TripleSlider(pg.GraphicsObject):
         if above_text is not None :
             self.add_above_text(above_text)
             
+        self.param_name = label
         if label is not None :
             self.label_str = label + ": "
             self._label_font = QFont()
@@ -79,6 +87,9 @@ class TripleSlider(pg.GraphicsObject):
             
         self._value_font = QFont()
         self._value_font.setPointSizeF(9)
+        self._value_font_bold = QFont()
+        self._value_font_bold.setPointSizeF(9)
+        self._value_font_bold.setBold(True)
         self._value_color = QColor(20, 20, 20)
         self._value_fmt = lambda v: f"{v:.2g}".replace("e+0", "e")
         self._value_offset = -1       # pixels above handle
@@ -97,7 +108,12 @@ class TripleSlider(pg.GraphicsObject):
         self.Transform = QTransform.fromScale(1.0/self.data_to_pixel(), 1.0/self.data_to_pixel())
         if self.roi is not None :
             self.Transform.rotate( -self.roi.angle() )
-        self.setTransform(self.Transform)
+        
+        #I'm trying this line to see if it prevents the random rare crashes:
+        self.prepareGeometryChange()
+        print('in')
+        self.setTransform(self.Transform) # This might be the line that causes the annoying crash sometimes
+        print('out')
     
     def update_position(self) :
         anchor = self.get_anchor() if self.roi is not None else (0, 0)
@@ -112,15 +128,39 @@ class TripleSlider(pg.GraphicsObject):
         self.update_tranform()
         # Move the slider so that it's top matches the anchor point
         self.update_position()
-    
+
     def val_to_x(self, v):
-        w = self.slider_width * (1 - self._left_pad_frac - self._right_pad_frac)
-        return self._label_width + self.slider_width * self._left_pad_frac + (v - self.min_range) / (self.max_range - self.min_range) * w
+        # Map a value to a normalized [0, 1] coordinate, optionally in log space.
+        if not self.log_scale:
+            v_clipped = min(max(v, self.min_range), self.max_range)
+            x_normalized = (v_clipped - self.min_range) / (self.max_range - self.min_range)
+        else :
+            v_pos = max(v, self.eps, self.min_range if self.min_range > 0 else self.eps)
+            v_log = np.log10(v_pos)
+            min_log = np.log10(max(self.min_range, self.eps))
+            max_log = np.log10(max(self.max_range, self.min_range + self.eps))
+            x_normalized = (v_log - min_log) / (max_log - min_log)
+        
+        # Convert fraction to full x coordinate with respect to slider box
+        x = self._label_width + self.slider_width * self._left_pad_frac + x_normalized * self.slider_width_effective
+        return x
 
     def x_to_val(self, x):
-        w = self.slider_width * (1 - self._left_pad_frac - self._right_pad_frac)
-        x = min(max(x - self._label_width - self.slider_width * self._left_pad_frac, 0), w)
-        return self.min_range + x / w * (self.max_range - self.min_range)
+        # Convert full x coordinate with respect to slider box to normalized [0, 1] coordinate
+        x_relative = min(max(x - self._label_width - self.slider_width * self._left_pad_frac, 0), self.slider_width_effective)
+        x_normalized = x_relative / self.slider_width_effective
+
+        # Map normalized [0, 1] coordinate to value.
+        v_clipped = min(max(x_normalized, 0.0), 1.0)
+        if not self.log_scale:
+            v = self.min_range + v_clipped * (self.max_range - self.min_range)
+        else :
+            min_log = np.log10(max(self.min_range, self.eps))
+            max_log = np.log10(max(self.max_range, self.min_range + self.eps))
+            v_log = min_log + v_clipped * (max_log - min_log)
+            v = 10 ** v_log
+        
+        return v
 
     def paint(self, p, *_):
         # Draw background
@@ -143,7 +183,8 @@ class TripleSlider(pg.GraphicsObject):
         handle_bottom = self.bounding_height - self.slider_height/2 - handle_height/2
 
         p.setPen(Qt.NoPen)
-        for v in (self.vmin, self.vmid, self.vmax):
+        handles = (self.vmid,) if self.single_handle else (self.vmin, self.vmid, self.vmax)
+        for v in handles:
             x = self.val_to_x(v)
             p.setBrush(QBrush(self._mid_color if v == self.vmid else self._handle_color))
             p.drawRect(int(x - handle_width/2), int(handle_bottom), int(handle_width), int(handle_height))
@@ -156,16 +197,22 @@ class TripleSlider(pg.GraphicsObject):
         p.setPen(self._value_color)
         metrics = QFontMetricsF(self._value_font)
         
-        for v in (self.vmin, self.vmid, self.vmax):
-            x = self.val_to_x(v)
-            text = self._value_fmt(v)
-            text_width = metrics.horizontalAdvance(text)
-            text_height = metrics.height()
-        
-            text_x = x - text_width / 2
-            text_y = -(handle_bottom - self._value_offset - text_height)
-        
-            p.drawText(QPointF(text_x, text_y), text)
+        for i, v in enumerate(handles) :
+            show_value_mid = (i==1 or self.single_handle) and not (self.dragging == "min" or self.dragging == "max")
+            show_value_minmax = (i==0 and self.dragging == "min") or (i==2 and self.dragging == "max")
+            show_value = show_value_mid or show_value_minmax
+            if show_value :
+                x = self.val_to_x(v)
+                text = self._value_fmt(v)
+                text_width = metrics.horizontalAdvance(text)
+                text_height = metrics.height()
+            
+                text_x = x - text_width / 2
+                text_y = -(handle_bottom - self._value_offset - text_height)
+                
+                p.setFont(self._value_font_bold) if show_value_mid else None
+                p.drawText(QPointF(text_x, text_y), text)
+                p.setFont(self._value_font) if show_value_mid else None
         
         # Draw label
         p.setFont(self._label_font)
@@ -179,26 +226,44 @@ class TripleSlider(pg.GraphicsObject):
         
     def mousePressEvent(self, e) :
         pos = e.pos()
-        dist = {"min": abs(self.val_to_x(self.vmin) - pos.x()),
-                "mid": abs(self.val_to_x(self.vmid) - pos.x()),
-                "max": abs(self.val_to_x(self.vmax) - pos.x())}
-        self.dragging = min(dist, key=dist.get)
+        if self.single_handle:
+            self.dragging = "mid"
+        else:
+            dist = {"min": abs(self.val_to_x(self.vmin) - pos.x()),
+                    "mid": abs(self.val_to_x(self.vmid) - pos.x()),
+                    "max": abs(self.val_to_x(self.vmax) - pos.x())}
+            self.dragging = min(dist, key=dist.get)
 
     def mouseMoveEvent(self, e) :
         if self.dragging is None :
             return
         val = self.x_to_val(e.pos().x())
         
-        eps = 1e-6
         if self.dragging == "min":
-            self.vmin = min(val, self.vmid - eps)
+            self.vmin = min(val, self.vmid - self.eps)
         elif self.dragging == "mid":
-            self.vmid = max(min(val, self.vmax - eps), self.vmin + eps)
+            self.vmid = max(min(val, self.vmax - self.eps), self.vmin + self.eps)
         elif self.dragging == "max":
-            self.vmax = max(val, self.vmid + eps)
+            self.vmax = max(val, self.vmid + self.eps)
             
         self.valuesChanged.emit(self.vmin, self.vmid, self.vmax)
         self.update()
+
+        # Sync this parameter to other selected ROIs that have the same slider
+        if self.PlotWidget is not None and self.param_name is not None and self.roi.selected :
+            for roi in self.PlotWidget.roi_list:
+                if roi is self.roi or not roi.selected :
+                    continue
+                other_slider = getattr(roi, "sliders", {}).get(self.param_name)
+                if other_slider is None:
+                    continue
+                if self.dragging == "min" :
+                    other_slider.vmin = min(self.vmin, other_slider.vmid - other_slider.eps)
+                elif self.dragging == "mid" :
+                    other_slider.vmid = max(min(self.vmid, other_slider.vmax - other_slider.eps), other_slider.vmin + other_slider.eps)
+                elif self.dragging == "max" :
+                    other_slider.vmax = max(self.vmax, other_slider.vmid + other_slider.eps)
+                other_slider.update()
         
     def mouseReleaseEvent(self, e):
         self.dragging = None
@@ -266,11 +331,11 @@ class TripleSlider_ProportionalSize(QWidget):
             self.panel.update()
 
     def val_to_x(self, v):
-        w = self.width() * (1 - self._left_pad_frac - self._right_pad_frac)
+        w = self.slider_width_effective
         return self.width() * self._left_pad_frac + (v - self.min_range) / (self.max_range - self.min_range) * w
 
     def x_to_val(self, x):
-        w = self.width() * (1 - self._left_pad_frac - self._right_pad_frac)
+        w = self.slider_width_effective
         x = min(max(x - self.width() * self._left_pad_frac, 0), w)
         return self.min_range + x / w * (self.max_range - self.min_range)
 

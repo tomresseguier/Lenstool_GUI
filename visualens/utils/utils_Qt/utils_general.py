@@ -79,6 +79,19 @@ def transform_ROI_params(roi) :
     return x_center, y_center, semi_major, semi_minor, angle
 
 
+def transform_ROI_params_inverse(x_center, y_center, semi_major, semi_minor, angle):
+    a = 2 * semi_major
+    b = 2 * semi_minor
+    
+    d = np.sqrt(a**2 + b**2)/2
+    
+    beta = np.arctan(b/a) + angle
+    
+    x = x_center - d*np.cos(beta)
+    y = y_center - d*np.sin(beta)
+    return x, y, a, b, angle * 180/np.pi
+
+
 def InRectangle(x_array, y_array, rect_params) :
     x0, y0, a, b, angle = rect_params
     angle_bis = (np.pi/2-angle)#%(2*np.pi)

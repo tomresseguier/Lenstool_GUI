@@ -223,7 +223,7 @@ class DragPlotWidget_special(ThrottledPlotWidget):
     """
     Same as DragPlotWidget but with selecatble elliptical and two different types of circular ROI.
     """
-    def __init__(self, dpos_slider=True, throttle_mode=0):
+    def __init__(self, extra_sliders=True, throttle_mode=0):
         super().__init__(throttle_mode=throttle_mode)
         self.scene().sigMouseMoved.connect(self.mouse_moved)
         self.view = self.getViewBox()
@@ -235,7 +235,7 @@ class DragPlotWidget_special(ThrottledPlotWidget):
         self.drawing2 = False
         self.drawing3 = False
         self.ranges_dict = get_light_model_ranges()
-        self.dpos_slider = dpos_slider
+        self.extra_sliders = extra_sliders
         # This line because the many paint events can crash pyQt
         #self._run_low_performance_settings()
         
@@ -251,8 +251,9 @@ class DragPlotWidget_special(ThrottledPlotWidget):
             self.timer.start()
             mouse_point = self.view.mapSceneToView(event.pos()) # Convert click position to data coordinates
             self.start_pos = QPointF(mouse_point.x(), mouse_point.y())
-            self.last_roi = SelectableCircleROI([self.start_pos.x(), self.start_pos.y()], PlotWidget=self, radius=1e-9, pen='b', invertible=True)
+            self.last_roi = SelectableCircleROI([self.start_pos.x(), self.start_pos.y()], radius=1e-9, pen='b', invertible=True)
             self.last_roi.type = 3
+            self.last_roi.type_str = 'SERSIC'
             self.roi_list.append(self.last_roi)
             for handle in self.last_roi.handles:
                 self.last_roi.removeHandle(handle['item'])
@@ -273,6 +274,7 @@ class DragPlotWidget_special(ThrottledPlotWidget):
             self.start_pos = QPointF(mouse_point.x(), mouse_point.y())
             self.last_roi = SelectableEllipseROI([self.start_pos.x(), self.start_pos.y()], [1e-9, 1e-9], pen='r', invertible=True)
             self.last_roi.type = 1
+            self.last_roi.type_str = 'SERSIC_ELLIPSE'
             self.roi_list.append(self.last_roi)
             for handle in self.last_roi.handles:
                 self.last_roi.removeHandle(handle['item'])
@@ -288,8 +290,9 @@ class DragPlotWidget_special(ThrottledPlotWidget):
             self.timer.start()
             mouse_point = self.view.mapSceneToView(event.pos()) # Convert click position to data coordinates
             self.start_pos = QPointF(mouse_point.x(), mouse_point.y())
-            self.last_roi = SelectableCircleROI([self.start_pos.x(), self.start_pos.y()], PlotWidget=self, radius=1e-9, pen='g', invertible=True)
+            self.last_roi = SelectableCircleROI([self.start_pos.x(), self.start_pos.y()], radius=1e-9, pen='g', invertible=True)
             self.last_roi.type = 2
+            self.last_roi.type_str = 'GAUSSIAN'
             self.roi_list.append(self.last_roi)
             for handle in self.last_roi.handles:
                 self.last_roi.removeHandle(handle['item'])
@@ -394,7 +397,7 @@ class SelectableEllipseROI(pg.EllipseROI):
         self.normal_pen = self.pen #pg.mkPen('r', width=1)
         self.selected_pen = pg.mkPen('y', width=3)
         self.setPen(self.normal_pen)
-
+        
     def mouseClickEvent(self, event):
         if event.button() == QtCore.Qt.LeftButton:
             self.selected = not self.selected
@@ -404,34 +407,13 @@ class SelectableEllipseROI(pg.EllipseROI):
             super().mouseClickEvent(event)
 
 class SelectableCircleROI(pg.CircleROI):
-    def __init__(self, pos, PlotWidget=None, **kwargs):
+    def __init__(self, pos, **kwargs):
         super().__init__(pos, **kwargs)
         self.selected = False
         self.normal_pen = self.pen #pg.mkPen('g', width=1)
         self.selected_pen = pg.mkPen('y', width=3)
         self.setPen(self.normal_pen)
         
-        if False :
-            #self.viewbox = PlotWidget.getViewBox()
-            self.slider = TripleSlider(PlotWidget=PlotWidget, label='param1')
-            self.slider.setParentItem(self)
-            self.slider2 = TripleSlider(PlotWidget=PlotWidget, label='param2', offset=self.slider.height + self.slider.offset_text)
-            self.slider2.setParentItem(self)
-        
-        
-    def _updateLabel(self, vmin, vmid, vmax):
-        self.slider_label.setText(f"n_Sersic: [{vmin:.2f}, {vmid:.2f}, {vmax:.2f}]")
-
-    def _updatePanelPos(self):
-        """
-        Position floating widget BELOW the ROI, but keep it horizontal.
-        """
-        br = self.boundingRect()
-        local_anchor = QPointF(br.left(), br.top())
-        scene_pos = self.pos() + local_anchor
-        self.proxy.setPos(scene_pos)
-        #######################################################################
-
     def mouseClickEvent(self, event):
         if event.button() == QtCore.Qt.LeftButton:
             self.selected = not self.selected
@@ -439,22 +421,60 @@ class SelectableCircleROI(pg.CircleROI):
             event.accept()  # Prevent propagation
         else:
             super().mouseClickEvent(event)
+    
+    # Functions from old implementation. Keep here just in case.
+    #def _updateLabel(self, vmin, vmid, vmax):
+    #    self.slider_label.setText(f"n_Sersic: [{vmin:.2f}, {vmid:.2f}, {vmax:.2f}]")
+
+    #def _updatePanelPos(self):
+    #    """
+    #    Position floating widget BELOW the ROI, but keep it horizontal.
+    #    """
+    #    br = self.boundingRect()
+    #    local_anchor = QPointF(br.left(), br.top())
+    #    scene_pos = self.pos() + local_anchor
+    #    self.proxy.setPos(scene_pos)
 
 def attach_sliders(self, params) :
+    if self.extra_sliders :
+        if self.last_roi.type_str in ['SERSIC', 'SERSIC_ELLIPSE'] :
+            params += ['R_sersic']
+        elif self.last_roi.type_str=='GAUSSIAN' :
+            params += ['sigma']
+        params += ['dpos']
+    
     for i, param in enumerate(params) :
         min_range, max_range = self.ranges_dict[param][0], self.ranges_dict[param][1]
+        log_scale = self.ranges_dict[param][2]=='log'
+        single_handle = self.ranges_dict[param][3]=='single_handle'
         if not hasattr(self.last_roi, 'sliders') :
-            self.last_roi.sliders = {param : TripleSlider(min_range, max_range, PlotWidget=self, label=param, roi=self.last_roi)}
+            self.last_roi.sliders = {
+                param: TripleSlider(
+                    min_range,
+                    max_range,
+                    PlotWidget=self,
+                    label=param,
+                    roi=self.last_roi,
+                    log_scale=log_scale,
+                    single_handle=single_handle,
+                )
+            }
         else :
-            offset = self.last_roi.sliders[params[i-1]].offset + self.last_roi.sliders[params[i-1]].bounding_height + self.last_roi.sliders[params[i-1]].offset_text
-            self.last_roi.sliders[param] = TripleSlider(min_range, max_range, PlotWidget=self, label=param, roi=self.last_roi, offset=offset)
+            offset = (self.last_roi.sliders[params[i-1]].offset
+                      + self.last_roi.sliders[params[i-1]].bounding_height
+                      + self.last_roi.sliders[params[i-1]].offset_text)
+            self.last_roi.sliders[param] = TripleSlider(
+                min_range,
+                max_range,
+                PlotWidget=self,
+                label=param,
+                roi=self.last_roi,
+                offset=offset,
+                log_scale=log_scale,
+                single_handle=single_handle,
+            )
         self.last_roi.sliders[param].setParentItem(self.last_roi)
-    if self.dpos_slider :
-        param = 'dpos'
-        min_range, max_range = self.ranges_dict[param][0], self.ranges_dict[param][1]
-        offset = self.last_roi.sliders[params[-1]].offset + self.last_roi.sliders[params[-1]].bounding_height + self.last_roi.sliders[params[-1]].offset_text
-        self.last_roi.sliders[param] = TripleSlider(min_range, max_range, PlotWidget=self, label=param, roi=self.last_roi, offset=offset)
-        self.last_roi.sliders[param].setParentItem(self.last_roi)
+        
 
 
 

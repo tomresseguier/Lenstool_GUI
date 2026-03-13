@@ -1,11 +1,13 @@
 import numpy as np
 from PyQt5.QtCore import Qt, QObject, QEvent
 import pyqtgraph as pg
+import corner
 
 from lenstronomy.LightModel.light_model import LightModel
 from lenstronomy.ImSim.image_model import ImageModel
 from lenstronomy.Sampling.parameters import Param
 from lenstronomy.Workflow.fitting_sequence import FittingSequence
+from lenstronomy.Plots import chain_plot
 
 from .lenstronomy_model import lenstronomy_model
 from .utils import format_lm_local
@@ -100,6 +102,8 @@ class SourceFilter(QObject):
             if event.modifiers() == Qt.ShiftModifier :
                 print('Starting optimization')
                 
+                N = 40
+                
                 kwargs_source_fixed = []
                 kwargs_source_lower = []
                 kwargs_source_upper = []
@@ -113,67 +117,35 @@ class SourceFilter(QObject):
                     kwargs_sigma = {}
                     kwargs_init = {}
                     
+                    fixed_params = []#['center_x', 'center_y']                    
+                    opt_params = LightModel_source_kwargs[i].keys()
                     
-                    fixed_params = ['center_x', 'center_y']
-                    self.imsim.source_plane_widget.roi_list[i]
-                    opt_params = LightModel_source_kwargs.keys()
                     for param in fixed_params :
                         opt_params.remove(param)
                     for param in fixed_params :
                         kwargs_fixed[param] = kwargs[param]
                     for param in opt_params :
-                        vmax = self.imsim.source_plane_widget.roi_list[i].sliders[param].vmin
-                        vmin = self.imsim.source_plane_widget.roi_list[i].sliders[param].vmax
-                        kwargs_lower[param] = vmax
-                        kwargs_upper[param] = vmin
-                        kwargs_sigma[param] = (vmax + vmin)/10
-                        kwargs_init[param] = self.imsim.source_plane_widget.roi_list[i].sliders[param].vmid
+                        if param in ['center_x', 'center_y'] :
+                            dpos = self.imsim.source_plane_widget.roi_list[i].sliders['dpos'].vmid
+                            v = kwargs[param]
+                            kwargs_lower[param] = v - dpos
+                            kwargs_upper[param] = v + dpos
+                            kwargs_sigma[param] = 2*dpos/N
+                            kwargs_init[param] = v
+                        elif param in ['e1', 'e2'] :
+                            kwargs_lower[param] = -1.
+                            kwargs_upper[param] = 1.
+                            kwargs_sigma[param] = 2/N
+                            kwargs_init[param] = kwargs[param]
+                        else :
+                            vmax = self.imsim.source_plane_widget.roi_list[i].sliders[param].vmax
+                            vmin = self.imsim.source_plane_widget.roi_list[i].sliders[param].vmin
+                            vmid = self.imsim.source_plane_widget.roi_list[i].sliders[param].vmid
+                            kwargs_lower[param] = vmin
+                            kwargs_upper[param] = vmax
+                            kwargs_sigma[param] = (vmax + vmin)/N
+                            kwargs_init[param] = vmid
                     
-                    if False :
-                        if src == 'GAUSSIAN' :
-                            fixed_params = ['center_x', 'center_y']
-                            opt_params = ['amp', 'sigma']
-                            for p in fixed_params :
-                                #kwargs_fixed[p] = kwargs[p]
-                                #kwargs_fixed[p] = kwargs[p]
-                                
-                                kwargs_lower[p] = kwargs[p] -0.001
-                                kwargs_upper[p] = kwargs[p] +0.001
-                                kwargs_sigma[p] = 0.0001
-                                kwargs_init[p] = kwargs[p]
-                            for p in opt_params :
-                                kwargs_lower[p] = kwargs[p] /10
-                                kwargs_upper[p] = kwargs[p] *10
-                                kwargs_sigma[p] = kwargs[p] /10
-                                kwargs_init[p] = kwargs[p]
-                            kwargs_upper['sigma'] = self.imsim.sigma
-                            kwargs_init['sigma'] = self.imsim.sigma/2
-                                
-                        if src == 'SERSIC_ELLIPSE' :
-                            fixed_params = ['center_x', 'center_y']
-                            opt_params = ['amp', 'R_sersic', 'n_sersic', 'e1', 'e2']
-                            for p in fixed_params :
-                                #kwargs_fixed[p] = kwargs[p]
-                                #kwargs_fixed[p] = kwargs[p]
-                                
-                                kwargs_lower[p] = kwargs[p] -0.001
-                                kwargs_upper[p] = kwargs[p] +0.001
-                                kwargs_sigma[p] = 0.0001
-                                kwargs_init[p] = kwargs[p]
-                            for p in opt_params :
-                                if p=='n_sersic' :
-                                    kwargs_lower[p] = 0.5
-                                    kwargs_upper[p] = 10.
-                                    kwargs_sigma[p] = 0.2
-                                elif p=='e1' or p=='e2' :
-                                    kwargs_lower[p] = -1.
-                                    kwargs_upper[p] = 1.
-                                    kwargs_sigma[p] = 0.1
-                                else :
-                                    kwargs_lower[p] = kwargs[p] /10
-                                    kwargs_upper[p] = kwargs[p] *10
-                                    kwargs_sigma[p] = kwargs[p] /10
-                                kwargs_init[p] = kwargs[p]                        
                     
                     kwargs_source_fixed.append(kwargs_fixed)
                     kwargs_source_lower.append(kwargs_lower)
@@ -181,9 +153,8 @@ class SourceFilter(QObject):
                     kwargs_source_sigma.append(kwargs_sigma)
                     kwargs_source_init.append(kwargs_init)
 
-                    
-                        
-                param = Param(self.imsim.models,
+                
+                param = Param(lm_dict['models'],
                               kwargs_fixed_lens=self.imsim.LensModel_kwargs,
                               kwargs_fixed_source=kwargs_source_fixed,#self.imsim.fixed_source_kwargs,
                               #kwargs_fixed_lens_light=kwargs_fixed_lens_light,
@@ -214,17 +185,38 @@ class SourceFilter(QObject):
                 single_band = [[self.imsim.ImageData_kwargs, self.imsim.PSF_kwargs, self.imsim.kwargs_numerics]]
                 kwargs_data_joint = {'multi_band_list': single_band, 'multi_band_type': 'multi-linear'}
                 
-                fitting_seq = FittingSequence(kwargs_data_joint, self.imsim.models, {}, kwargs_likelihood, self.imsim.optimization_params, mpi=False)
+                fitting_seq = FittingSequence(kwargs_data_joint, lm_dict['models'], {}, kwargs_likelihood, self.imsim.optimization_params, mpi=False)
 
-                fitting_kwargs_list = [['PSO', {'sigma_scale': 1., 'n_particles': 100, 'n_iterations': 100}]]
-
-                chain_list = fitting_seq.fit_sequence(fitting_kwargs_list)
+                fitting_kwargs_list = [['PSO', {'sigma_scale': 1., 'n_particles': 100, 'n_iterations': 200}]]
+                
+                self.imsim.fitting_seq = fitting_seq
+                self.imsim.chain_list = fitting_seq.fit_sequence(fitting_kwargs_list)
                 self.imsim.result_kwargs = fitting_seq.best_fit()
                 
-                lm_dict = format_lm_local(self.imsim.models, self.imsim.result_kwargs)
                 
-                self.imsim.lm_optimized = lenstronomy_model(lm_dict, self.imsim)
+                #for i in range(len(chain_list)):
+                chain_plot.plot_chain_list(self.imsim.chain_list, 0)
+                
+                if False :
+                    sampler_type, samples_mcmc, param_mcmc, dist_mcmc  = self.imsim.chain_list[1]
+                    print("number of non-linear parameters in the MCMC process: ", len(param_mcmc))
+                    print("parameters in order: ", param_mcmc)
+                    print("number of evaluations in the MCMC process: ", np.shape(samples_mcmc)[0])
+                    n_sample = len(samples_mcmc)
+                    print(n_sample)
+                    samples_mcmc_cut = samples_mcmc[int(n_sample*1/2.):]
+                    n, num_param = np.shape(samples_mcmc_cut)
+                    plot = corner.corner(samples_mcmc_cut[:,:], labels=param_mcmc[:], show_titles=True)
+                
+                
+                
+                
+                lm_dict = format_lm_local(lm_dict['models'], self.imsim.result_kwargs)
+                
+                self.imsim.lm_optimized = lenstronomy_model(lm_dict, self.imsim, chain_list=self.imsim.chain_list)
                 self.imsim.lm_optimized.plot()
+                self.imsim.lm_optimized.save('./last_optimized_lm.pkl')
+                
             return True  # Stop propagation
         return False     # Let other events pass through  
 
