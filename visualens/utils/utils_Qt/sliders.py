@@ -4,6 +4,8 @@ from PyQt5.QtWidgets import QWidget, QGraphicsItem
 import pyqtgraph as pg
 import numpy as np
 
+from .utils_general import transform_ROI_params, transform_ROI_params_inverse
+
 
 
 
@@ -33,6 +35,14 @@ class TripleSlider(pg.GraphicsObject):
         self.vmax = max_range
 
         self.dragging = None
+        # When True, keep the slider widget position fixed while dragging a handle.
+        # This prevents jitter when ROI geometry changes during slider drags.
+        self._freeze_position_while_dragging = True
+        self._detached_from_roi = False
+        self._syncing_from_roi = False
+        self._syncing_from_slider = False
+        self._siblings_hidden = False
+        self._hidden_sibling_sliders = []
 
         # fraction of width/height for bar/handles
         self._left_pad_frac = 0.1   # 5% padding
@@ -62,10 +72,12 @@ class TripleSlider(pg.GraphicsObject):
             if roi is not None :
                 self.roi = roi
                 def anchor_func() :
-                    a, b = self.roi.size()/2
-                    return (1 + 2**-0.5)*a, (1 - 2**-0.5)*b
+                    a, b = self.roi.size() / 2.0
+                    return (1 + 1/np.sqrt(2))*a, (1 - 1/np.sqrt(2))*b
                 self.get_anchor = anchor_func
                 self.roi.sigRegionChanged.connect(self.adjust_all)
+                # Optional 2-way binding between ROI size and vmid for sigma/R_sersic
+                self.roi.sigRegionChanged.connect(self._update_from_roi)
             
             # Ensure size is constant
             PlotWidget.getViewBox().sigRangeChanged.connect(self.adjust_all)
@@ -93,6 +105,92 @@ class TripleSlider(pg.GraphicsObject):
         self._value_color = QColor(20, 20, 20)
         self._value_fmt = lambda v: f"{v:.2g}".replace("e+0", "e")
         self._value_offset = -1       # pixels above handle
+
+        # Initialize vmid from ROI geometry if applicable
+        self._update_from_roi()
+
+
+    def _update_from_roi(self):
+        """If bound sigma or R_sersic, update vmid from ROI geometry."""
+        if self._syncing_from_slider:
+            return
+        if getattr(self, "roi", None) is None or getattr(self, "param_name", None) is None:
+            return
+        
+        roi_type = getattr(getattr(self, "roi", None), "type_str", None)
+        param = self.param_name
+
+        if param == "sigma" and roi_type == "GAUSSIAN":
+            new_vmid = abs(self.roi.size()[0])
+        elif param == "R_sersic" and roi_type == "SERSIC" :
+            new_vmid = abs(self.roi.size()[0]) / 2.0
+        elif param == "R_sersic" and roi_type == "SERSIC_ELLIPSE" :
+            _, _, semi_major, semi_minor, _ = transform_ROI_params(self.roi)
+            # keep consistent with event_filters: R_sersic=(semi_major+semi_minor)/2
+            new_vmid = (semi_major + semi_minor) / 2.0
+        else:
+            return
+
+        self._syncing_from_roi = True
+        try:
+            new_vmid = max(min(new_vmid, self.vmax - self.eps), self.vmin + self.eps)
+            self.vmid = new_vmid
+            self.update()
+        finally:
+            self._syncing_from_roi = False
+
+    def _apply_to_roi(self):
+        """If bound sigma or R_sersic, apply vmid to ROI geometry."""
+        if self._syncing_from_roi:
+            return
+        if getattr(self, "roi", None) is None or getattr(self, "param_name", None) is None:
+            return
+
+        roi_type = getattr(getattr(self, "roi", None), "type_str", None)
+        param = self.param_name
+
+        if param == "sigma" and roi_type == "GAUSSIAN":
+            new_radius = float(self.vmid) / 2.0
+            #mode = "circle_diameter"
+        elif param == "R_sersic" and roi_type in ("SERSIC", "SERSIC_ELLIPSE"):
+            new_radius = float(self.vmid)
+            #mode = "sersic_radius"
+        else:
+            return
+
+        self._syncing_from_slider = True
+        try:
+            if type(self.roi).__name__ == "SelectableCircleROI":
+                # CircleROI pos is top-left; size is [diameter, diameter]
+                current_radius = float(abs(self.roi.size()[0])) / 2.0
+                center_x = self.roi.pos()[0] + current_radius
+                center_y = self.roi.pos()[1] + current_radius
+                #if mode == "sersic_radius":
+                #    #current code uses size()[0] as R_sersic for circle Sersic
+                #    new_d = new_radius
+                #else:
+                #    new_d = new_radius
+                #new_r = new_d / 2.0
+                new_diameter = new_radius * 2.0
+                self.roi.setPos([center_x - new_radius, center_y - new_radius])
+                self.roi.setSize([new_diameter, new_diameter])
+            else:
+                # EllipseROI: scale semi-major/minor proportionally to change the mean radius
+                x_center, y_center, semi_major, semi_minor, angle = transform_ROI_params(self.roi)
+                current_R = (semi_major + semi_minor) / 2.0
+                if current_R <= 0:
+                    return
+                scale = new_radius / current_R
+                semi_major_new = semi_major * scale
+                semi_minor_new = semi_minor * scale
+                x, y, a, b, angle_deg = transform_ROI_params_inverse(
+                    x_center, y_center, semi_major_new, semi_minor_new, angle
+                )
+                self.roi.setPos([x, y])
+                self.roi.setSize([a, b])
+                self.roi.setAngle(angle_deg)
+        finally:
+            self._syncing_from_slider = False
         
     
     def boundingRect(self):
@@ -102,18 +200,76 @@ class TripleSlider(pg.GraphicsObject):
         self.above_text = pg.TextItem(text=text_str, anchor=(0, 0), color=(255, 255, 255))
         self.above_text.setParentItem(self)
         self.above_text.setPos( 0, self.bounding_height + self.offset_text )
+
+    def hide_slider(self):
+        """Hide this slider (and its optional above_text) and disable interaction."""
+        self.setVisible(False)
+        self.setAcceptedMouseButtons(Qt.NoButton)
+        if hasattr(self, "above_text"):
+            self.above_text.setVisible(False)
+
+    def show_slider(self):
+        """Show this slider (and its optional above_text) and re-enable interaction."""
+        self.setVisible(True)
+        self.setAcceptedMouseButtons(Qt.LeftButton)
+        if hasattr(self, "above_text"):
+            self.above_text.setVisible(True)
+
+    def _is_roi_resizing_slider(self) :
+        """Return True if dragging this slider can resize the ROI."""
+        roi_type = getattr(getattr(self, "roi", None), "type_str", None)
+        if self.param_name == "sigma" and roi_type == "GAUSSIAN":
+            return True
+        if self.param_name == "R_sersic" and roi_type in ("SERSIC", "SERSIC_ELLIPSE"):
+            return True
+        return False
+
+    def _hide_sibling_sliders(self):
+        """Hide all sliders attached to the ROI except this one."""
+        if self._siblings_hidden:
+            return
+        roi = getattr(self, "roi", None)
+        if roi is None:
+            return
+        sliders = getattr(roi, "sliders", None)
+        if not isinstance(sliders, dict):
+            return
+
+        self._hidden_sibling_sliders = []
+        for _, s in sliders.items():
+            if s is self:
+                continue
+            # Only hide if currently visible (so we don't override external state)
+            try:
+                if s.isVisible():
+                    s.hide_slider()
+                    self._hidden_sibling_sliders.append(s)
+            except Exception:
+                continue
+        self._siblings_hidden = True
+
+    def _show_sibling_sliders(self):
+        """Restore the sliders that were hidden by _hide_sibling_sliders()."""
+        if not self._siblings_hidden:
+            return
+        for s in self._hidden_sibling_sliders:
+            try:
+                s.show_slider()
+            except Exception:
+                pass
+        self._hidden_sibling_sliders = []
+        self._siblings_hidden = False
     
     def update_tranform(self):
         """Update slider rotation to maintain constant horizontal orientation"""
         self.Transform = QTransform.fromScale(1.0/self.data_to_pixel(), 1.0/self.data_to_pixel())
-        if self.roi is not None :
+        # When detached from ROI we want the slider unrotated (angle = 0)
+        if self.roi is not None and not getattr(self, "_detached_from_roi", False) :
             self.Transform.rotate( -self.roi.angle() )
         
         #I'm trying this line to see if it prevents the random rare crashes:
         self.prepareGeometryChange()
-        print('in')
         self.setTransform(self.Transform) # This might be the line that causes the annoying crash sometimes
-        print('out')
     
     def update_position(self) :
         anchor = self.get_anchor() if self.roi is not None else (0, 0)
@@ -127,7 +283,50 @@ class TripleSlider(pg.GraphicsObject):
         # Update transform to account for scale and rotation
         self.update_tranform()
         # Move the slider so that it's top matches the anchor point
-        self.update_position()
+        if not (self._freeze_position_while_dragging and self.dragging is not None):
+            self.update_position()
+
+    def _detach_from_roi_keep_view_pos(self):
+        """
+        Temporarily detach from ROI so ROI transforms (move/scale/rotate) don't move the slider.
+        Keeps the slider at its current ViewBox (data) position.
+        """
+        if self._detached_from_roi:
+            return
+        if getattr(self, "PlotWidget", None) is None or getattr(self, "viewbox", None) is None:
+            return
+        if getattr(self, "roi", None) is None:
+            return
+
+        # Current origin of this item in scene coords -> convert to view (data) coords
+        scene_pt = self.mapToScene(QPointF(0, 0))
+        view_pt = self.viewbox.mapSceneToView(scene_pt)
+
+        # Detach and add to the plot so it's independent of ROI parenting
+        self.setParentItem(None)
+        try:
+            self.PlotWidget.addItem(self)
+        except Exception:
+            pass
+        self.setPos(view_pt)
+        self._detached_from_roi = True
+        # Reset slider angle to zero while detached
+        self.update_tranform()
+
+    def _reattach_to_roi(self):
+        """Re-attach to ROI after drag ends and snap back to anchored position."""
+        if not self._detached_from_roi:
+            return
+        if getattr(self, "PlotWidget", None) is None or getattr(self, "roi", None) is None:
+            return
+
+        try:
+            self.PlotWidget.removeItem(self)
+        except Exception:
+            pass
+        self.setParentItem(self.roi)
+        self._detached_from_roi = False
+        self.adjust_all()
 
     def val_to_x(self, v):
         # Map a value to a normalized [0, 1] coordinate, optionally in log space.
@@ -233,6 +432,11 @@ class TripleSlider(pg.GraphicsObject):
                     "mid": abs(self.val_to_x(self.vmid) - pos.x()),
                     "max": abs(self.val_to_x(self.vmax) - pos.x())}
             self.dragging = min(dist, key=dist.get)
+        if self._freeze_position_while_dragging:
+            self._detach_from_roi_keep_view_pos()
+        # When dragging a slider that resizes the ROI, hide siblings for clarity.
+        if self.dragging == "mid" and self._is_roi_resizing_slider():
+            self._hide_sibling_sliders()
 
     def mouseMoveEvent(self, e) :
         if self.dragging is None :
@@ -249,6 +453,10 @@ class TripleSlider(pg.GraphicsObject):
         self.valuesChanged.emit(self.vmin, self.vmid, self.vmax)
         self.update()
 
+        # If vmid is bound to ROI geometry (sigma/R_sersic), apply it while dragging.
+        if self.dragging == "mid":
+            self._apply_to_roi()
+
         # Sync this parameter to other selected ROIs that have the same slider
         if self.PlotWidget is not None and self.param_name is not None and self.roi.selected :
             for roi in self.PlotWidget.roi_list:
@@ -263,10 +471,17 @@ class TripleSlider(pg.GraphicsObject):
                     other_slider.vmid = max(min(self.vmid, other_slider.vmax - other_slider.eps), other_slider.vmin + other_slider.eps)
                 elif self.dragging == "max" :
                     other_slider.vmax = max(self.vmax, other_slider.vmid + other_slider.eps)
+                if self.dragging == "mid":
+                    other_slider._apply_to_roi()
                 other_slider.update()
         
     def mouseReleaseEvent(self, e):
         self.dragging = None
+        if self._freeze_position_while_dragging:
+            self._reattach_to_roi()
+        else:
+            self.adjust_all()
+        self._show_sibling_sliders()
 
 
 

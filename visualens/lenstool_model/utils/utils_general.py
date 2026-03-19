@@ -269,7 +269,15 @@ def import_multiple_images(self, mult_file_path_or_cat, fits_image, units=None, 
             colors_dict = lenstool_model.mult_colors(filled_markers=False, saturation=self.saturation)
         
         for name, mask in self.masks().items() :
-            broad_family = name#self.cat['broad_family'][ np.where(self.cat['family']==name)[0][0] ]
+            #broad_family = name #self.cat['broad_family'][ np.where(self.cat['family']==name)[0][0] ]
+            
+            ###
+            if name in self.cat['broad_family'][mask] :
+                broad_family = name
+            else :
+                broad_family = self.cat['broad_family'][mask][0]
+            ###
+            
             for multiple_image in self.cat[mask] :
                 
                 text = str(multiple_image[text_column])

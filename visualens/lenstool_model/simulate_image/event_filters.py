@@ -37,7 +37,7 @@ class SourceFilter(QObject):
                     e = (1-q) / (1+q)
                     e1 = e * np.cos(2*angle)
                     e2 = e * np.sin(2*angle)
-                    R_sersic = (semi_major + semi_minor)/2
+                    R_sersic = (semi_major + semi_minor) / 2.0
                     src_xr = x_center + self.imsim.source_center_coordinates[0]
                     src_yr = y_center + self.imsim.source_center_coordinates[1]
                     to_add = {'amp': amp, 'R_sersic': R_sersic, 'n_sersic': n_sersic, 'e1': e1, 'e2': e2, 'center_x': src_xr, 'center_y': src_yr}
@@ -58,7 +58,7 @@ class SourceFilter(QObject):
                     x_center, y_center, semi_major, semi_minor, angle = transform_ROI_params(roi)
                     src_xr = x_center + self.imsim.source_center_coordinates[0]
                     src_yr = y_center + self.imsim.source_center_coordinates[1]
-                    R_sersic = abs(roi.size()[0])
+                    R_sersic = abs(roi.size()[0]) / 2.0
                     to_add = {'amp': amp, 'R_sersic': R_sersic, 'n_sersic': n_sersic, 'center_x': src_xr, 'center_y': src_yr}
                     LightModel_source_kwargs.append(to_add)
             

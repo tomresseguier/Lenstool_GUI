@@ -34,7 +34,9 @@ class lenstronomy_model :
         self.local['kwargs']['kwargs_lens_light'] = []
         self.local['kwargs']['kwargs_ps'] = []
         
-        self.modelPlot = ModelPlot([[self.imsim.ImageData_kwargs, self.imsim.PSF_kwargs, self.imsim.kwargs_numerics]], 
+        simulated_image_kwargs = self.imsim.ImageData_kwargs.copy()
+        simulated_image_kwargs['image_data'] = self.imsim.simulated_image
+        self.modelPlot = ModelPlot([[simulated_image_kwargs, self.imsim.PSF_kwargs, self.imsim.kwargs_numerics]], 
                                    self.local['models'], self.local['kwargs'], arrow_size=0.02, cmap_string="gist_heat",
                                    linear_solver=True)
                                    #linear_solver=False)
@@ -52,7 +54,7 @@ class lenstronomy_model :
             plt.show()
         
             f2, a2 = plt.subplots()
-            a2 = self.modelPlot.source_plot(ax=a2, deltaPix_source=0.0005, numPix=1500, cmap='gray')
+            a2 = self.modelPlot.source_plot(ax=a2, deltaPix_source=0.0005, numPix=1500, cmap='gray') #0.0005, 1500
             source_array = a2.get_children()[0].get_array()
             
             fig, ax = plt.subplots()
@@ -173,11 +175,11 @@ class lenstronomy_model :
                 kwargs = self.local['kwargs']['kwargs_source'][i]
                 x = kwargs['center_x'] - self.imsim.source_center_coordinates[0]
                 y = kwargs['center_y'] - self.imsim.source_center_coordinates[1]
-                R_sersic = kwargs['R_sersic']
-                x_corner = x - R_sersic
-                y_corner = y - R_sersic
+                radius = kwargs['R_sersic']
+                x_corner = x - radius
+                y_corner = y - radius
                 
-                PlotWidget.last_roi = SelectableCircleROI([x_corner, y_corner], radius=R_sersic, pen='b', invertible=True)
+                PlotWidget.last_roi = SelectableCircleROI([x_corner, y_corner], radius=radius, pen='b', invertible=True)
                 PlotWidget.last_roi.type = 3
                 PlotWidget.last_roi.type_str = 'SERSIC'
                 PlotWidget.roi_list.append(PlotWidget.last_roi)
@@ -190,6 +192,10 @@ class lenstronomy_model :
                 # Add sliders to control light source parameters
                 params = ['amp', 'n_sersic']#, 'R_sersic']
                 attach_sliders(PlotWidget, params)
+                
+                for p, v in kwargs.items() :
+                    if p in PlotWidget.last_roi.sliders :
+                        PlotWidget.last_roi.sliders[p].vmid = v
                 
             if model=='SERSIC_ELLIPSE' :
                 kwargs = self.local['kwargs']['kwargs_source'][i]
@@ -219,16 +225,20 @@ class lenstronomy_model :
                 # Add sliders to control light source parameters
                 params = ['amp', 'n_sersic']
                 attach_sliders(PlotWidget, params)
+                
+                for p, v in kwargs.items() :
+                    if p in PlotWidget.last_roi.sliders :
+                        PlotWidget.last_roi.sliders[p].vmid = v
             
             if model=='GAUSSIAN' :
                 kwargs = self.local['kwargs']['kwargs_source'][i]
                 x = kwargs['center_x'] - self.imsim.source_center_coordinates[0]
                 y = kwargs['center_y'] - self.imsim.source_center_coordinates[1]
-                sigma = kwargs['sigma']
-                x_corner = x - sigma
-                y_corner = y - sigma
+                radius = kwargs['sigma'] / 2.0
+                x_corner = x - radius
+                y_corner = y - radius
                 
-                PlotWidget.last_roi = SelectableCircleROI([x_corner, y_corner], radius=sigma, pen='g', invertible=True)
+                PlotWidget.last_roi = SelectableCircleROI([x_corner, y_corner], radius=radius, pen='g', invertible=True)
                 PlotWidget.last_roi.type = 2
                 PlotWidget.last_roi.type_str = 'GAUSSIAN'
                 PlotWidget.roi_list.append(PlotWidget.last_roi)
@@ -242,7 +252,9 @@ class lenstronomy_model :
                 params = ['amp']
                 attach_sliders(PlotWidget, params)
                 
-                
+                for p, v in kwargs.items() :
+                    if p in PlotWidget.last_roi.sliders :
+                        PlotWidget.last_roi.sliders[p].vmid = v
 
 
 

@@ -246,7 +246,7 @@ class DragPlotWidget_special(ThrottledPlotWidget):
 
     def mousePressEvent(self, event):
         # Circular Sérsic
-        if event.button() == Qt.LeftButton and (event.modifiers() & Qt.ShiftModifier) and (event.modifiers() & Qt.ControlModifier):
+        if event.button() == Qt.LeftButton and (event.modifiers() & Qt.AltModifier) and (event.modifiers() & Qt.ControlModifier or event.modifiers() & Qt.MetaModifier) :
             self.view.setMouseEnabled(x=False, y=False)
             self.timer.start()
             mouse_point = self.view.mapSceneToView(event.pos()) # Convert click position to data coordinates
@@ -264,10 +264,10 @@ class DragPlotWidget_special(ThrottledPlotWidget):
             params = ['amp', 'n_sersic']#, 'R_sersic']
             attach_sliders(self, params)
         # 
-        elif event.button() == Qt.LeftButton and event.modifiers() == Qt.AltModifier:
-            print('Alt modifier function not yet implemented')
+        elif event.button() == Qt.LeftButton and event.modifiers() == Qt.ShiftModifier :
+            print('Shift modifier function not yet implemented')
         # Elliptical Sérsic
-        elif event.button() == Qt.LeftButton and event.modifiers() == Qt.ShiftModifier:
+        elif event.button() == Qt.LeftButton and event.modifiers() == Qt.AltModifier :
             self.view.setMouseEnabled(x=False, y=False)
             self.timer.start()
             mouse_point = self.view.mapSceneToView(event.pos()) # Convert click position to data coordinates
@@ -285,7 +285,7 @@ class DragPlotWidget_special(ThrottledPlotWidget):
             params = ['amp', 'n_sersic']
             attach_sliders(self, params)
         # Gaussian light source
-        elif event.button() == Qt.LeftButton and event.modifiers() == Qt.ControlModifier:
+        elif event.button() == Qt.LeftButton and event.modifiers() in (Qt.ControlModifier, QtCore.Qt.MetaModifier) :
             self.view.setMouseEnabled(x=False, y=False)
             self.timer.start()
             mouse_point = self.view.mapSceneToView(event.pos()) # Convert click position to data coordinates
@@ -313,6 +313,62 @@ class DragPlotWidget_special(ThrottledPlotWidget):
             self.last_roi = None
             self.roi_list = []
             event.accept()
+
+        elif event.modifiers() in (Qt.ControlModifier, QtCore.Qt.MetaModifier) and event.key() == Qt.Key_D:
+            # Cmd+D: hide all ROIs
+            for roi in self.roi_list:
+                try:
+                    roi.hide_roi()
+                except Exception:
+                    pass
+            event.accept()
+        elif event.modifiers() in (Qt.ControlModifier, QtCore.Qt.MetaModifier) and event.key() == Qt.Key_S:
+            # Cmd+S: show all ROIs
+            for roi in self.roi_list:
+                try:
+                    roi.show_roi()
+                except Exception:
+                    pass
+            event.accept()
+        elif event.key() == Qt.Key_D:
+            # D: hide selected ROIs
+            for roi in self.roi_list:
+                if getattr(roi, "selected", False):
+                    try:
+                        roi.hide_roi()
+                    except Exception:
+                        pass
+            event.accept()
+        elif event.key() == Qt.Key_S:
+            # S: show selected ROIs
+            for roi in self.roi_list:
+                if getattr(roi, "selected", False):
+                    try:
+                        roi.show_roi()
+                    except Exception:
+                        pass
+            event.accept()
+        elif event.modifiers() in (Qt.ControlModifier, QtCore.Qt.MetaModifier) and event.key() == Qt.Key_F:
+            # Cmd+F: hide all sliders
+            for roi in self.roi_list:
+                try:
+                    show_or_hide_sliders(roi)
+                except Exception:
+                    pass
+            event.accept()
+        elif event.modifiers() in (Qt.ControlModifier, QtCore.Qt.MetaModifier) and event.key() == Qt.Key_A:
+            # Cmd+A: Select all ROIs
+            selection_mask = [roi.selected for roi in self.roi_list]
+            selection_bool = False in selection_mask
+            for roi in self.roi_list:
+                try:
+                    roi.selected = selection_bool
+                    pen = roi.selected_pen if selection_bool else roi.normal_pen
+                    roi.setPen(pen)
+                except Exception:
+                    pass                
+            event.accept()
+
         elif event.key() in (QtCore.Qt.Key_Backspace, QtCore.Qt.Key_Delete) :
             roi_list_new = []
             for roi in self.roi_list :
@@ -383,12 +439,14 @@ class SelectableRectangleROI(pg.ROI):
         self.setPen(self.normal_pen)
 
     def mouseClickEvent(self, event):
-        if event.button() == QtCore.Qt.LeftButton:
-            self.selected = not self.selected
-            self.setPen(self.selected_pen if self.selected else self.normal_pen)
-            event.accept()  # Prevent propagation
-        else:
-            super().mouseClickEvent(event)
+        handle_mouse_click(self, event)
+        #super().mouseClickEvent(event)
+
+    def hide_roi(self) :
+        hide_roi(self)
+
+    def show_roi(self) :
+        show_roi(self)
 
 class SelectableEllipseROI(pg.EllipseROI):
     def __init__(self, pos, size, **kwargs):
@@ -399,12 +457,14 @@ class SelectableEllipseROI(pg.EllipseROI):
         self.setPen(self.normal_pen)
         
     def mouseClickEvent(self, event):
-        if event.button() == QtCore.Qt.LeftButton:
-            self.selected = not self.selected
-            self.setPen(self.selected_pen if self.selected else self.normal_pen)
-            event.accept()  # Prevent propagation
-        else:
-            super().mouseClickEvent(event)
+        handle_mouse_click(self, event)
+        #super().mouseClickEvent(event)
+
+    def hide_roi(self) :
+        hide_roi(self)
+
+    def show_roi(self) :
+        show_roi(self)
 
 class SelectableCircleROI(pg.CircleROI):
     def __init__(self, pos, **kwargs):
@@ -415,12 +475,14 @@ class SelectableCircleROI(pg.CircleROI):
         self.setPen(self.normal_pen)
         
     def mouseClickEvent(self, event):
-        if event.button() == QtCore.Qt.LeftButton:
-            self.selected = not self.selected
-            self.setPen(self.selected_pen if self.selected else self.normal_pen)
-            event.accept()  # Prevent propagation
-        else:
-            super().mouseClickEvent(event)
+        handle_mouse_click(self, event)
+        #super().mouseClickEvent(event)
+
+    def hide_roi(self) :
+        hide_roi(self)
+
+    def show_roi(self) :
+        show_roi(self)
     
     # Functions from old implementation. Keep here just in case.
     #def _updateLabel(self, vmin, vmid, vmax):
@@ -475,7 +537,42 @@ def attach_sliders(self, params) :
             )
         self.last_roi.sliders[param].setParentItem(self.last_roi)
         
+def hide_roi(self):
+    """Hide ROI and any attached sliders (if present)."""
+    self.setVisible(False)
+    for s in getattr(self, "sliders", {}).values():
+        try:
+            s.hide_slider()
+        except Exception:
+            pass
 
+def show_roi(self):
+    """Show ROI and any attached sliders (if present)."""
+    self.setVisible(True)
+    for s in getattr(self, "sliders", {}).values():
+        try:
+            s.show_slider()
+        except Exception:
+            pass
 
+def handle_mouse_click(self, event):
+    if event.button() == QtCore.Qt.LeftButton :
+        if not event.double():
+            self.selected = not self.selected
+            self.setPen(self.selected_pen if self.selected else self.normal_pen)
+            event.accept()  # Prevent propagation
+        else :
+            show_or_hide_sliders(self)
+            event.accept()
+    else:
+        super(type(self), self).mouseClickEvent(event)
 
+def show_or_hide_sliders(self):
+    sliders = getattr(self, "sliders", {})
+    any_visible = any(getattr(s, "isVisible", lambda: False)() for s in sliders.values())
+    for s in sliders.values():
+        try:
+            s.hide_slider() if any_visible else s.show_slider()
+        except Exception:
+            pass
 

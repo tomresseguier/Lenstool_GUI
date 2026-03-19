@@ -382,7 +382,7 @@ class lenstool_model :
             
     def set_which(self, *names) :
         if names[0]=='all' :
-            self.which = self.broad_families.tolist()
+            self.which = self.broad_families if type(self.broad_families) is list else self.broad_families.tolist()
         elif isinstance(names[0], list) :
             self.which = names[0]
         else :
