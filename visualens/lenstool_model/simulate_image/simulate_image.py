@@ -1,7 +1,7 @@
 import numpy as np
 import os
 import pyqtgraph as pg
-from PyQt5.QtWidgets import QMainWindow, QSplitter
+from PyQt5.QtWidgets import QMainWindow, QSplitter, QWidget, QVBoxLayout, QHBoxLayout
 from PyQt5.QtCore import Qt
 from pyqtgraph.Qt import QtWidgets
 
@@ -39,27 +39,38 @@ class image_simulator :
         b = self.ROI.getState()['size'][1]
         angle = self.ROI.getState()['angle'] *np.pi/180
         
-        x0, y0, a, b, angle = transform_rectangle(x0, y0, a, b, angle) #x0, y0 at the top left
-        size_y = fits_image.image_data.shape[0]
-        y0 = size_y-y0 #Counting pixels from bottom instead of top
-        self.anchor = (x0, y0)
+        x0, y0, a, b, angle = transform_rectangle(x0, y0, a, b, angle) #x0, y0 at the top left, a and b > 0
+        y0 = fits_image.image_data.shape[0] - y0 # Counting pixels from bottom instead of top
+
+        # Here we transform the ROI's parameters into a square area with corners corresponding to integer pixel coordinates.
+        x_center, y_center = x0 + a/2, y0 - b/2
+        square_size = max(a, b)
+        square_size_floor = int(square_size)
+        _x, _y = abs(x_center - round(x_center)), abs(y_center - round(y_center))
+        if _x + _y > 0.5 : # The center will be the center of a pixel --> odd number of pixels
+            rule = 'odd'
+            x_center_pix, y_center_pix = int(x_center) + 0.5, int(y_center) + 0.5
+            square_size_pix = square_size_floor + 1 if square_size_floor%2 == 0 else square_size_floor # odd number
+        else : # The center will be the corner of a pixel --> even number of pixels
+            rule = 'even'
+            x_center_pix, y_center_pix = round(x_center), round(y_center)
+            square_size_pix = square_size_floor if square_size_floor%2 == 0 else square_size_floor + 1 # even number
         
-        # Convert to world coordinates
-        ra_topleft, dec_topleft = fits_image.image_to_world(x0, y0)
-        ra_center, dec_center = fits_image.image_to_world(x0 + a/2, y0 - b/2)
-        self.center_world = ra_center, dec_center
-        
-        xr_topleft, yr_topleft = fits_image.lt.world_to_relative(ra_topleft, dec_topleft)
-        xr_center, yr_center = fits_image.lt.world_to_relative(ra_center, dec_center)
-        
-        offset_arcsec_x = xr_topleft - xr_center
-        offset_arcsec_y = - (yr_topleft - yr_center) #Because ROI's anchor corner is top left instead of bottom left
-        
-        offset_arcsec = np.max(np.abs( [offset_arcsec_x, offset_arcsec_y] ))
-        self._SquareOfInterest_side_arcsec = offset_arcsec * 2
-        self._SquareOfInterest_xr_bottomleft = xr_center - offset_arcsec
-        self._SquareOfInterest_yr_bottomleft = yr_center - offset_arcsec
-        new_field = [xr_center-offset_arcsec, xr_center+offset_arcsec, yr_center-offset_arcsec, yr_center+offset_arcsec]
+        # Store the exact pixel-crop origin used for image_data so interactive clicks
+        # can be mapped back to full-image coordinates without sub-pixel offsets.
+        self._crop_npix = square_size_pix
+        self._crop_x0 = int( x_center_pix - square_size_pix/2 ) # x_center_pix - square_size_pix/2 is float with 0 decimal
+        self._crop_y0 = int( y_center_pix + square_size_pix/2 )
+        self.anchor = (self._crop_x0, self._crop_y0)
+        self.center_world = fits_image.image_to_world(x_center_pix, y_center_pix)
+
+        xr_center, yr_center = fits_image.lt.world_to_relative(self.center_world[0], self.center_world[1])
+        square_size_arcsec = square_size_pix * fits_image.pix_deg_scale*3600
+        self._SquareOfInterest_side_arcsec = square_size_arcsec
+        self._SquareOfInterest_xr_bottomleft = xr_center - square_size_arcsec / 2
+        self._SquareOfInterest_yr_bottomleft = yr_center - square_size_arcsec / 2
+        new_field = [self._SquareOfInterest_xr_bottomleft, self._SquareOfInterest_xr_bottomleft + square_size_arcsec, 
+                     self._SquareOfInterest_yr_bottomleft, self._SquareOfInterest_yr_bottomleft + square_size_arcsec]
         
         ######### Set Lenstool field corresponding to ROI's position and calculate the local displacement map #########
         numPix = 100
@@ -100,17 +111,10 @@ class image_simulator :
         self.source_plane_widget.setTitle('Source plane')
         #source_plane_widget.setAspectLocked(lock=True, ratio=1)
         
-        self.to_plot = fits_image.image_data[round(y0-b):round(y0),round(x0):round(x0+a),:][::-1,:,:]
-        self.image_plane_plot = pg.ImageView()
-        self.image_plane_plot.setImage(self.to_plot)        
-        
         self._imsim_srcplane_layout = QSplitter(Qt.Vertical)
-        self._imsim_implane_layout = QSplitter(Qt.Vertical)
+        self._imsim_implane_layout = QWidget()
         
         self._imsim_srcplane_layout.addWidget(self.source_plane_widget)
-        label = QtWidgets.QLabel("Image plane")
-        self._imsim_implane_layout.addWidget(label)
-        self._imsim_implane_layout.addWidget(self.image_plane_plot)
         
         self._imsim_layout = QSplitter(Qt.Horizontal)
         self._imsim_layout.addWidget(self._imsim_srcplane_layout)
@@ -119,7 +123,6 @@ class image_simulator :
         self.window = QMainWindow()
         self.window.setWindowTitle('Lenstronomy image simulator')
         self.window.setCentralWidget(self._imsim_layout)
-        self.window.show()
         
         
         #-------------- Plot critical & caustic curves --------------#
@@ -140,27 +143,21 @@ class image_simulator :
         self.source_plane_widget.setXRange(-3, 3)
         self.source_plane_widget.setYRange(-3, 3)
         
-        self.critical_curve_plot = pg.PlotDataItem()
-        self.critical_curve_plot.setPen( color=[255,0,255,255], width=4.0001 )
         self._lt_curve_coords_relative_broken = break_curves(fits_image.lt.lt_curve_coords_relative, distance_threshold=8.*fits_image.pix_deg_scale*3600) #sort_points(self.lt_curve_coords_relative, distance_threshold=1.0, angle_threshold=np.pi)
-        x = (self._lt_curve_coords_relative_broken[0] - xr_topleft) / (fits_image.pix_deg_scale*3600)
-        y = - (self._lt_curve_coords_relative_broken[1] - yr_topleft) / (fits_image.pix_deg_scale*3600)
-        
-        self.critical_curve_plot.setData(x, y)
-        self.image_plane_plot.addItem(self.critical_curve_plot)
         
         self.filter_source = SourceFilter(self)
         self.source_plane_widget.installEventFilter(self.filter_source)
-        
-        self.filter_image = ImageFilter(self)
-        self.image_plane_plot.installEventFilter(self.filter_image)
         
         
         #-------------- Plot source positions from multiple image catalog --------------#
         SX = []
         SY = []
+        XR = []
+        YR = []
         for mult in fits_image.lt.mult.cat :
-            xr, yr = world_to_relative( mult['ra'], mult['dec'], (ra_center, dec_center) )
+            xr, yr = world_to_relative( mult['ra'], mult['dec'], self.center_world )
+            XR.append(xr)
+            YR.append(yr)
             sx, sy = self.LensModel.ray_shooting(xr, yr, self.LensModel_kwargs)
             SX.append(sx - self.source_center_coordinates[0])
             SY.append(sy - self.source_center_coordinates[1])
@@ -173,12 +170,12 @@ class image_simulator :
         #-------------- Set the PixelGrid for lenstronomy --------------#
         transform_pix2angle = np.array([[1, 0], [0, 1]]) * fits_image.pix_deg_scale*3600
         
-        npix = round(self._SquareOfInterest_side_arcsec / (fits_image.pix_deg_scale*3600))
+        npix = self._crop_npix
         self.PixelGrid_kwargs = {'nx': npix,
-                                        'ny': npix,  # number of pixels per axis
-                                        'ra_at_xy_0': -offset_arcsec,
-                                        'dec_at_xy_0': -offset_arcsec,
-                                        'transform_pix2angle': transform_pix2angle} 
+                                    'ny': npix,  # number of pixels per axis
+                                    'ra_at_xy_0': - square_size_arcsec / 2,
+                                    'dec_at_xy_0': - square_size_arcsec / 2,
+                                    'transform_pix2angle': transform_pix2angle} 
         self.PixelGrid = PixelGrid(**self.PixelGrid_kwargs)
         
         
@@ -239,12 +236,14 @@ class image_simulator :
             exptime = 1000.
         else :
             exptime = self.individual_filter.header['EXPTIME']
-        self.ImageData_kwargs = {'image_data': self.individual_filter.image_data[round(y0)-npix:round(y0),round(x0):round(x0)+npix],
+
+        self.image_data = self.individual_filter.image_data[ self._crop_y0 - self._crop_npix : self._crop_y0, self._crop_x0 : self._crop_x0 + self._crop_npix ]
+        self.ImageData_kwargs = {'image_data': self.image_data,
                                 'background_rms': self.individual_filter.rms,
                                 'exposure_time': exptime,
                                 'transform_pix2angle': transform_pix2angle,
-                                'ra_at_xy_0': -offset_arcsec,
-                                'dec_at_xy_0': -offset_arcsec}
+                                'ra_at_xy_0': - square_size_arcsec / 2,
+                                'dec_at_xy_0': - square_size_arcsec / 2}
         self.ImageData = ImageData(**self.ImageData_kwargs)
         
         #-------------- PSF --------------#
@@ -265,8 +264,127 @@ class image_simulator :
                                 'supersampling_convolution': True}
         
         self.sigma = 0.00036
-    
+
+        #-------------- Image plane: observed / simulated / residual / RGB (linked zoom & pan) --------------#
+        self.image_plane_observed = pg.ImageView()
+        self.image_plane_simulated = pg.ImageView()
+        self.image_plane_residual = pg.ImageView()
+        self.image_plane_rgb = pg.ImageView()
+        self.image_plane_plot = self.image_plane_simulated  # backward compatibility
+
+        sim0 = np.zeros_like(self.image_data)
+        rgb_data = fits_image.image_data[ self._crop_y0 - self._crop_npix : self._crop_y0, self._crop_x0 : self._crop_x0 + self._crop_npix ]
+        self.simulated_image = sim0
+        self.residual_image = self.image_data - sim0
+        self.rgb_image_data = rgb_data
+        self.image_plane_observed.setImage(self.image_data[::-1, :])
+        self.image_plane_simulated.setImage(sim0[::-1, :])
+        self.image_plane_residual.setImage(self.residual_image[::-1, :])
+        self.image_plane_rgb.setImage(rgb_data[::-1, ...])
+
+        x_cc = (self._lt_curve_coords_relative_broken[0] - self._SquareOfInterest_xr_bottomleft) / (fits_image.pix_deg_scale * 3600)
+        y_cc = self.image_data.shape[0] - (self._lt_curve_coords_relative_broken[1] - self._SquareOfInterest_yr_bottomleft) / (fits_image.pix_deg_scale * 3600)
+        pen_cc = pg.mkPen(color=[255, 0, 255, 255], width=4.0001)
+        self.critical_curve_plots = []
+        for iv in (self.image_plane_observed, self.image_plane_simulated, self.image_plane_residual, self.image_plane_rgb):
+            cc = pg.PlotDataItem()
+            cc.setPen(pen_cc)
+            cc.setData(x_cc, y_cc)
+            iv.addItem(cc)
+            self.critical_curve_plots.append(cc)
+
+            mult_plot = pg.ScatterPlotItem()
+            mult_plot.setData(np.array(XR)/fits_image.pix_deg_scale/3600 + self._crop_npix/2, self._crop_npix/2 - np.array(YR)/fits_image.pix_deg_scale/3600)
+            iv.addItem(mult_plot)
+        self.critical_curve_plot = self.critical_curve_plots[1]
+
+        vb0 = self.image_plane_observed.getView()
+        vb1 = self.image_plane_simulated.getView()
+        vb2 = self.image_plane_residual.getView()
+        vb3 = self.image_plane_rgb.getView()
+        vb1.setXLink(vb0)
+        vb1.setYLink(vb0)
+        vb2.setXLink(vb0)
+        vb2.setYLink(vb0)
+        vb3.setXLink(vb0)
+        vb3.setYLink(vb0)
+
+        # Fixed proportions: top half = Simulated | Observed (each half width); bottom half = Residual (full width).
+        # Outer horizontal split (source | image plane) remains adjustable via QSplitter.
+        implane_v = QVBoxLayout(self._imsim_implane_layout)
+        implane_v.setContentsMargins(0, 0, 0, 0)
+        implane_v.setSpacing(2)
+
+        top_row = QWidget()
+        top_h = QHBoxLayout(top_row)
+        top_h.setContentsMargins(0, 0, 0, 0)
+        top_h.setSpacing(2)
+
+        sim_col = QWidget()
+        sim_v = QVBoxLayout(sim_col)
+        sim_v.setContentsMargins(0, 0, 0, 0)
+        sim_v.setSpacing(2)
+        sim_v.addWidget(QtWidgets.QLabel("Simulated"))
+        sim_v.addWidget(self.image_plane_simulated, stretch=1)
+
+        obs_col = QWidget()
+        obs_v = QVBoxLayout(obs_col)
+        obs_v.setContentsMargins(0, 0, 0, 0)
+        obs_v.setSpacing(2)
+        obs_v.addWidget(QtWidgets.QLabel("Observed"))
+        obs_v.addWidget(self.image_plane_observed, stretch=1)
+
+        top_h.addWidget(sim_col, stretch=1)
+        top_h.addWidget(obs_col, stretch=1)
+
+        bottom_row = QWidget()
+        bottom_h = QHBoxLayout(bottom_row)
+        bottom_h.setContentsMargins(0, 0, 0, 0)
+        bottom_h.setSpacing(2)
+
+        res_col = QWidget()
+        res_v = QVBoxLayout(res_col)
+        res_v.setContentsMargins(0, 0, 0, 0)
+        res_v.setSpacing(2)
+        res_v.addWidget(QtWidgets.QLabel("Residual (obs − sim)"))
+        res_v.addWidget(self.image_plane_residual, stretch=1)
+
+        rgb_col = QWidget()
+        rgb_v = QVBoxLayout(rgb_col)
+        rgb_v.setContentsMargins(0, 0, 0, 0)
+        rgb_v.setSpacing(2)
+        rgb_v.addWidget(QtWidgets.QLabel("RGB"))
+        rgb_v.addWidget(self.image_plane_rgb, stretch=1)
+
+        bottom_h.addWidget(res_col, stretch=1)
+        bottom_h.addWidget(rgb_col, stretch=1)
+
+        implane_v.addWidget(top_row, stretch=1)
+        implane_v.addWidget(bottom_row, stretch=1)
+
+        self.image_plane_views = {
+            'observed': self.image_plane_observed,
+            'simulated': self.image_plane_simulated,
+            'residual': self.image_plane_residual,
+            'rgb': self.image_plane_rgb,
+        }
+
+        self.filter_image = ImageFilter(self)
+        for _iv in (self.image_plane_observed, self.image_plane_simulated, self.image_plane_residual, self.image_plane_rgb):
+            _iv.installEventFilter(self.filter_image)
+
+        self.window.show()
         
+        # Initial width ratio source:image = 3:4
+        x_left, x_right = self._imsim_layout.sizes()
+        total_size = x_left + x_right
+        ratio = 3/7
+        x_left_new = round(total_size * ratio)
+        x_right_new = total_size - x_left_new
+        self._imsim_layout.setSizes([x_left_new, x_right_new])
+
+        # Initialize image-plane y-range to full image height for all linked views.
+        vb0.setYRange(0, self.image_data.shape[0], padding=0)
         
         #fits_image.lt.lt.set_field(self._initial_field)
         self.previous_state_current_ROI = self.ROI.getState()

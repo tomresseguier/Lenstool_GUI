@@ -88,14 +88,27 @@ class SourceFilter(QObject):
                                                                      #kwargs_ps=kwargs_ps,
                                                                      #kwargs_lens_light=kwargs_light_lens,
                                                                      kwargs_lens=self.imsim.LensModel_kwargs, unconvolved=False)
-            self.imsim.image_plane_plot.setImage(self.imsim.simulated_image[::-1,:])
+
+            # Preserve current linked image-plane view range when refreshing images.
+            vb_ref = self.imsim.image_plane_observed.getView()
+            x_range, y_range = vb_ref.viewRange()
+
+            self.imsim.image_plane_simulated.setImage(self.imsim.simulated_image[::-1, :], autoRange=False)
+            residual = self.imsim.image_data - self.imsim.simulated_image
+            self.imsim.residual_image = residual
+            self.imsim.image_plane_residual.setImage(residual[::-1, :], autoRange=False)
             
             ######### Plot the critical curve #########
             x = (self.imsim._lt_curve_coords_relative_broken[0] - self.imsim._SquareOfInterest_xr_bottomleft) / (self.imsim.fits_image.pix_deg_scale*3600)
             y = self.imsim.simulated_image.shape[0] - (self.imsim._lt_curve_coords_relative_broken[1] - self.imsim._SquareOfInterest_yr_bottomleft) / (self.imsim.fits_image.pix_deg_scale*3600)
-            self.imsim.critical_curve_plot.setData(x, y)
+            for cc in getattr(self.imsim, 'critical_curve_plots', [self.imsim.critical_curve_plot]):
+                cc.setData(x, y)
+            # Re-apply the original range once updates are done.
+            vb_ref.setXRange(x_range[0], x_range[1], padding=0)
+            vb_ref.setYRange(y_range[0], y_range[1], padding=0)
             print('done')
             
+
             #solver = LensEquationSolver(self.imsim.lens_model)
             
             
@@ -226,27 +239,114 @@ class ImageFilter(QObject) :
     def __init__(self, imsim) :
         super().__init__()
         self.imsim = imsim
+        
+        self._hover_text_items = {}
+        for name, iv in getattr(self.imsim, 'image_plane_views', {}).items():
+            txt = pg.TextItem(anchor=(0, 1), color=(0, 255, 255))
+            txt.hide()
+            iv.addItem(txt)
+            self._hover_text_items[name] = txt
+            iv.getView().scene().sigMouseMoved.connect(
+                lambda pos, _name=name, _iv=iv: self._update_hover_text(_name, _iv, pos)
+            )
+
+            # Use pyqtgraph's mouse click signal (scene coordinates) for accurate mapping.
+            iv.getView().scene().sigMouseClicked.connect(
+                lambda ev, _name=name, _iv=iv: self._handle_image_double_click(_name, _iv, ev)
+            )
+
+    def _handle_image_double_click(self, panel_name, image_view, ev):
+        """Map a double-click in an image panel to a source-plane point."""
+        try:
+            if not ev.double() or ev.button() != Qt.LeftButton:
+                return
+        except Exception:
+            return
+
+        vb = image_view.getView()
+        scene_pos = ev.scenePos()
+        data_pos = vb.mapSceneToView(scene_pos)
+        x, y = data_pos.x(), data_pos.y()
+        
+        # Convert from local pixel to full-image pixel coordinates (bottom-origin convention).
+        x_im_full = self.imsim._crop_x0 + x
+        y_im_full = self.imsim._crop_y0 - y
+
+        ra, dec = self.imsim.fits_image.image_to_world(x_im_full, y_im_full)
+        xr, yr = world_to_relative(ra, dec, self.imsim.center_world)
+        src_xr, src_yr = self.imsim.LensModel.ray_shooting(xr, yr, self.imsim.LensModel_kwargs)
+        src_xr = src_xr - self.imsim.source_center_coordinates[0]
+        src_yr = src_yr - self.imsim.source_center_coordinates[1]
+
+        if not hasattr(self.imsim, 'interactive_source_plot') :
+            self.imsim.interactive_source_plot = pg.ScatterPlotItem()
+            self.imsim.source_plane_widget.addItem(self.imsim.interactive_source_plot)
+        self.imsim.interactive_source_plot.setData([src_xr], [src_yr], symbol='x')
+
+    def _get_panel_data(self, panel_name):
+        if panel_name == 'observed':
+            return self.imsim.image_data
+        if panel_name == 'simulated':
+            return self.imsim.simulated_image
+        if panel_name == 'residual':
+            return self.imsim.residual_image
+        if panel_name == 'rgb':
+            return self.imsim.rgb_image_data
+        return None
+
+    def _update_hover_text(self, panel_name, image_view, scene_pos):
+        text_item = self._hover_text_items.get(panel_name)
+        if text_item is None:
+            return
+
+        data = self._get_panel_data(panel_name)
+        if data is None:
+            text_item.hide()
+            return
+
+        vb = image_view.getView()
+        data_pos = vb.mapSceneToView(scene_pos)
+        x = int(np.floor(data_pos.x()))
+        y_plot = int(np.floor(data_pos.y()))
+        h, w = data.shape[:2]
+        if x < 0 or x >= w or y_plot < 0 or y_plot >= h:
+            text_item.hide()
+            return
+
+        # Images are displayed flipped in y (data[::-1, :]); convert plotted y to array row.
+        y = h - 1 - y_plot
+        val = data[y, x]
+        if np.ndim(val) == 0:
+            value_str = f"{float(val):.4g}"
+        else:
+            value_str = "(" + ", ".join(f"{float(v):.4g}" for v in np.asarray(val).ravel()) + ")"
+
+        text_item.setText(f"{value_str}")
+        text_item.setPos(data_pos.x() + 1, data_pos.y() + 1)
+        text_item.show()
+
+    def _hide_hover_text(self, panel_name=None):
+        if panel_name is None:
+            for txt in self._hover_text_items.values():
+                txt.hide()
+            return
+        txt = self._hover_text_items.get(panel_name)
+        if txt is not None:
+            txt.hide()
+
     def eventFilter(self, obj, event) :
         if event.type() == QEvent.KeyPress and event.key() == Qt.Key_Space :
             print("Spacebar function not yet implemented.")
             return True  # Stop propagation
-        if event.type() == QEvent.MouseButtonDblClick :
-            if event.button() == Qt.LeftButton :
-                im_coords = self.imsim.image_plane_plot.getView().mapSceneToView(event.pos())
-                x_im_full = self.imsim.anchor[0] + im_coords.x()
-                y_im_full = self.imsim.anchor[1] - im_coords.y()
-                ra, dec = self.imsim.fits_image.image_to_world(x_im_full, y_im_full) #to do: replace with filter data
-                xr, yr = world_to_relative(ra, dec, self.imsim.center_world)
-                src_xr, src_yr = self.imsim.LensModel.ray_shooting(xr, yr, self.imsim.LensModel_kwargs)
-                src_xr = src_xr - self.imsim.source_center_coordinates[0]
-                src_yr = src_yr - self.imsim.source_center_coordinates[1]
-                
-                if not hasattr(self.imsim, 'interactive_source_plot') :
-                    self.imsim.interactive_source_plot = pg.ScatterPlotItem()
-                    self.imsim.source_plane_widget.addItem(self.imsim.interactive_source_plot)
-                self.imsim.interactive_source_plot.setData([src_xr], [src_yr], symbol='x')
-
-                return True  # Stop further processing of this event
+        if event.type() == QEvent.Leave:
+            for _name, _iv in getattr(self.imsim, 'image_plane_views', {}).items():
+                if obj is _iv:
+                    self._hide_hover_text(_name)
+                    break
+            else:
+                self._hide_hover_text()
+            return False
+        # Double-click mapping is handled via sigMouseClicked (scene coords) in __init__.
         #return super().eventFilter(obj, event)
         return False     # Let other events pass through
 

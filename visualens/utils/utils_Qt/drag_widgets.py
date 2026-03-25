@@ -3,7 +3,7 @@ from PyQt5.QtCore import Qt, QTimer, QPointF
 import pyqtgraph as pg
 from pyqtgraph.Qt import QtCore
 
-from .utils_general import make_handles
+from .utils_general import make_handles, transform_ROI_params
 from .sliders import TripleSlider
 from ...lenstool_model.simulate_image.utils import get_light_model_ranges
 
@@ -238,6 +238,8 @@ class DragPlotWidget_special(ThrottledPlotWidget):
         self.extra_sliders = extra_sliders
         # This line because the many paint events can crash pyQt
         #self._run_low_performance_settings()
+        axis = self.getAxis('left')
+        axis.setWidth(0)
         
     def initUI(self):
         self.timer = QTimer()
@@ -308,6 +310,7 @@ class DragPlotWidget_special(ThrottledPlotWidget):
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
             for roi in self.roi_list :
+                remove_dpos_square_overlay(self, roi)
                 self.removeItem(roi)
                 del roi
             self.last_roi = None
@@ -373,6 +376,7 @@ class DragPlotWidget_special(ThrottledPlotWidget):
             roi_list_new = []
             for roi in self.roi_list :
                 if roi.selected :
+                    remove_dpos_square_overlay(self, roi)
                     self.removeItem(roi)
                     del roi
                 else :
@@ -497,6 +501,72 @@ class SelectableCircleROI(pg.CircleROI):
     #    scene_pos = self.pos() + local_anchor
     #    self.proxy.setPos(scene_pos)
 
+def _update_dpos_square_overlay(plot_widget, roi):
+    """Axis-aligned dashed square centered on ROI, half-side = |dpos.vmid| (side = 2*|dpos|)."""
+    item = getattr(roi, "_dpos_square_plot", None)
+    if item is None:
+        return
+    if roi not in getattr(plot_widget, "roi_list", []):
+        return
+    if not getattr(roi, "isVisible", lambda: True)():
+        item.setVisible(False)
+        return
+    sliders = getattr(roi, "sliders", None)
+    if not sliders or "dpos" not in sliders:
+        item.setVisible(False)
+        return
+    d = abs(float(sliders["dpos"].vmid))
+    if d < 1e-30:
+        d = 1e-30
+    x_center, y_center, _, _, _ = transform_ROI_params(roi)
+    xs = [x_center - d, x_center + d, x_center + d, x_center - d, x_center - d]
+    ys = [y_center - d, y_center - d, y_center + d, y_center + d, y_center - d]
+    item.setData(xs, ys)
+    item.setVisible(True)
+
+
+def attach_dpos_square_overlay(plot_widget, roi):
+    """Add dashed square for dpos search range; call after sliders include 'dpos'."""
+    if not getattr(roi, "sliders", None) or "dpos" not in roi.sliders:
+        return
+    remove_dpos_square_overlay(plot_widget, roi)
+    pen = pg.mkPen(color=(255, 255, 255, 200), width=1, style=Qt.DashLine)
+    item = pg.PlotDataItem()
+    item.setPen(pen)
+    plot_widget.addItem(item)
+    roi._dpos_square_plot = item
+
+    def _on_change(*_a, **_k):
+        _update_dpos_square_overlay(plot_widget, roi)
+
+    roi._dpos_square_update = _on_change
+    roi.sigRegionChanged.connect(_on_change)
+    roi.sliders["dpos"].valuesChanged.connect(_on_change)
+    _on_change()
+
+
+def remove_dpos_square_overlay(plot_widget, roi):
+    item = getattr(roi, "_dpos_square_plot", None)
+    if item is None:
+        return
+    if hasattr(roi, "_dpos_square_update"):
+        try:
+            roi.sigRegionChanged.disconnect(roi._dpos_square_update)
+        except (TypeError, RuntimeError):
+            pass
+        try:
+            if "dpos" in getattr(roi, "sliders", {}):
+                roi.sliders["dpos"].valuesChanged.disconnect(roi._dpos_square_update)
+        except (TypeError, RuntimeError):
+            pass
+        del roi._dpos_square_update
+    try:
+        plot_widget.removeItem(item)
+    except Exception:
+        pass
+    roi._dpos_square_plot = None
+
+
 def attach_sliders(self, params) :
     if self.extra_sliders :
         if self.last_roi.type_str in ['SERSIC', 'SERSIC_ELLIPSE'] :
@@ -536,7 +606,10 @@ def attach_sliders(self, params) :
                 single_handle=single_handle,
             )
         self.last_roi.sliders[param].setParentItem(self.last_roi)
-        
+
+    if getattr(self.last_roi, "sliders", None) and "dpos" in self.last_roi.sliders:
+        attach_dpos_square_overlay(self, self.last_roi)
+
 def hide_roi(self):
     """Hide ROI and any attached sliders (if present)."""
     self.setVisible(False)
@@ -545,6 +618,9 @@ def hide_roi(self):
             s.hide_slider()
         except Exception:
             pass
+    sq = getattr(self, "_dpos_square_plot", None)
+    if sq is not None:
+        sq.setVisible(False)
 
 def show_roi(self):
     """Show ROI and any attached sliders (if present)."""
@@ -554,6 +630,9 @@ def show_roi(self):
             s.show_slider()
         except Exception:
             pass
+    sq = getattr(self, "_dpos_square_plot", None)
+    if sq is not None:
+        sq.setVisible(True)
 
 def handle_mouse_click(self, event):
     if event.button() == QtCore.Qt.LeftButton :

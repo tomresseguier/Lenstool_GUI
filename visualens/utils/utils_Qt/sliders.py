@@ -15,6 +15,8 @@ class TripleSlider(pg.GraphicsObject):
                  PlotWidget=None, roi=None, offset=0., log_scale=False,
                  single_handle=False) :
         super().__init__()
+        #self.debug = 0
+        self.param_name = label
         #self.roi = roi
         self.offset = offset
         self.offset_text = 0. if above_text is None else 20.
@@ -85,8 +87,7 @@ class TripleSlider(pg.GraphicsObject):
         
         if above_text is not None :
             self.add_above_text(above_text)
-            
-        self.param_name = label
+        
         if label is not None :
             self.label_str = label + ": "
             self._label_font = QFont()
@@ -112,6 +113,7 @@ class TripleSlider(pg.GraphicsObject):
 
     def _update_from_roi(self):
         """If bound sigma or R_sersic, update vmid from ROI geometry."""
+        #print('Debug: running _update_from_roi')
         if self._syncing_from_slider:
             return
         if getattr(self, "roi", None) is None or getattr(self, "param_name", None) is None:
@@ -280,6 +282,8 @@ class TripleSlider(pg.GraphicsObject):
     
     def adjust_all(self) :
         """Update slider scale to maintain constant size regardless of zoom level"""
+        #print('Debug: running adjust_all', self.roi, self.param_name, self.debug)
+        #self.debug += 1
         # Update transform to account for scale and rotation
         self.update_tranform()
         # Move the slider so that it's top matches the anchor point
