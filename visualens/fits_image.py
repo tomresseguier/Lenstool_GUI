@@ -259,14 +259,14 @@ class fits_image :
         return 'Magnitudes calculated'
     
     
-    def make_catalog(self, cat, color=[1., 1., 0], units=None) :
+    def make_catalog(self, cat, color=[1., 1., 0], units=None, verbose=True) :
         if self.qt_image is None :
             self.plot_image()
         #to_return = catalog(cat, self.image_data, self.wcs, self.qt_image, window=self.window, image_path=self.image_path, 
         #                            image_widget = self.image_widget, qt_layout=self.qt_layout, color=color, 
         #                            mag_colnames=mag_colnames, mpl_fig=self.fig, mpl_ax=self.ax, 
         #                            pix_deg_scale=self.pix_deg_scale, units=units)
-        to_return = catalog(cat, self, color=color, units=units)
+        to_return = catalog(cat, self, color=color, units=units, verbose=verbose)
         return to_return
     
     def import_catalog(self, cat, color=None, units='pixel') :
@@ -295,11 +295,11 @@ class fits_image :
     
     
         
-    def import_lenstool(self, model_dir, use_wrapper=None) :
+    def import_lenstool(self, model_dir, use_wrapper=None, compute_predictions=True) :
         #self.lt_dir = model_dir
         #if hasattr(self, 'lt'):
         #    del self.lt
-        self.lt = lenstool_model(model_dir, self, use_wrapper=use_wrapper)
+        self.lt = lenstool_model(model_dir, self, use_wrapper=use_wrapper, compute_predictions=compute_predictions)
     
     
     

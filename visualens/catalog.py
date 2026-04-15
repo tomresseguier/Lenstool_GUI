@@ -28,7 +28,7 @@ def open_cat(cat_path) :
     else :
         with open(cat_path, 'r') as raw_cat :
             first_line, second_line = raw_cat.readlines()[0:2]
-            print(first_line)
+            #print(first_line)
             start_line = 1 if second_line.startswith('--') else 0
         if len(first_line.split()) > len(first_line.split(',')) :
             cat_df = pd.read_csv(cat_path, sep='\s+', skip_blank_lines=True, comment='#')[start_line:].apply(pd.to_numeric, errors='coerce')
@@ -42,8 +42,8 @@ def make_uniform_names_cat(cat, self) :
     uniform_names_cat = cat.copy()
     colnames_dict = make_colnames_dict(cat, use_default_names=self.use_default_names)
     
-    print('Column names to be used:')
-    print(colnames_dict)
+    self._vprint('Column names to be used:')
+    self._vprint(colnames_dict)
     
     for colname in colnames_dict.keys() :
         if colnames_dict[colname] is not None :
@@ -110,12 +110,13 @@ def initialize_catalog(cat, self) :
 
 
 class catalog :
-    def __init__(self, cat, fits_image, color=[0., 1., 1., 0., 0.5], use_default_names=True, units=None) :
+    def __init__(self, cat, fits_image, color=[0., 1., 1., 0., 0.5], use_default_names=True, units=None, verbose=True) :
         self.fits_image = fits_image
         
         self.xy_axes = None
         self.use_default_names = use_default_names
         self.units = units
+        self.verbose = verbose
         
         self.cat, self.path = initialize_catalog(cat, self)
         self.qtItems = [] #np.empty(len(self.cat), dtype=PyQt5.QtWidgets.QGraphicsEllipseItem)
@@ -132,6 +133,10 @@ class catalog :
         #self.is_plotted = False
         #self.is_plotted_column = False
     
+    
+    def _vprint(self, *args, **kwargs) :
+        if self.verbose :
+            print(*args, **kwargs)
     
     def make_mask_naninf(self, xy_axes) :
         x_axis = self.cat[xy_axes[0]]
@@ -151,7 +156,7 @@ class catalog :
     
     def plot(self, scale=1., color=None, text_column=None, linewidth=3, marker=None) :
         self.clear()
-        print('Plotting...')
+        self._vprint('Plotting...')
         x = self.cat['x']
         y = self.cat['y']
         semi_major = self.cat['a'] * scale
@@ -167,9 +172,9 @@ class catalog :
     
     def plot_column(self, text_column, color=None, n_digit=3):
         self.clear_column()
-        print('Plotting...')
+        self._vprint('Plotting...')
         if text_column not in self.cat.colnames:
-            print(f"Column '{text_column}' not found in catalog")
+            self._vprint(f"Column '{text_column}' not found in catalog")
             return
         
         color = self.color if color is None else color
@@ -199,7 +204,7 @@ class catalog :
     
     def clear(self) :
         #qtItems_list = self.fits_image.qt_image.getView().allChildItems()
-        print('Clearing galaxies...')
+        self._vprint('Clearing galaxies...')
         for qtItem in self.qtItems :
             self.fits_image.qt_image.removeItem(qtItem)
             del qtItem
@@ -208,7 +213,7 @@ class catalog :
         self.clear_column()
     
     def clear_column(self) :
-        print('Clearing column labels...')
+        self._vprint('Clearing column labels...')
         for text_item in self.qtItems_column:
             self.fits_image.qt_image.removeItem(text_item)
             del text_item
@@ -304,7 +309,7 @@ class catalog :
     def save_selection_mask(self, path=None) :
         self.selection_mask_path = self.make_path(path, self.path, 'selection_mask.npy')
         np.save(self.selection_mask_path, self.selection_mask)
-        print("Selection mask saved at " + self.selection_mask_path)
+        self._vprint("Selection mask saved at " + self.selection_mask_path)
         
     def load_selection_mask(self, path=None) :
         self.selection_mask_path = self.make_path(path, self.path, 'selection_mask.npy')
@@ -437,7 +442,7 @@ class catalog :
                         f"{row['a']:8.6f}  {row['b']:8.6f}  {theta:8.6f}  "
                         f"{z:8.6f}  {mag:8.6f}\n")
                 f.write(line)
-        print('Selected sources exported at ' + file_path)
+        self._vprint('Selected sources exported at ' + file_path)
                 
     
     def export_to_potfile(self, file_path=None, units='pixel') :
@@ -447,23 +452,23 @@ class catalog :
         if units=='pixel' :
             cat['a'] *= self.fits_image.pix_deg_scale*3600
             cat['b'] *= self.fits_image.pix_deg_scale*3600
-            print("Converting pixel units to arcsec")
+            self._vprint("Converting pixel units to arcsec")
         elif units=='deg' :
             cat['a'] *= 3600
             cat['b'] *= 3600
-            print("Converting deg units to arcsec")
+            self._vprint("Converting deg units to arcsec")
         else :
             if units!='arcsec' :
-                print("Units not recognized, exporting as is")
+                self._vprint("Units not recognized, exporting as is")
         
         mag_col = self.xy_axes[0] if self.xy_axes is not None else input('select magnitude column to be used in Lenstool potfile (press return directly to just populate with zeros): ' + str(self.cat.colnames))
         if mag_col in self.cat.colnames :
-            print(f"Using '{mag_col}' as mag column")
+            self._vprint(f"Using '{mag_col}' as mag column")
             sort_array = np.argsort(cat[mag_col])
             sorted_cat = cat[sort_array]
         else :
             mag_col = None
-            print("No valid column selected. Creating potfile without magnitude information.")
+            self._vprint("No valid column selected. Creating potfile without magnitude information.")
             sorted_cat = cat.copy()
         
         lines = []
@@ -479,7 +484,7 @@ class catalog :
                 file_path = os.path.join( os.path.dirname(self.path), 'exported_potfile.lenstool')
             else :
                 file_path = os.path.join( os.path.dirname(self.fits_image.image_path), 'exported_potfile.lenstool')
-        print('Exporting selected sources to ' + file_path)
+        self._vprint('Exporting selected sources to ' + file_path)
         with open(file_path, 'w') as file:
             file.writelines(lines)
     
@@ -508,29 +513,129 @@ class catalog :
                 if col_to_transfer in self.cat.colnames:
                     col_to_transfer = col_to_transfer + '_CAT2'
                 self.cat[col_to_transfer] = temp_cat[col_to_transfer]
-                print(f'###############\nColumn {col_to_transfer} added.\n###############')
+                self._vprint(f'###############\nColumn {col_to_transfer} added.\n###############')
             else:
-                print(f'{col_to_transfer} not found in {which_cat}')
+                self._vprint(f'{col_to_transfer} not found in {which_cat}')
         else:
-            print(f'No {which_cat}')
+            self._vprint(f'No {which_cat}')
         return match_idx
     
-    def export_to_LaTeX(self, columns=[]) :
+    def export_to_LaTeX(self, columns=[], file_path=None, use_best_fit_value=False) :
         if len(columns)==0 :
-            columns = self.cat.colnames
+            columns = list(self.cat.colnames)
         
-        table_str = ("\\begin{deluxetable*}{l" + " c"*len(columns) + "}\n"
+        # Detect triplets/quadruplets involving _16/_50/_84_percentile columns and fold
+        # them into a single column with asymmetric uncertainties as super/subscript.
+        #
+        # use_best_fit_value=True  → value source is the base column (name);
+        #                            _50_percentile columns are suppressed entirely.
+        # use_best_fit_value=False → value source is name_50_percentile when available,
+        #                            falling back to the base column otherwise.
+        columns_set = set(columns)
+        percentile_map = {}   # base_col -> (col_16, col_value, col_84)
+        percentile_cols = set()
+        for col in columns :
+            if col.endswith('_16_percentile') :
+                base   = col[:-len('_16_percentile')]
+                col_84 = base + '_84_percentile'
+                col_50 = base + '_50_percentile'
+                if col_84 not in columns_set :
+                    continue
+                # Require the base column when using best-fit values; otherwise it is
+                # optional because _50_percentile can stand in as the display column.
+                if use_best_fit_value and base not in columns_set :
+                    continue
+                if not use_best_fit_value and base not in columns_set and col_50 not in columns_set :
+                    continue
+
+                col_value = base if (use_best_fit_value or col_50 not in columns_set) else col_50
+                percentile_map[base] = (col, col_value, col_84)
+                percentile_cols.add(col)
+                percentile_cols.add(col_84)
+                if col_50 in columns_set :
+                    percentile_cols.add(col_50)
+
+        # When using the median as central value, the base column is not necessarily
+        # in the catalog; add a sentinel so display_columns still contains it.
+        if not use_best_fit_value :
+            for base, (col_16, col_value, col_84) in percentile_map.items() :
+                if base not in columns_set :
+                    columns_set.add(base)
+                    # Insert the synthetic base name right before its _16_percentile column
+                    idx = columns.index(col_16)
+                    columns.insert(idx, base)
+
+        # Merge z_in / z_opt into a single 'z' column.
+        # z_in takes priority; z_opt is used (marked with *) when z_in is absent or invalid.
+        merge_z = 'z_in' in columns_set and 'z_opt' in columns_set
+        suppressed_cols = percentile_cols.copy()
+        if merge_z :
+            suppressed_cols.add('z_opt')
+
+        # Only display the base columns; percentile partners are merged into them.
+        display_columns = [col for col in columns if col not in suppressed_cols]
+
+        def _colhead(col) :
+            return 'z' if (merge_z and col == 'z_in') else col
+
+        _UNITS_MAP = {
+            'ra'    : 'deg',
+            'dec'   : 'deg',
+            'theta' : 'deg',
+            'x'     : 'pix',
+            'y'     : 'pix',
+            'a'     : 'pix',
+            'b'     : 'pix',
+        }
+        def _units(col) :
+            name = _colhead(col)
+            if name in _UNITS_MAP :
+                return _UNITS_MAP[name]
+            if 'mag' in name.lower() :
+                return 'mag'
+            return ''
+
+        # Build both header lines; only emit the units line when at least one column
+        # has a known unit (otherwise the second line would be all empty colheads).
+        col_names_row = " &\n".join(f"\\colhead{{{_colhead(col)}}}" for col in display_columns)
+        units_entries = [f"({_units(col)})" if _units(col) else "" for col in display_columns]
+        has_units     = any(u for u in units_entries)
+        units_row     = " &\n".join(f"\\colhead{{{u}}}" for u in units_entries)
+
+        table_str = ("\\begin{deluxetable*}{l" + " c"*len(display_columns) + "}\n"
                      "\\tablecaption{\\label{tab:}}\n"
                      "\\tablewidth{\\columnwidth}\n"
                      "\\tablehead{\n")
-        for col in columns :
-            table_str += f"\\colhead{{{col}}} &\n"
-        table_str = table_str[:-3] + "\n"
+        if has_units :
+            table_str += col_names_row + " \\\\\n"
+            table_str += units_row + "\n"
+        else :
+            table_str += col_names_row + "\n"
         table_str += ("\\vspace{-0.07in}\\\\}\n"
                       "\\startdata\n")
         for src in self.cat :
-            for col in columns :
-                if type(src[col]) in [np.str_, str] :
+            for col in display_columns :
+                if merge_z and col == 'z_in' :
+                    z_in_val = src['z_in']
+                    if not (np.isnan(float(z_in_val)) or float(z_in_val) <= 0) :
+                        to_parse = f"{z_in_val:.3g}"
+                    else :
+                        if 'z_opt' in percentile_map :
+                            col_16, col_value, col_84 = percentile_map['z_opt']
+                            val    = src[col_value]
+                            upper  = src[col_84] - val
+                            lower  = val - src[col_16]
+                            to_parse = f"${val:.3g}^{{+{upper:.3g}}}_{{-{lower:.3g}}}$"
+                        else :
+                            z_opt_val = src['z_opt']
+                            to_parse = f"{z_opt_val:.3g}*"
+                elif col in percentile_map :
+                    col_16, col_value, col_84 = percentile_map[col]
+                    val    = src[col_value]
+                    upper  = src[col_84] - val
+                    lower  = val - src[col_16]
+                    to_parse = f"${val:.3g}^{{+{upper:.3g}}}_{{-{lower:.3g}}}$"
+                elif type(src[col]) in [np.str_, str] :
                     to_parse = src[col]
                 elif col in ['ra', 'dec'] :
                     to_parse = f"{src[col]:#.8g}"
@@ -541,7 +646,14 @@ class catalog :
         table_str += ("\\enddata\n"
                       "\\tablecomments{}\n"
                       "\\end{deluxetable*}")
-        print(table_str)
+        self._vprint(table_str)
+        
+        if file_path is None and self.path is not None :
+            file_path = os.path.join(os.path.dirname(self.path), 'catalog_latex_table.txt')
+        if file_path is not None :
+            with open(file_path, 'w') as f :
+                f.write(table_str)
+            self._vprint('LaTeX table saved at ' + file_path)
         return table_str
     
     #def export_thumbnails(self, mask=None, group_images=True) :

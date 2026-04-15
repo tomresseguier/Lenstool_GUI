@@ -63,9 +63,9 @@ def get_lenstool_file_path(model_dir, name) :
         return path_list[0]
 
 
-def import_multiple_images(self, mult_file_path_or_cat, fits_image, units=None, AttrName='mult', filled_markers=False, saturation=0.8) :
+def import_multiple_images(lenstool_model, mult_file_path_or_cat, fits_image, units=None, AttrName='mult', filled_markers=False, saturation=0.8) :
     if type(mult_file_path_or_cat)==str :
-        multiple_images = Table(names=['id','family','broad_family','ra','dec','a','b','theta','z','mag','confidence'], dtype=['str','str','str',*['float',]*8])
+        multiple_images = Table(names=['id','family','broad_family','ra','dec','a','b','theta','z_in','mag','z_opt', 'z','confidence'], dtype=['str','str','str',*['float',]*10])
         with open(mult_file_path_or_cat, 'r') as mult_file:
             for line in mult_file:
                 cleaned_line = line.strip()
@@ -74,60 +74,67 @@ def import_multiple_images(self, mult_file_path_or_cat, fits_image, units=None, 
                     row = [split_line[0], '---', '---'] #split_line[0][:-1]
                     for element in split_line[1:8] :
                         row.append(float(element))
-                    row.append(0)
+                    row.append(np.nan) # z_opt
+                    row.append(np.nan) # z
+                    row.append(np.nan) # confidence
                     multiple_images.add_row(row)
         multiple_images['theta'] = multiple_images['theta'] - fits_image.orientation
+        no_z_in_mask = multiple_images['z_in']==0.
+        multiple_images['z_in'][no_z_in_mask] = np.nan
     else :
         multiple_images = mult_file_path_or_cat.copy()
         
     multiple_images['family'], multiple_images['broad_family'], local_families, local_broad_families, multiple_images['confidence'] = find_families(multiple_images['id'])
-    add_optimized_redshifts(multiple_images, self.param_best)
-    setattr(self, AttrName, fits_image.make_catalog(multiple_images, units=units))
+    add_optimized_redshifts(multiple_images, lenstool_model.param_best)
+    
+    if 'z_in' in multiple_images.colnames and 'z_opt' in multiple_images.colnames :
+        for i, m in enumerate(multiple_images) :
+            m['z'] = m['z_in'] if not np.isnan(m['z_in']) else m['z_opt']
+    
+    setattr(lenstool_model, AttrName, fits_image.make_catalog(multiple_images, units=units, verbose=lenstool_model.verbose))
     
     if AttrName=='mult' :
-        self.families, indices = np.unique(self.families + local_families, return_index=True)
-        self.families = self.families[np.argsort(indices)].tolist()
+        lenstool_model.families, indices = np.unique(lenstool_model.families + local_families, return_index=True)
+        lenstool_model.families = lenstool_model.families[np.argsort(indices)].tolist()
         
-        self.broad_families, indices = np.unique(self.broad_families + local_broad_families, return_index=True)
-        self.broad_families = self.broad_families[np.argsort(indices)].tolist()
+        lenstool_model.broad_families, indices = np.unique(lenstool_model.broad_families + local_broad_families, return_index=True)
+        lenstool_model.broad_families = lenstool_model.broad_families[np.argsort(indices)].tolist()
         
-        self.which = self.broad_families.copy()
-        self.mult_colors = make_full_color_function(self.broad_families) #make_full_color_function(self.broad_families)
+        lenstool_model.which = lenstool_model.broad_families.copy()
+        lenstool_model.mult_colors = make_full_color_function(lenstool_model.broad_families) #make_full_color_function(lenstool_model.broad_families)
         
-    getattr(self, AttrName).saturation = saturation
+    getattr(lenstool_model, AttrName).saturation = saturation
     
     def make_to_plot_masks() :
         to_plot_masks = {}
-        #for i, name in enumerate(self.which) :
-        #    other_names_mask = np.full(len(self.which), True)
+        #for i, name in enumerate(lenstool_model.which) :
+        #    other_names_mask = np.full(len(lenstool_model.which), True)
         #    other_names_mask[i] = False
-        #    other_names = np.array(self.which)[other_names_mask]
+        #    other_names = np.array(lenstool_model.which)[other_names_mask]
         #    ambiguous_names = []
         #    for other_name in other_names :
         #        if other_name.startswith(name) :
         #           ambiguous_names.append(other_name)
-        #    to_plot_mask = np.full(len(getattr(self, AttrName).cat), False)
-        #    for j, im_id in enumerate(getattr(self, AttrName).cat['id']) :
+        #    to_plot_mask = np.full(len(getattr(lenstool_model, AttrName).cat), False)
+        #    for j, im_id in enumerate(getattr(lenstool_model, AttrName).cat['id']) :
         #        if im_id.startswith(name) and True not in [ im_id.startswith(ambiguous_name) for ambiguous_name in ambiguous_names ] :
         #            to_plot_mask[j] = True
         #    to_plot_masks[name] = to_plot_mask
-        for family in self.which :
-            to_plot_masks[family] = getattr(self, AttrName).cat['broad_family'] == family
+        for family in lenstool_model.which :
+            to_plot_masks[family] = getattr(lenstool_model, AttrName).cat['broad_family'] == family
             if len(np.unique(to_plot_masks[family]))==1 and np.unique(to_plot_masks[family])[0]==False :
-                to_plot_masks[family] = getattr(self, AttrName).cat['family'] == family
+                to_plot_masks[family] = getattr(lenstool_model, AttrName).cat['family'] == family
                 if len(np.unique(to_plot_masks[family]))==1 and np.unique(to_plot_masks[family])[0]==False :
-                    to_plot_masks[family] = getattr(self, AttrName).cat['id'] == family
+                    to_plot_masks[family] = getattr(lenstool_model, AttrName).cat['id'] == family
         return to_plot_masks
     def make_overall_mask() :
-        overall_mask = np.full(len(getattr(self, AttrName).cat), False)
+        overall_mask = np.full(len(getattr(lenstool_model, AttrName).cat), False)
         for mask in make_to_plot_masks().values() :
             overall_mask = np.logical_or(overall_mask, mask)
         return overall_mask
-    getattr(self, AttrName).masks = make_to_plot_masks
-    getattr(self, AttrName).mask = make_overall_mask
-    
-    lenstool_model = self
-    
+    getattr(lenstool_model, AttrName).masks = make_to_plot_masks
+    getattr(lenstool_model, AttrName).mask = make_overall_mask
+        
     def plot_multiple_images(self, scale=1, marker=None, filled_markers=filled_markers, color=None, mpl=False, fontsize=9,
                              make_thumbnails=False, square_size=150, margin=50, distance=200, savefig=False, square_thumbnails=True,
                              boost=[2,1.5,1], linewidth=1.7, text_color='white', text_alpha=0.5, saturation=saturation) :
@@ -249,7 +256,7 @@ def import_multiple_images(self, mult_file_path_or_cat, fits_image, units=None, 
     
     def plot_multiple_images_column(self, text_column, which='all', color=None) :
         if text_column not in self.cat.colnames:
-            print(f"Column '{text_column}' not found in catalog")
+            lenstool_model._vprint(f"Column '{text_column}' not found in catalog")
             return
         if not hasattr(self, 'qtItems_column'):
             self.qtItems_column = []
@@ -298,8 +305,8 @@ def import_multiple_images(self, mult_file_path_or_cat, fits_image, units=None, 
                 self.qtItems_column.append(text_item)
     
     
-    getattr(self, AttrName).plot = types.MethodType(plot_multiple_images, getattr(self, AttrName))
-    getattr(self, AttrName).plot_column = types.MethodType(plot_multiple_images_column, getattr(self, AttrName))
+    getattr(lenstool_model, AttrName).plot = types.MethodType(plot_multiple_images, getattr(lenstool_model, AttrName))
+    getattr(lenstool_model, AttrName).plot_column = types.MethodType(plot_multiple_images_column, getattr(lenstool_model, AttrName))
     
     def transfer_ids(self, id_name='id') :
         if fits_image.imported_cat is not None :
@@ -308,13 +315,13 @@ def import_multiple_images(self, mult_file_path_or_cat, fits_image, units=None, 
                 if id_name in self.cat.colnames :
                     id_name = id_name + '_CAT2'
                 self.cat[id_name] = temp_cat[id_name]
-                print('###############\nColumn ' + id_name + ' added.\n###############')
+                lenstool_model._vprint('###############\nColumn ' + id_name + ' added.\n###############')
             else :
-                print(id_name + ' not found in imported_cat')
+                lenstool_model._vprint(id_name + ' not found in imported_cat')
         else :
-            print('No imported_cat')
+            lenstool_model._vprint('No imported_cat')
     
-    getattr(self, AttrName).transfer_ids = types.MethodType(transfer_ids, getattr(self, AttrName))
+    getattr(lenstool_model, AttrName).transfer_ids = types.MethodType(transfer_ids, getattr(lenstool_model, AttrName))
         
     
 def import_sources(self, predicted_sources_path, fits_image, AttrName='source', units='pixel', filled_markers=False) :
@@ -324,7 +331,7 @@ def import_sources(self, predicted_sources_path, fits_image, AttrName='source', 
     for line in source_lines :
         sources.add_row(line.split())
     sources['ra'], sources['dec'] = self.relative_to_world(sources['ra'], sources['dec'])
-    self.source = fits_image.make_catalog(sources, color=[1.,0.5,0.], units='arcsec')
+    self.source = fits_image.make_catalog(sources, color=[1.,0.5,0.], units='arcsec', verbose=self.verbose)
 
 
 def export_thumbnails(self, group_images=True, square_thumbnails=True, square_size=150, margin=50, distance=200, export_dir=None, boost=True, make_broad_view=True, broad_view_params=None) :
@@ -405,6 +412,8 @@ def export_thumbnails(self, group_images=True, square_thumbnails=True, square_si
 
 
 def add_optimized_redshifts(mult, param_best) :
+    if not 'z_opt' in mult.colnames :
+        mult.add_column(np.full(len(mult), np.nan), name='z_opt')
     if param_best is not None :
         if 'image' in param_best :
             if 'z_m_limit' in param_best['image'] :
@@ -421,13 +430,9 @@ def add_optimized_redshifts(mult, param_best) :
                     
                     z = l[i+1]
                     for name in names :
-                        fam = mult[mult['id']==name][0]['family']
-                        mult['z'][mult['family']==fam] = z
-    else :
-        print('Some multiple images have unknown redshifts --> setting to z=1. to create catalogs of sources and predicted images, and lensing quantities.')
-        for m in mult :
-            if m['z']==0. :
-                m['z'] = 1.
+                        if name in mult['id'] :
+                            fam = mult[mult['id']==name][0]['family']
+                            mult['z_opt'][mult['family']==fam] = z
 
 
 class curves :

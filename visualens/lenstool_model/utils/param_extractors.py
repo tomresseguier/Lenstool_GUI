@@ -118,7 +118,7 @@ def read_bayes_file(file_path, convert_to_kpc=True, z=None):
             else:
                 break
     
-    df = pd.read_csv(file_path, delim_whitespace=True, comment='#', header=None)
+    df = pd.read_csv(file_path, sep='\s+', comment='#', header=None)
     df.columns = columns
     
     if convert_to_kpc :
@@ -336,6 +336,68 @@ def make_param_latex_table(param_file_path, convert_to_kpc=True, z=None) :
     param_latex_table = os.path.join(model_dir, 'best_params.latex')
     open(param_latex_table, 'w').write(table_str)
     return table_str
+
+
+###############################################################################
+#Creates the best file for a single sample in order to calculate magnification uncertainties etc.
+#
+###############################################################################
+def make_single_sample_best_file(lt, sample_index) :
+    best_str = f'runmode\n\treference  3 {lt.reference[0]} {lt.reference[1]}\n'
+    best_str += f'\timage  1 { os.path.basename(lt.mult_path) }\n'
+    best_str += '\tend\n'
+    
+    """ Copy the optimized redshift info """
+    best_str += 'image\n'
+    for l in lt.param_best['image']['z_m_limit'] :
+        best_str += f'\tz_m_limit  {' '.join(str(item) for item in l)}\n'
+    best_str += '\tend\n'
+    
+    """ Match cosmology to param file """
+    best_str += 'cosmology\n'
+    for param, value in lt.param_best['cosmology'].items() :
+        best_str += f'\t{param}  {value}\n'
+    best_str += '\tend\n'
+    
+    pot_names = []
+    for pot_name in lt.param_best :
+        if pot_name.startswith('potential') or pot_name.startswith('potentiel') :
+            pot_names.append(pot_name)
+            
+    best_str += f'grid\n\tnlens {len(pot_names)}\n\tend\n'
+    
+    match_dict = {'x_centre': 'x (arcsec)',
+                  'y_centre': 'y (arcsec)',
+                  'ellipticity': 'emass',
+                  'angle_pos': 'theta (deg)',
+                  'core_radius': 'rc (arcsec)',
+                  'cut_radius': 'rcut (arcsec)',
+                  'v_disp': 'sigma (km/s)',
+                  'gamma': 'gamma',
+                  'angle_pos': 'theta (deg)'}
+    
+    for pot_name in pot_names :
+        best_str += f'{pot_name}\n'
+        for param, value in lt.param_best[pot_name].items() :
+            param_matched = match_dict.get(param)
+            if param_matched is not None :
+                for col in lt.samples_df.columns :
+                    if pot_name.split()[1] == col.split()[0] and param_matched in col :
+                        value = lt.samples_df[col][sample_index]
+            best_str += f'\t{param} {value}\n'
+        best_str += f'\tend\n'
+    best_str += f'finish\n'
+    return best_str
+
+def write_single_sample_best_file(lt, sample_index) :
+    best_str = make_single_sample_best_file(lt, sample_index)
+    if not os.path.exists(os.path.join(lt.model_dir, 'samples')) :
+        os.makedirs(os.path.join(lt.model_dir, 'samples'))
+    sample_file_path = os.path.join(lt.model_dir, 'samples', f'best_sample_{sample_index}.par')
+    with open(sample_file_path, 'w') as file :
+        file.write(best_str)
+    print(f'Single sample best file written to {sample_file_path}')
+    return sample_file_path
 
 
 
@@ -589,7 +651,7 @@ def extract_magnification_from_dist(dist_path) :
     data_lines = [line for line in dist_text.splitlines() if line.strip() and not line.strip().startswith('#')]
     table_text = "\n".join(data_lines)
     columns = ['ID', 'X', 'Y', 'R', 'EPS', 'TAU', 'AMP', 'E_AMP', 'DMAG', 'TIME[days]', 'DTIME', 'PARITY']
-    table_df = pd.read_csv(StringIO(table_text), delim_whitespace=True, names=columns)
+    table_df = pd.read_csv(StringIO(table_text), sep='\s+', names=columns)
     return table_df
 
 

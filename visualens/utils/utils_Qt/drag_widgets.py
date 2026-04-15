@@ -253,7 +253,7 @@ class DragPlotWidget_special(ThrottledPlotWidget):
             self.timer.start()
             mouse_point = self.view.mapSceneToView(event.pos()) # Convert click position to data coordinates
             self.start_pos = QPointF(mouse_point.x(), mouse_point.y())
-            self.last_roi = SelectableCircleROI([self.start_pos.x(), self.start_pos.y()], radius=1e-9, pen='b', invertible=True)
+            self.last_roi = SelectableCircleROI([self.start_pos.x(), self.start_pos.y()], radius=1e-9, pen='purple', invertible=True)
             self.last_roi.type = 3
             self.last_roi.type_str = 'SERSIC'
             self.roi_list.append(self.last_roi)
@@ -265,7 +265,25 @@ class DragPlotWidget_special(ThrottledPlotWidget):
             # Add sliders to control light source parameters
             params = ['amp', 'n_sersic']#, 'R_sersic']
             attach_sliders(self, params)
-        # 
+        # Point source
+        elif event.button() == Qt.LeftButton and (event.modifiers() & Qt.ShiftModifier) and (event.modifiers() & Qt.ControlModifier or event.modifiers() & Qt.MetaModifier) :
+            self.view.setMouseEnabled(x=False, y=False)
+            self.timer.start()
+            mouse_point = self.view.mapSceneToView(event.pos()) # Convert click position to data coordinates
+            self.start_pos = QPointF(mouse_point.x(), mouse_point.y())
+            self.last_roi = SelectableCircleROI([self.start_pos.x(), self.start_pos.y()], radius=1e-3, pen='cyan', invertible=True)
+            self.last_roi.type = 4
+            self.last_roi.type_str = 'SOURCE_POSITION'
+            self.roi_list.append(self.last_roi)
+            for handle in self.last_roi.handles:
+                self.last_roi.removeHandle(handle['item'])
+            self.addItem(self.last_roi)
+            #self.drawing4 = True
+            
+            # Add sliders to control light source parameters
+            params = ['amp']
+            attach_sliders(self, params)        
+        #
         elif event.button() == Qt.LeftButton and event.modifiers() == Qt.ShiftModifier :
             print('Shift modifier function not yet implemented')
         # Elliptical Sérsic
@@ -274,7 +292,7 @@ class DragPlotWidget_special(ThrottledPlotWidget):
             self.timer.start()
             mouse_point = self.view.mapSceneToView(event.pos()) # Convert click position to data coordinates
             self.start_pos = QPointF(mouse_point.x(), mouse_point.y())
-            self.last_roi = SelectableEllipseROI([self.start_pos.x(), self.start_pos.y()], [1e-9, 1e-9], pen='r', invertible=True)
+            self.last_roi = SelectableEllipseROI([self.start_pos.x(), self.start_pos.y()], [1e-9, 1e-9], pen='orange', invertible=True)
             self.last_roi.type = 1
             self.last_roi.type_str = 'SERSIC_ELLIPSE'
             self.roi_list.append(self.last_roi)
@@ -292,7 +310,7 @@ class DragPlotWidget_special(ThrottledPlotWidget):
             self.timer.start()
             mouse_point = self.view.mapSceneToView(event.pos()) # Convert click position to data coordinates
             self.start_pos = QPointF(mouse_point.x(), mouse_point.y())
-            self.last_roi = SelectableCircleROI([self.start_pos.x(), self.start_pos.y()], radius=1e-9, pen='g', invertible=True)
+            self.last_roi = SelectableCircleROI([self.start_pos.x(), self.start_pos.y()], radius=1e-9, pen='red', invertible=True)
             self.last_roi.type = 2
             self.last_roi.type_str = 'GAUSSIAN'
             self.roi_list.append(self.last_roi)
@@ -396,7 +414,7 @@ class DragPlotWidget_special(ThrottledPlotWidget):
             if len(self.roi_list)>0:
                 if type(self.last_roi).__name__ == 'SelectableEllipseROI' :
                     make_handles(self.last_roi)
-                elif type(self.last_roi).__name__ == 'SelectableCircleROI' :
+                elif type(self.last_roi).__name__ == 'SelectableCircleROI' and not self.last_roi.type_str == 'SOURCE_POSITION' :
                     #make_handles(self.roi2, make_rotation_handles=False, fixed_ratio=True)
                     self.last_roi.addScaleHandle([0.5+2**-1.5, 0.5+2**-1.5], [0.5, 0.5])
             self.view.setMouseEnabled(x=True, y=True)

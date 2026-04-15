@@ -17,17 +17,21 @@ from ...utils.utils_general.sort_points import break_curves
 from ...utils.utils_Qt.drag_widgets import DragPlotWidget_special
 from ...utils.utils_Qt.utils_general import transform_rectangle
 from .event_filters import SourceFilter, ImageFilter
-from .utils import format_lm_local
 from .lenstronomy_model import lenstronomy_model
+from .utils import make_lm_dict_opt
+from .simulate import simulate
+from .optimize import optimize
 
 
 
 class image_simulator :
-    def __init__(self, fits_image, which_filter=None, throttle_mode=0) :
+    def __init__(self, fits_image, which_filter=None, throttle_mode=0, use_linear_solver=False, dpl_resolution=200) :
         self.fits_image = fits_image
+        self.z_source = fits_image.lt.lt_z
         self.ROI = fits_image.image_widget.current_ROI
         #self.fits_image.qt_image.addItem(ROI)
         self.models=None
+        self.use_linear_solver = use_linear_solver
         
         if not hasattr(self, 'previous_state_current_ROI') :
             self.previous_state_current_ROI = None
@@ -73,12 +77,12 @@ class image_simulator :
                      self._SquareOfInterest_yr_bottomleft, self._SquareOfInterest_yr_bottomleft + square_size_arcsec]
         
         ######### Set Lenstool field corresponding to ROI's position and calculate the local displacement map #########
-        numPix = 100
         if fits_image.lt.lt is not None :
             self._initial_field = fits_image.lt.lt.get_field([])
             fits_image.lt.lt.set_field(new_field)
-            if self.previous_state_current_ROI is None or self.previous_state_current_ROI != self.ROI.getState() or fits_image.lt.dpl_maps[fits_image.lt.lt_z][0].shape[0] != numPix :
-                fits_image.lt.compute_lt_dpl(npix=numPix)
+            if self.previous_state_current_ROI is None or self.previous_state_current_ROI != self.ROI.getState() or fits_image.lt.dpl_maps[fits_image.lt.lt_z][0].shape[0] != dpl_resolution :
+                fits_image.lt.compute_lt_dpl(npix=dpl_resolution)
+                fits_image.lt.compute_lt_convergence(npix=dpl_resolution)
         else :
             if fits_image.lt.lt_z not in fits_image.lt.dpl_maps :
                 raise KeyError('Displacement maps for redshift {} have not been calculated yet.'.format(fits_image.lt.lt_z))
@@ -89,20 +93,22 @@ class image_simulator :
         #-------------- Lens model Lenstronomy definitions --------------#
         
         deltaPix = abs( fits_image.lt.dpl_maps[fits_image.lt.lt_z][2].wcs.cdelt[0]*3600 )
-        x_grid_interp, y_grid_interp = util.make_grid(numPix, deltaPix)
+        x_grid_interp, y_grid_interp = util.make_grid(dpl_resolution, deltaPix)
         x_axes, y_axes = util.get_axes(x_grid_interp, y_grid_interp)
         
         self.LensModel_kwargs = [{'grid_interp_x': x_axes,
-                                            'grid_interp_y': y_axes,
-                                            'f_x': fits_image.lt.dpl_maps[fits_image.lt.lt_z][0],
-                                            'f_y': fits_image.lt.dpl_maps[fits_image.lt.lt_z][1]}]
+                                  'grid_interp_y': y_axes,
+                                  'f_': fits_image.lt.convergence_maps[fits_image.lt.lt_z][0],
+                                  'f_x': fits_image.lt.dpl_maps[fits_image.lt.lt_z][0],
+                                  'f_y': fits_image.lt.dpl_maps[fits_image.lt.lt_z][1]}]
+        
         self.LensModel_list = ['INTERPOL']
         self.LensModel = LensModel(lens_model_list=self.LensModel_list)
         
         #m=4
         #f, ax = plt.subplots(1, 1, figsize=(10, 10), sharex=False, sharey=False)
         #lens_plot.lens_model_plot(ax, lensModel=self.lens_model, kwargs_lens=kwargs_lens,
-        #                          with_caustics=True, fast_caustic=True, coord_inverse=False, numPix=round(numPix/m), deltaPix=deltaPix*m)
+        #                          with_caustics=True, fast_caustic=True, coord_inverse=False, numPix=round(dpl_resolution/m), deltaPix=deltaPix*m)
         
         #-------------- Qt graphics definitions --------------#
         
@@ -388,11 +394,20 @@ class image_simulator :
         
         #fits_image.lt.lt.set_field(self._initial_field)
         self.previous_state_current_ROI = self.ROI.getState()
-        
     
-    def save(self) :
-        self.model_local = format_lm_local(self.models, self.result_kwargs)
-        self.source_model.save( path=os.path.join(self.fits_image.lt.model_dir, "lenstronomy_model.pkl") )
+    
+    def simulate(self, N_sigma=6.) :
+        self.lm_dict_opt = make_lm_dict_opt(self, N_sigma=N_sigma)
+        self.lm_current = lenstronomy_model(self.lm_dict_opt, self)
+        simulate(self)
+    
+    def optimize(self, N_sigma=6., fitting_kwargs_list=None) :
+        self.simulate(N_sigma=6.)
+        optimize(self, fitting_kwargs_list=fitting_kwargs_list)
+    
+    #def save(self) :
+    #    self.model_local = format_lm_local(self.models, self.result_kwargs)
+    #    self.source_model.save( path=os.path.join(self.fits_image.lt.model_dir, "lenstronomy_model.pkl") )
         
     def load(self, path=None) :
         if path is None :

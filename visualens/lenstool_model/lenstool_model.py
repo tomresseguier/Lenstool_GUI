@@ -7,7 +7,7 @@ from astropy.wcs import WCS
 from astropy.coordinates import SkyCoord
 from tqdm import tqdm
 import warnings
-
+import gc
 import PyQt5
 import pyqtgraph as pg
 import pyqtgraph.exporters
@@ -34,7 +34,7 @@ from .simulate_image.simulate_image import image_simulator
 from .im2source import start_im2source, stop_im2source
 from .utils.operations import MakeFunctionFromMap
 from .utils.utils_general import import_multiple_images, export_thumbnails, get_lenstool_file_path, import_lenstool_files
-from .utils.param_extractors import read_potfile, make_best_file_from_bayes, make_param_latex_table, read_bayes_file, parse_lenstool_parameter_file
+from .utils.param_extractors import read_potfile, make_best_file_from_bayes, make_param_latex_table, read_bayes_file, parse_lenstool_parameter_file, write_single_sample_best_file
 from ..utils.utils_Qt.utils_general import transform_rectangle
 
 from .utils.file_makers import best_files_maker, make_magnifications_and_curves                  # This import is problematic. The two functions run Lenstool
@@ -44,7 +44,7 @@ from .utils.file_makers import best_files_maker, make_magnifications_and_curves 
 
 
 class lenstool_model :
-    def __init__(self, model_path, fits_image, use_wrapper=None) :
+    def __init__(self, model_path, fits_image, use_wrapper=None, compute_predictions=True, verbose=True) :
         self.fits_image = fits_image
         self.reference = None
         self.saturation = 1.
@@ -59,13 +59,25 @@ class lenstool_model :
         self.curve_plot = None
         self.curves = None
         self._safe_mode = False
+        self._compute_predictions = compute_predictions
+        self.verbose = verbose
         
         # Get model directory
         self.model_dir = model_path if os.path.isdir(model_path) else os.path.dirname(model_path)
         
         # Get parameter file
-        self.param_file_path = model_path if (os.path.isfile(model_path) and not os.path.basename(model_path)=='best.par') else None
-        all_par_file_paths = glob.glob(os.path.join(self.model_dir, "*.par"))        
+        self.param_file_path = None
+        self.best_file_path = None
+        if os.path.isfile(model_path) :
+            name = os.path.basename(model_path)
+            if name.startswith('best') and name.endswith('.par') :
+                self.best_file_path = model_path
+                self.has_run = True
+            else :
+                self.param_file_path = model_path
+        
+        all_par_file_paths = glob.glob(os.path.join(self.model_dir, "*.par"))
+        all_par_file_names = [ os.path.basename(file_path) for file_path in all_par_file_paths ]
         if self.param_file_path is None :
             for file_path in all_par_file_paths :
                 if not os.path.basename(file_path).startswith('best') :
@@ -75,53 +87,60 @@ class lenstool_model :
                             if stripped_line and not stripped_line.startswith('#') :  # Skip empty and comment lines
                                 if stripped_line.startswith('runmode') :
                                     self.param_file_path = file_path
-        
+                                    
         self.param = parse_lenstool_parameter_file(self.param_file_path) if self.param_file_path is not None else None
         
         # Get best and bayes file paths if they exist
-        all_par_file_names = [ os.path.basename(file_path) for file_path in all_par_file_paths ]
-        self.has_run = 'best.par' in all_par_file_names
-        self.best_file_path = os.path.join(self.model_dir, 'best.par') if self.has_run else None
+        if self.best_file_path is None :
+            if 'best.par' in all_par_file_names :
+                self.best_file_path = os.path.join(self.model_dir, 'best.par')
+                self.has_run = True
+            else :
+                l = [ file_name.startswith('best') and file_name.endswith('.par') for file_name in all_par_file_names ]
+                if True in l :
+                    i = np.where(l)[0][0]
+                    self.has_run = True
+                    self.best_file_path = all_par_file_paths[i]
+        
         self.param_best = parse_lenstool_parameter_file(self.best_file_path) if self.best_file_path is not None else None
         self.bayes_file_path = os.path.join(self.model_dir, 'bayes.dat') if 'bayes.dat' in os.listdir(self.model_dir) else None
-        
+                
         if self.param is not None :
             # Get the multiple images and potfile galaxies from file names in parameter file 
             self.mult_path = os.path.join(self.model_dir, self.param['image']['multfile'][1]) if 'image' in self.param else None
-            if self.mult_path is not None :
-                self.families = []
-                self.broad_families = []
-                self.which = []
-                import_multiple_images(self, self.mult_path, self.fits_image, units='pixel', filled_markers=True)
             self.potfile_path = os.path.join(self.model_dir, self.param['potfile']['filein'][1]) if 'potfile' in self.param else None
             self.load_potfile(self.potfile_path)
-            
-            # Get the lens redshift if unique
-            redshifts = []
-            for name in self.param :
-                if 'potential' in name or 'potentiel' in name :
-                    redshifts.append(self.param[name]['z_lens'])
-            if len(np.unique(redshifts))==1 :
-                self.z_lens = redshifts[0]
-                print(f"Lens redshift fixed at z={self.z_lens}")
-            else :
-                print("Several different redshift values found: " + str(np.unique(redshifts)))
-                self.z_lens = np.max(redshifts)
-                print("Setting lenstool_model.z_lens to the furthest lens' redshift: " + str(self.z_lens))
-                
         else :
             # Look for multiple image file and potfile without getting their file names from parameter file
             self.mult_path = get_lenstool_file_path(self.model_dir, 'mult')
-            if self.mult_path is not None :
-                import_multiple_images(self, self.mult_path, self.fits_image, units='pixel', filled_markers=True)
-                print("Multiple image file was found. Current instance now has multiple image plotting capabilities.")
             self.potfile_path = get_lenstool_file_path(self.model_dir, 'potfile')
             self.load_potfile(self.potfile_path)
             if self.potfile is not None :
-                print("Potfile was found. Current instance now has potfile plotting capabilities.")
+                self._vprint("Potfile was found. Current instance now has potfile plotting capabilities.")
             if self.mult is None and self.potfile is None :
-                raise ValueError("No valid lenstool file found")
+                self._vprint("No valid multiple image or potfile files found")
         
+        if self.mult_path is not None :
+            self._vprint("Multiple image file found.")
+            self.families = []
+            self.broad_families = []
+            self.which = []
+            import_multiple_images(self, self.mult_path, self.fits_image, units='pixel', filled_markers=True)
+        
+        # Get the lens redshift if unique
+        if self.param is not None  or self.param_best is not None :
+            param_dict = self.param if self.param is not None else self.param_best
+            redshifts = []
+            for name in param_dict :
+                if 'potential' in name or 'potentiel' in name :
+                    redshifts.append(param_dict[name]['z_lens'])
+            if len(np.unique(redshifts))==1 :
+                self.z_lens = redshifts[0]
+                self._vprint(f"Lens redshift fixed at z={self.z_lens}")
+            else :
+                self._vprint("Several different redshift values found: " + str(np.unique(redshifts)))
+                self.z_lens = np.max(redshifts)
+                self._vprint("Setting lenstool_model.z_lens to the furthest lens' redshift: " + str(self.z_lens))
         
         # Checks if Lenstool files were found and if so ask user if they want to use Lenstool's wrapper and its capabilities
         # If so, moves to the model's directory (required by the Lenstool wrapper)
@@ -130,6 +149,15 @@ class lenstool_model :
         if self.has_run :
             # Use best file
             self._FileToUse = os.path.basename(self.best_file_path)
+            
+            if self.bayes_file_path is not None :
+                self.samples_df_full = read_bayes_file(self.bayes_file_path, z=self.z_lens) if self.bayes_file_path is not None else None
+                # Extract the numeric columns (skip non-numeric, zero-range etc.)
+                self.samples_df = self.samples_df_full.copy()
+                for col in self.samples_df.columns :
+                    if col=='Chi2' or col=='Nsample' or col=='ln(Lhood)':
+                        del self.samples_df[col]
+                    
         elif self.param_file_path is not None :
             if 'bayes.dat' in os.listdir(self.model_dir) :
                 # Option to create temporary best file from bayes if optimization hasn't finished
@@ -139,30 +167,30 @@ class lenstool_model :
                     self.best_file_path = os.path.join(self.model_dir, 'best_TEMP.par')
                     self._FileToUse = os.path.basename(self.best_file_path)
                 else :
-                    print("Loading parameter file only. Limited capabilities available.")
+                    self._vprint("Loading parameter file only. Limited capabilities available.")
                     self._FileToUse = os.path.basename(self.param_file_path)
             else :
-                print("Only parameter file was found (looks like lenstool optimization hasn't run yet). Limited capabilities available.")
+                self._vprint("Only parameter file was found (looks like lenstool optimization hasn't run yet). Limited capabilities available.")
                 self._FileToUse = os.path.basename(self.param_file_path)
         else :
-            print("No best file or parameter file found."
-                  "Make sure best file has name 'best.par' and parameter file has extension '.par'")
+            self._vprint("No best file or parameter file found."
+                         "Make sure best file has name 'best.par' and parameter file has extension '.par'")
             import_lenstool_files(self)
         
         
         # Check if user wants to use Lenstool wrapper or not
         if self._FileToUse is not None :
             if not _HAS_LENSTOOL :
-                print("\n------\n"
-                      "It looks like Lenstool is not installed. Only limited lens modeling functions will be available.\n"
-                      "You can install Lenstool with conda:\n\n"
-                      "    conda install conda-forge::lenstool\n"
-                      "------\n")
+                self._vprint("\n------\n"
+                             "It looks like Lenstool is not installed. Only limited lens modeling functions will be available.\n"
+                             "You can install Lenstool with conda:\n\n"
+                             "    conda install conda-forge::lenstool\n"
+                             "------\n")
                 yesno = 'n'
             elif not self.model_dir.endswith('_safe/') :
-                print(f"\nA valid lenstool file was found: {self._FileToUse}")
+                self._vprint(f"\nA valid lenstool file was found: {self._FileToUse}")
                 if use_wrapper is None :
-                    print("Lens modeling tools rely on Lenstool and may modify some of the output files present in your model's directory (image.all, source.dat for example).\n")
+                    self._vprint("Lens modeling tools rely on Lenstool and may modify some of the output files present in your model's directory (image.all, source.dat for example).\n")
                     yesno = input(f"Continue? Or make a copy of your model's current directory? ({os.path.basename(self.model_dir[:-1])+'_safe'})\n\nYes/copy/no [Y]/c/n\n-- to skip this message use .import_lenstool(dir, use_wrapper=True) --\n")
                 elif use_wrapper :
                     yesno = 'y'
@@ -173,23 +201,23 @@ class lenstool_model :
             
             # Load files according to files found and user input
             if yesno.lower()=='n' or yesno.lower()=='no' :
-                print("Lens model loaded with limited capabilities.")
+                self._vprint("Lens model loaded with limited capabilities.")
                 self.lt = None
                 #Functionalities without Lenstool's wrapper
-                if self.param is not None :
-                    self.reference = tuple(self.param['runmode']['reference'][1:]) if 'runmode' in self.param else None
+                if param_dict is not None :
+                    self.reference = tuple(param_dict['runmode']['reference'][1:]) if 'runmode' in param_dict else None
                 import_lenstool_files(self)
             else :
                 if yesno.lower()=='c' or yesno.lower()=='copy' :
                     self.SafeMode()
-                    print(f"Loading {self._FileToUse}")
+                    self._vprint(f"Loading {self._FileToUse}")
                     self.lt = lenstool.Lenstool( self._FileToUse )
                 else :
-                    print('--------------------')
-                    print("Moving to " + self.model_dir)
-                    print('--------------------')
+                    self._vprint('--------------------')
+                    self._vprint("Moving to " + self.model_dir)
+                    self._vprint('--------------------')
                     os.chdir(self.model_dir)
-                    print(f"Loading {self._FileToUse}")
+                    self._vprint(f"Loading {self._FileToUse}")
                     self.lt = lenstool.Lenstool( self._FileToUse )
                 self.reference = (self.lt.M.ref_ra, self.lt.M.ref_dec)
         
@@ -205,19 +233,18 @@ class lenstool_model :
         self.load_saved_maps()
         
         # compute sources and images from multiple images
-        if self.mult is not None and self.lt is not None :
+        if self.mult is not None and self.lt is not None and compute_predictions :
             self.add_lensing_columns(cat=self.mult.cat)
             self.compute_sources_and_images()
             
             
-    def compute_sources_and_images(self, ngrid=None, restrict_to_mult_field=False) :
-        ngrid = 256 if ngrid is None else ngrid
+    def compute_sources_and_images(self, ngrid=256, restrict_to_mult_field=False) :
         if self.source is not None :
             self.source.clear()
         if self.image is not None :
             self.image.clear()
         
-        print("Computing sources")
+        self._vprint("Computing sources")
         source = self.mult.cat.copy()
         source.rename_column('ra', 'ra_image')
         source.rename_column('dec', 'dec_image')
@@ -231,11 +258,18 @@ class lenstool_model :
         source['x'], source['y'] = source['ra'], source['dec'] #self.world_to_relative(source['ra'], source['dec'])
         
         for colname in source.colnames :
-            if colname not in ['n','x','y','a','b','theta','z','mag'] :
+            if colname not in ['n','x','y','a','b','z','theta','mag'] :
                 source.remove_column(colname)
-        print('done')
         
-        print("Computing images")
+        to_remove = []
+        for i, s in enumerate(source) :
+            if np.isnan(s['z']) or s['z'] <= self.z_lens :
+                to_remove.append(i)
+
+        source.remove_rows(to_remove)
+        self._vprint('done')
+        
+        self._vprint("Computing images")
         _initial_ngrid_value = self.lt.G.ngrid
         self.lt.set_grid(ngrid, 0)
         
@@ -269,8 +303,12 @@ class lenstool_model :
         self.lt.set_grid(_initial_ngrid_value, 0)
         if restrict_to_mult_field :
             self.lt.set_field(_initial_field)
-        print('done')
+        self._vprint('done')
     
+    def _vprint(self, *args, **kwargs) :
+        if self.verbose :
+            print(*args, **kwargs)
+
     def world_to_relative(self, ra, dec) :
         return world_to_relative(ra, dec, self.reference)
     
@@ -279,15 +317,15 @@ class lenstool_model :
     
     def SafeMode(self) :
         if self._safe_mode :
-            print("Already in safe directory")
+            self._vprint("Already in safe directory")
         elif self.model_dir.endswith('_safe/') :
-            print("Safe directory already selected, moving to it")
+            self._vprint("Safe directory already selected, moving to it")
             os.chdir(self.model_dir)
             self._safe_mode = True
         else :
             safe_dir = self.model_dir.rstrip('/') + '_safe/'
             if os.path.exists(safe_dir) :
-                print("Safe directory already exists, moving to it")
+                self._vprint("Safe directory already exists, moving to it")
                 self.__init__(safe_dir, self.fits_image)
                 os.chdir(safe_dir)
                 self._safe_mode = True
@@ -303,20 +341,27 @@ class lenstool_model :
                 self.__init__(safe_dir, self.fits_image)
                 os.chdir(safe_dir)
                 self._safe_mode = True
-        print("Now in " + os.getcwd())
+        self._vprint("Now in " + os.getcwd())
     
     def load_potfile(self, path) :
         if self.potfile is not None :
             self.potfile.clear()
         if path is not None :        
             potfile_Table = read_potfile(path)
-            self.potfile = self.fits_image.make_catalog(potfile_Table, color=[1.,0.,0.], units='arcsec')
+            self.potfile = self.fits_image.make_catalog(potfile_Table, color=[1.,0.,0.], units='arcsec', verbose=self.verbose)
     
     def load_saved_maps(self) :
+        self.convergence_maps_path = os.path.join(self.model_dir, 'convergence_maps.pkl')
+        if os.path.exists(self.convergence_maps_path) :
+            self._vprint('convergence_maps.pkl found')
+            with open(self.convergence_maps_path, 'rb') as f :
+                self.convergence_maps = pickle.load(f)
+        else :
+            self.convergence_maps = {}
         #######################################################################
         self.dpl_maps_path = os.path.join(self.model_dir, 'dpl_maps.pkl')
         if os.path.exists(self.dpl_maps_path) :
-            print('dpl_maps.pkl found')
+            self._vprint('dpl_maps.pkl found')
             with open(self.dpl_maps_path, 'rb') as f :
                 self.dpl_maps = pickle.load(f)
         else :
@@ -324,7 +369,7 @@ class lenstool_model :
         #######################################################################
         self.lt_curves_path = os.path.join(self.model_dir, 'lt_curves.pkl')
         if os.path.exists(self.lt_curves_path) :
-            print('lt_curves.pkl found')
+            self._vprint('lt_curves.pkl found')
             with open(self.lt_curves_path, 'rb') as f :
                 self.lt_curves = pickle.load(f)
         else :
@@ -332,7 +377,7 @@ class lenstool_model :
         #######################################################################
         self.lt_magnification_maps_path = os.path.join(self.model_dir, 'lt_magnification_maps.pkl')
         if os.path.exists(self.lt_magnification_maps_path) :
-            print('lt_magnification_maps.pkl found')
+            self._vprint('lt_magnification_maps.pkl found')
             with open(self.lt_magnification_maps_path, 'rb') as f :
                 self.lt_magnification_maps = pickle.load(f)
         else :
@@ -340,7 +385,7 @@ class lenstool_model :
         #######################################################################
         self.lt_caustics_path = os.path.join(self.model_dir, 'lt_caustics.pkl')
         if os.path.exists(self.lt_caustics_path) :
-            print('lt_caustics.pkl found')
+            self._vprint('lt_caustics.pkl found')
             with open(self.lt_caustics_path, 'rb') as f :
                 self.lt_caustics = pickle.load(f)
         else :
@@ -387,7 +432,7 @@ class lenstool_model :
             self.which = names[0]
         else :
             self.which = list(names)
-        print("Images to plot are now ", self.which)
+        self._vprint("Images to plot are now ", self.which)
         #self.clear()
         #self.plot()
         
@@ -412,8 +457,8 @@ class lenstool_model :
         #if self.curve_plot is not None :
         #    self.fits_image.qt_image.removeItem(self.curve_plot)
         self.lt_z = z
-        print(self.best_file_path)
-        print(os.getcwd())
+        self._vprint(self.best_file_path)
+        self._vprint(os.getcwd())
         #self.lt.set_grid(50, 0)
 
         ######## Curves ########
@@ -426,12 +471,18 @@ class lenstool_model :
         
         ######## Magnification ########
         if z not in self.lt_magnification_maps.keys() or recompute :
-            print('Computing magnification map (can take a little while)...')
+            self._vprint('Computing magnification map (can take a little while)...')
             self.lt_magnification_maps[z] = self.lt.g_ampli(1, self.magnification_res, self.lt_z)
-            print('done')
+            self._vprint('done')
             with open(self.lt_magnification_maps_path, 'wb') as f:
                 pickle.dump(self.lt_magnification_maps, f)
         self.magnification_map, self.magnification_wcs = self.lt_magnification_maps[z]            
+        
+        ######## Convergence ########
+        if self.lt_z not in self.convergence_maps.keys() or recompute :
+            self.compute_lt_convergence()
+        else :
+            self.convergence_map, self.convergence_map_wcs = self.convergence_maps[self.lt_z]
         
         ######## Displacement maps ########
         if self.lt_z not in self.dpl_maps.keys() or recompute :
@@ -442,13 +493,21 @@ class lenstool_model :
         mmap, wcs = self.lt_magnification_maps[z]
         self.get_magnification = MakeFunctionFromMap(mmap, wcs)
         
+    def compute_lt_convergence(self, z=None, npix=2000) :
+        z = self.lt_z if z is None else z
+        self._vprint('Computing convergence map (can take a little while)...')
+        self.convergence_maps[z] = self.lt.g_mass(1, npix, self.z_lens, z)
+        self.convergence_map, self.convergence_map_wcs = self.convergence_maps[z]
+        self._vprint('done')
+        with open(self.convergence_maps_path, 'wb') as f:
+            pickle.dump(self.convergence_maps, f)
+        
     def compute_lt_dpl(self, z=None, npix=2000) :
-        if z==None :
-            z = self.lt_z
-        print('Computing displacement maps (can take a little while)...')
-        self.dpl_maps[self.lt_z] = self.lt.g_dpl(npix, z)
-        self.dx_map, self.dy_map, self.dmap_wcs = self.dpl_maps[self.lt_z]
-        print('done')
+        z = self.lt_z if z is None else z
+        self._vprint('Computing displacement maps (can take a little while)...')
+        self.dpl_maps[z] = self.lt.g_dpl(npix, z)
+        self.dx_map, self.dy_map, self.dmap_wcs = self.dpl_maps[z]
+        self._vprint('done')
         with open(self.dpl_maps_path, 'wb') as f:
             pickle.dump(self.dpl_maps, f)
     
@@ -462,21 +521,22 @@ class lenstool_model :
     def start_magnification(self) :
         return None
     
-    def add_lensing_columns(self, cat=None, which_cat='imported_cat', index=None, z_source=None) :
+    def add_lensing_columns(self, cat=None, which_cat='imported_cat', index=None, z_source=None, overwrite=None) :
         if cat is None :
             if index is not None :
                 cat = self.fits_image.imported_cat_list[index].cat
             else :
                 cat = getattr(self.fits_image, which_cat, None).cat
         
+        lensing_columns = ['magnification', 'convergence', 'shear', 'gamma1', 'gamma2', 'time', 'tangential_magnification', 'radial_magnification', 'ra_source', 'dec_source']
         check = False
         existing_cols = []
-        for name in ['magnification', 'convergence', 'shear', 'tangential_magnification']:
+        for name in lensing_columns :
             if name in cat.colnames :
                 check = True
                 existing_cols.append(name)
-        yesno = 'y'
-        if check :
+        yesno = 'y' if overwrite is None else 'y' if overwrite else 'n'
+        if check and overwrite is None :
             yesno = input(f"Following lensing columns already exist: {existing_cols}. Overwrite? [Y]/n")
         
         if yesno.lower() in ['y', ''] :
@@ -485,6 +545,9 @@ class lenstool_model :
             kappa_col = np.full(len(cat), np.nan)
             tmu_col = np.full(len(cat), np.nan)
             rmu_col = np.full(len(cat), np.nan)
+            time_col = np.full(len(cat), np.nan)
+            gamma1_col = np.full(len(cat), np.nan)
+            gamma2_col = np.full(len(cat), np.nan)
             
             ra_source_col = np.full(len(cat), np.nan)
             dec_source_col = np.full(len(cat), np.nan)
@@ -497,12 +560,12 @@ class lenstool_model :
                     z_colname = name
                     break
             if z_colname is None and z_source is None :
-                print('Redshift column not found in catalog. Using current source redshift = ' + str(self.lt_z))
+                self._vprint('Redshift column not found in catalog. Using current source redshift = ' + str(self.lt_z))
                 z_source = self.lt_z
                 
             for i in tqdm(range(len(cat))) :
                 z = cat[z_colname][i] if z_source is None else z_source
-                if z>self.z_lens :
+                if z>self.z_lens : # Also returns False if z is np.nan
                     #print(str(cat['id'][i]) + ': computing lensing maps at redshift ' + str(z))
                     ra, dec = cat['ra'][i], cat['dec'][i]
                     world_coord = SkyCoord(ra, dec, unit='deg')
@@ -513,8 +576,8 @@ class lenstool_model :
                     
                     #npix = 11
                     npix = 2
-                    mmap, wcs = self.lt.g_ampli(1, npix, z)
-                    mu_col[i] = np.mean(mmap)
+                    ampli, wcs = self.lt.g_ampli(1, npix, z)
+                    mu_col[i] = np.mean(ampli)
                     
                     #if False : # this crashes Lenstool if 
                     try :
@@ -525,25 +588,34 @@ class lenstool_model :
                         self.lt.set_field([xr-delta, xr+delta, yr-delta, yr+delta])
                     
                     kappa_col[i] = np.mean(kappa)
-                    
-                    #shear, wcs = self.lt.g_ampli(6, npix, z)
-                    #gamma_col[i] = np.mean(shear)
-                    gamma_col[i] = ( (1-kappa_col[i])**2 - 1/mu_col[i] )**0.5
+                    #gamma_col[i] = ( (1-kappa_col[i])**2 - 1/mu_col[i] )**0.5
                     
                     dx, dy, wcs = self.lt.g_dpl(npix, z)
                     dx = np.mean(dx)
                     dy = np.mean(dy)                    
                     ra_source_col[i] = ra + dx /3600 /np.cos( dec * np.pi/180 )
                     dec_source_col[i] = dec - dy /3600
+
+                    time, wcs = self.lt.g_time(1, npix, z)
+                    time_col[i] = np.mean(time)
+
+                    shear, wcs = self.lt.g_shear(1, npix, z)
+                    gamma_col[i] = np.mean(shear)
+
+                    shear1, wcs = self.lt.g_shear(3, npix, z)
+                    gamma1_col[i] = np.mean(shear1)
+
+                    shear2, wcs = self.lt.g_shear(4, npix, z)
+                    gamma2_col[i] = np.mean(shear2)
+
                 #else :
                     #print(str(cat['id'][i]) + ': redshift ' + str(z) + ' lower than lens redshift --> NaN')
                 
                 tmu_col[i] = 1 / (1 - kappa_col[i] - gamma_col[i] )
                 rmu_col[i] = 1 / (1 - kappa_col[i] + gamma_col[i] )
             
-            columns_to_add = [mu_col, kappa_col, gamma_col, tmu_col, rmu_col, ra_source_col, dec_source_col]
-            names = ['magnification', 'convergence', 'shear', 'tangential_magnification', 'radial_magnification', 'ra_source', 'dec_source']
-            for i, name in enumerate(names) :
+            columns_to_add = [mu_col, kappa_col, gamma_col, gamma1_col, gamma2_col, time_col, tmu_col, rmu_col, ra_source_col, dec_source_col]
+            for i, name in enumerate(lensing_columns) :
                 if name in cat.colnames :
                     cat.replace_column(name, columns_to_add[i])
                 else :
@@ -553,7 +625,7 @@ class lenstool_model :
     def compute_lt_curve(self, z=None) :
         if z==None :
             z = self.lt_z
-        print('Computing critical curve (can take a little while)...')
+        self._vprint('Computing critical curve (can take a little while)...')
         self.lt_curve = self.lt.criticnew(zs=z, limitHigh=1, limitLow=0.05) #limitHigh=0.5, limitLow=0.1
         
         ni = len(self.lt_curve[0])
@@ -572,7 +644,7 @@ class lenstool_model :
         self.lt_curve_coords_image = [lt_curve_x, self.fits_image.image_data.shape[0] - lt_curve_y]
         self.lt_curve_coords_world = [lt_curve_ra, lt_curve_dec]
         self.lt_curve_coords_relative = [lt_curve_xr, lt_curve_yr]
-        print('done')
+        self._vprint('done')
         
         self.lt_curves[z] = self.lt_curve_coords_relative
         with open(self.lt_curves_path, 'wb') as f:
@@ -596,7 +668,7 @@ class lenstool_model :
         self.lt_caustic_coords_image = [lt_caustic_x, self.fits_image.image_data.shape[0] - lt_caustic_y]
         self.lt_caustic_coords_world = [lt_caustic_ra, lt_caustic_dec]
         self.lt_caustic_coords_relative = [lt_caustic_xr, lt_caustic_yr]
-        print('done')
+        self._vprint('done')
         
         self.lt_caustics[z] = self.lt_caustic_coords_relative
         with open(self.lt_caustics_path, 'wb') as f:
@@ -642,20 +714,8 @@ class lenstool_model :
         self.fits_image.qt_image.addItem(self.curve_plot)
         
     def plot_bayes(self) :
-        if self.z_lens is None :
-            self.z_lens = float(input('redshift of lens?'))
-        self.df = read_bayes_file(self.bayes_file_path, z=self.z_lens)
-        
-        # Extract the numeric columns (skip non-numeric, zero-range etc.)
-        self.df_param_only = self.df.select_dtypes(include='number')
-        for i, col in enumerate(self.df_param_only.columns) :
-            col_min = np.min(self.df_param_only[col])
-            col_max = np.max(self.df_param_only[col])
-            if col_min==col_max or col=='Chi2' or col=='Nsample' or col=='ln(Lhood)':
-                del self.df_param_only[col]
-        
-        plot_corner(self.df_param_only)
-        corr_matrix = self.df_param_only.corr()
+        plot_corner(self.samples_df_param_only)
+        corr_matrix = self.samples_df_param_only.corr()
         self.fig_cov, self.ax_cov = plt.subplots()
         cax = self.ax_cov.imshow(corr_matrix, cmap='PuOr')
         cbar = self.fig_cov.colorbar(cax, ax=self.ax_cov)
@@ -770,7 +830,7 @@ class lenstool_model :
                             self.magnification_line_distances = []
                             
                             plt.close()
-                            print('Creating new magnification plot')
+                            self._vprint('Creating new magnification plot')
                             self.magnification_line_fig, self.magnification_line_ax = plt.subplots()
                             self.magnification_line_ax.set_yscale('log')
                             
@@ -782,7 +842,7 @@ class lenstool_model :
                         #self.magnification_line_fig.show()
             elif evt.button()==PyQt5.QtCore.Qt.MiddleButton :
                 pos = evt.scenePos()
-                print(pos)
+                self._vprint(pos)
                 mouse_point = self.fits_image.qt_image.getView().mapSceneToView(pos)
                 x, y_flipped = mouse_point.x(), mouse_point.y()
                 x, y = x, self.fits_image.image_data.shape[0] - y_flipped
@@ -795,7 +855,7 @@ class lenstool_model :
                 
                 if True : # remove this when plot update available
                     plt.close()
-                    print('Creating new magnification plot')
+                    self._vprint('Creating new magnification plot')
                     self.magnification_line_fig, self.magnification_line_ax = plt.subplots()
                     self.magnification_line_ax.set_yscale('log')
                     self.magnification_line_ax.plot(self.magnification_line[0], np.abs(self.magnification_line[1]))
@@ -826,7 +886,7 @@ class lenstool_model :
                     del self._doubleclick_connection
                 self.magnification_temp_SkyCoords = []
                 self.fits_image.qt_image.keyPressEvent = self._original_keyPressEvent
-                print('Magnification line extraction stopped.')
+                self._vprint('Magnification line extraction stopped.')
         
         self._original_keyPressEvent = self.fits_image.qt_image.keyPressEvent
         self.fits_image.qt_image.keyPressEvent = keyPressEvent
@@ -854,6 +914,21 @@ class lenstool_model :
         fig, ax = plt.subplots()
         ax.imshow(np.arctan(np.abs(self.magnification_map)), origin='lower')
     
+    def compute_time_map(self, z=None, npix=1000) :
+        z = self.lt_z if z is None else z
+        self.time_map, self.time_wcs = self.lt.g_time(1, npix, z)
+        fig, ax = plt.subplots()
+        ax.imshow(self.time_map, origin='lower')
+        
+    def compute_shear_map(self, z=None, npix=1000, which='gamma') :
+        z = self.lt_z if z is None else z
+        ishear = 1 if which=='gamma' else 3 if which=='gamma1' else 4 if which=='gamma2' else None
+        if ishear is None :
+            raise ValueError('Invalid shear type: ' + which)
+        self.shear_map, self.shear_wcs = self.lt.g_shear(ishear, npix, z)
+        fig, ax = plt.subplots()
+        ax.imshow(self.shear_map, origin='lower')
+        
     
     def set_field(self) :
         # Careful, this function only works when the ROI is flat and image in world frame
@@ -878,7 +953,76 @@ class lenstool_model :
         self._previous_field = self.lt.get_field([])
         self.lt.set_field([xr_left, xr_right, yr_bottom, yr_top])
         
+    
+    def compute_uncertainties(self, nsamples=None) :
+        self.samples_dir = os.path.join(self.model_dir, 'samples')
+        if not os.path.exists(self.samples_dir) :
+            self._vprint('Creating samples directory')
+            os.makedirs(self.samples_dir)
+        if not os.path.exists(os.path.join(self.samples_dir, os.path.basename(self.mult_path))) :
+            self._vprint('Overwriting mult file in samples directory')
+        else :
+            self._vprint('Copying mult file to samples directory')
+        shutil.copy2(self.mult_path, self.samples_dir)
+        
+        nsamples = len(self.samples_df.index) if nsamples is None else nsamples
+        
+        lensing_columns = ['magnification', 'convergence', 'shear', 'gamma1', 'gamma2', 'time', 'tangential_magnification', 'radial_magnification', 'ra_source', 'dec_source']
+        self.samples_dict = {}
+        for imID in self.mult.cat['id'] :
+            self.samples_dict[imID] = {col: np.full(nsamples, np.nan) for col in lensing_columns}
+            self.samples_dict[imID]['z_opt'] = np.full(nsamples, np.nan)
+            
+        for i in tqdm(range(nsamples)) :
+            sample_file_path = write_single_sample_best_file(self, i)
+            sample_lt = import_lenstool(sample_file_path, self.fits_image, use_wrapper=True, compute_predictions=False, verbose=False)
 
+            """ Sample the redshift as well for those that were optimized """
+            for im in sample_lt.mult.cat :
+                #if not np.isnan(im['z_opt']) :
+                broad_family_members_mask = np.array([ member['broad_family']==im['broad_family'] for member in sample_lt.mult.cat ])
+                for member in sample_lt.mult.cat[broad_family_members_mask] :
+                    for col in self.samples_df.columns :
+                        if member['id'] == col[len('Redshift of '):] :
+                            #self._vprint('Sampling redshift of ' + im['id'] + ': ' + str(im['z']) + ' --> ' + str(self.samples_df[col][i]))
+                            im['z'] = self.samples_df[col][i]
+                            self.samples_dict[im['id']]['z_opt'][i] = self.samples_df[col][i]
+                            
+            """ Compute magnification etc. for the sample """
+            sample_lt.add_lensing_columns(cat=sample_lt.mult.cat)
+
+            for im in sample_lt.mult.cat :
+                for col in lensing_columns :
+                    self.samples_dict[im['id']][col][i] = im[col]
+                
+            del sample_lt
+            gc.collect()
+            os.remove(sample_file_path)
+
+            if i % 10 == 0 :
+                pickle.dump(self.samples_dict, open(os.path.join(self.samples_dir, 'samples_dict.pkl'), 'wb'))
+        
+        pickle.dump(self.samples_dict, open(os.path.join(self.samples_dir, 'samples_dict.pkl'), 'wb'))
+        
+        for col in lensing_columns + ['z_opt'] :
+            col_16_percentile = np.full(len(self.mult.cat), np.nan)
+            col_84_percentile = np.full(len(self.mult.cat), np.nan)
+            col_50_percentile = np.full(len(self.mult.cat), np.nan)
+            self.mult.cat.add_column(col_16_percentile, name=f'{col}_16_percentile')
+            self.mult.cat.add_column(col_84_percentile, name=f'{col}_84_percentile')
+            self.mult.cat.add_column(col_50_percentile, name=f'{col}_50_percentile')
+
+            for im in self.mult.cat :
+                im[f'{col}_16_percentile'] = np.percentile(self.samples_dict[im['id']][col], 16)
+                im[f'{col}_84_percentile'] = np.percentile(self.samples_dict[im['id']][col], 84)
+                im[f'{col}_50_percentile'] = np.percentile(self.samples_dict[im['id']][col], 50)
+        
+
+            
+
+
+def import_lenstool(model_dir, fits_image, use_wrapper=None, compute_predictions=False, verbose=True) :
+    return lenstool_model(model_dir, fits_image, use_wrapper=use_wrapper, compute_predictions=compute_predictions, verbose=verbose)
 
 
 
