@@ -112,7 +112,7 @@ class TripleSlider(pg.GraphicsObject):
 
 
     def _update_from_roi(self):
-        """If bound sigma or R_sersic, update vmid from ROI geometry."""
+        """If bound sigma, R_sersic, q or phi, update vmid from ROI geometry."""
         #print('Debug: running _update_from_roi')
         if self._syncing_from_slider:
             return
@@ -126,10 +126,18 @@ class TripleSlider(pg.GraphicsObject):
             new_vmid = abs(self.roi.size()[0])
         elif param == "R_sersic" and roi_type == "SERSIC" :
             new_vmid = abs(self.roi.size()[0]) / 2.0
-        elif param == "R_sersic" and roi_type == "SERSIC_ELLIPSE" :
+        elif param == "R_sersic" and roi_type == "SERSIC_ELLIPSE_Q_PHI" :
             _, _, semi_major, semi_minor, _ = transform_ROI_params(self.roi)
             # keep consistent with event_filters: R_sersic=(semi_major+semi_minor)/2
-            new_vmid = (semi_major + semi_minor) / 2.0
+            new_vmid = np.sqrt(semi_major * semi_minor)
+        elif param == "q" and roi_type == "SERSIC_ELLIPSE_Q_PHI":
+            _, _, semi_major, semi_minor, _ = transform_ROI_params(self.roi)
+            if semi_major <= 0:
+                return
+            new_vmid = semi_minor / semi_major
+        elif param == "phi" and roi_type == "SERSIC_ELLIPSE_Q_PHI":
+            _, _, _, _, angle = transform_ROI_params(self.roi)
+            new_vmid = float(np.arctan2(np.sin(angle), np.cos(angle)))
         else:
             return
 
@@ -142,7 +150,7 @@ class TripleSlider(pg.GraphicsObject):
             self._syncing_from_roi = False
 
     def _apply_to_roi(self):
-        """If bound sigma or R_sersic, apply vmid to ROI geometry."""
+        """If bound sigma/R_sersic/q/phi, apply vmid to ROI geometry."""
         if self._syncing_from_roi:
             return
         if getattr(self, "roi", None) is None or getattr(self, "param_name", None) is None:
@@ -154,9 +162,11 @@ class TripleSlider(pg.GraphicsObject):
         if param == "sigma" and roi_type == "GAUSSIAN":
             new_radius = float(self.vmid) / 2.0
             #mode = "circle_diameter"
-        elif param == "R_sersic" and roi_type in ("SERSIC", "SERSIC_ELLIPSE"):
+        elif param == "R_sersic" and roi_type in ("SERSIC", "SERSIC_ELLIPSE_Q_PHI"):
             new_radius = float(self.vmid)
             #mode = "sersic_radius"
+        elif roi_type == "SERSIC_ELLIPSE_Q_PHI" and param in ("q", "phi"):
+            pass
         else:
             return
 
@@ -179,14 +189,30 @@ class TripleSlider(pg.GraphicsObject):
             else:
                 # EllipseROI: scale semi-major/minor proportionally to change the mean radius
                 x_center, y_center, semi_major, semi_minor, angle = transform_ROI_params(self.roi)
-                current_R = (semi_major + semi_minor) / 2.0
-                if current_R <= 0:
+                if param == "R_sersic":
+                    current_R = np.sqrt(semi_major * semi_minor)
+                    if current_R <= 0:
+                        return
+                    scale = new_radius / current_R
+                    semi_major_new = semi_major * scale
+                    semi_minor_new = semi_minor * scale
+                    angle_new = angle
+                elif param == "q":
+                    q_new = max(min(float(self.vmid), 1.0), self.eps)
+                    current_R = np.sqrt(semi_major * semi_minor)
+                    if current_R <= 0:
+                        return
+                    semi_major_new = current_R / np.sqrt(q_new)
+                    semi_minor_new = current_R * np.sqrt(q_new)
+                    angle_new = angle
+                elif param == "phi":
+                    semi_major_new = semi_major
+                    semi_minor_new = semi_minor
+                    angle_new = float(np.arctan2(np.sin(self.vmid), np.cos(self.vmid)))
+                else:
                     return
-                scale = new_radius / current_R
-                semi_major_new = semi_major * scale
-                semi_minor_new = semi_minor * scale
                 x, y, a, b, angle_deg = transform_ROI_params_inverse(
-                    x_center, y_center, semi_major_new, semi_minor_new, angle
+                    x_center, y_center, semi_major_new, semi_minor_new, angle_new
                 )
                 self.roi.setPos([x, y])
                 self.roi.setSize([a, b])
@@ -222,7 +248,9 @@ class TripleSlider(pg.GraphicsObject):
         roi_type = getattr(getattr(self, "roi", None), "type_str", None)
         if self.param_name == "sigma" and roi_type == "GAUSSIAN":
             return True
-        if self.param_name == "R_sersic" and roi_type in ("SERSIC", "SERSIC_ELLIPSE"):
+        if self.param_name == "R_sersic" and roi_type in ("SERSIC", "SERSIC_ELLIPSE_Q_PHI"):
+            return True
+        if self.param_name in ("q", "phi") and roi_type == "SERSIC_ELLIPSE_Q_PHI":
             return True
         return False
 

@@ -13,6 +13,7 @@ from lenstronomy.LensModel.lens_model import LensModel
 from lenstronomy.LightModel.light_model import LightModel
 from lenstronomy.PointSource.point_source import PointSource
 from lenstronomy.Data.pixel_grid import PixelGrid  
+from lenstronomy.Util import param_util
         
 from ...utils.utils_astro.utils_general import world_to_relative, relative_to_world, arcsec_to_kpc
 from ...utils.utils_astro.get_cosmology import get_cosmo
@@ -55,6 +56,8 @@ def _apply_kwargs_bounds_to_roi_sliders(roi, lo, hi, eps=1e-8, plot_widget=None)
         ('n_sersic', 'n_sersic'),
         ('sigma', 'sigma'),
         ('R_sersic', 'R_sersic'),
+        ('q', 'q'),
+        ('phi', 'phi'),
         ('source_amp', 'amp'),
     ):
         if k_kwargs in lo and k_kwargs in hi and k_slider in sliders:
@@ -441,24 +444,33 @@ class lenstronomy_model :
 
                 self._apply_bounds_if_present(PlotWidget.last_roi, 'kwargs_source', i)
 
-            if model=='SERSIC_ELLIPSE' :
+            if model in ('SERSIC_ELLIPSE_Q_PHI', 'SERSIC_ELLIPSE') :
                 kwargs = self.local[kwargs_name]['kwargs_source'][i]
                 x_center = kwargs['center_x'] - self.imsim.source_center_coordinates[0]
                 y_center = kwargs['center_y'] - self.imsim.source_center_coordinates[1]
                 R_sersic = kwargs['R_sersic']
-                e1, e2 = kwargs['e1'], kwargs['e2']
-                
-                e = (e1**2 + e2**2)**0.5
-                q = (1-e) / (1+e)
-                a = 2*R_sersic / (1+q)
-                b = a*q
-                theta = 0.5*np.arctan(e2/e1)
-                
-                x_corner, y_corner, a, b, angle = transform_ROI_params_inverse(x_center, y_center, a, b, theta)
+                #e1, e2 = kwargs['e1'], kwargs['e2']
+                #e = (e1**2 + e2**2)**0.5
+                #q = (1-e) / (1+e)
+                #a = 2*R_sersic / (1+q)
+                #b = a*q
+                #theta = 0.5*np.arctan(e2/e1)
+                #x_corner, y_corner, a, b, angle = transform_ROI_params_inverse(x_center, y_center, a, b, theta)
+                if model == 'SERSIC_ELLIPSE_Q_PHI' :
+                    q = kwargs['q']
+                    phi = kwargs['phi']
+                else :
+                    e1, e2 = kwargs['e1'], kwargs['e2']
+                    phi, q = param_util.ellipticity2phi_q(float(e1), float(e2))
+                semi_major = R_sersic / np.sqrt(q)
+                semi_minor = R_sersic * np.sqrt(q)
+                x_corner, y_corner, a, b, angle = transform_ROI_params_inverse(
+                    x_center, y_center, semi_major, semi_minor, phi
+                )
                 
                 PlotWidget.last_roi = SelectableEllipseROI([x_corner, y_corner], [a, b], angle=angle, pen='orange', invertible=True)
                 PlotWidget.last_roi.type = 1
-                PlotWidget.last_roi.type_str = 'SERSIC_ELLIPSE'
+                PlotWidget.last_roi.type_str = 'SERSIC_ELLIPSE_Q_PHI'
                 PlotWidget.roi_list.append(PlotWidget.last_roi)
                 for handle in PlotWidget.last_roi.handles:
                     PlotWidget.last_roi.removeHandle(handle['item'])
@@ -467,7 +479,7 @@ class lenstronomy_model :
                 make_handles(PlotWidget.last_roi)
                 
                 # Add sliders to control light source parameters
-                params = ['amp', 'n_sersic']
+                params = ['amp', 'n_sersic', 'q', 'phi']
                 attach_sliders(PlotWidget, params)
                 
                 for p, v in kwargs.items() :
@@ -752,9 +764,11 @@ class lenstronomy_model :
             'n_sersic': r'$n$',
             'e1':       r'$e_1$',
             'e2':       r'$e_2$',
+            'q':        r'$q$',
+            'phi':      r'$\phi$',
             'r':        rf'{coord_prefix}$r$ [{coord_unit}]',
         }
-        _param_order = ['flux', 'ab_mag', 'size', 'n_sersic', 'e1', 'e2']
+        _param_order = ['flux', 'ab_mag', 'size', 'n_sersic', 'e1', 'e2', 'q', 'phi']
         _amp_aliases = {'source_amp'}
         _size_keys   = {'R_sersic', 'sigma'}   # angular sizes converted alongside coords
         _coord_keys  = {'center_x', 'center_y', 'ra_source', 'dec_source'}

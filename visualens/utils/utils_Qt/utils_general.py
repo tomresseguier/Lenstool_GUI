@@ -57,6 +57,33 @@ def transform_rectangle(x0, y0, a, b, angle) :
 
 
 def transform_ROI_params(roi) :
+    '''
+    Converts raw ROI widget parameters into standardised ellipse parameters.
+
+    Reads the bounding-box size (a, b) and rotation angle from a pyqtgraph ROI
+    object, computes the centre of the box in scene coordinates, and returns the
+    ellipse axes such that semi_major >= semi_minor is always guaranteed.
+
+    When the box is taller than it is wide (|b| > |a|), the axes are swapped and the
+    angle is rotated by 90 degrees (π/2) so that the major axis always corresponds
+    to the first returned value. The angle is kept in [0, π) by the modulo.
+
+    Parameters
+    ----------
+    roi : pyqtgraph ROI
+        The ROI widget. Must expose .size(), .angle(), .x(), and .y().
+
+    Returns
+    -------
+    x_center, y_center : float
+        Scene coordinates of the ellipse centre.
+    semi_major : float
+        Half-length of the longest axis (>= semi_minor).
+    semi_minor : float
+        Half-length of the shortest axis (<= semi_major).
+    angle : float
+        Orientation of the major axis in radians, in [0, π).
+    '''
     a = roi.size()[0]
     b = roi.size()[1]
     angle = roi.angle() * np.pi/180
@@ -68,13 +95,13 @@ def transform_ROI_params(roi) :
     x_center = roi.x() + d*np.cos(beta)
     y_center = roi.y() + d*np.sin(beta)
     
-    if a>b :
+    if abs(a) > abs(b) :
         semi_major = abs(a)/2
         semi_minor = abs(b)/2
     else :
         semi_major = abs(b)/2
         semi_minor = abs(a)/2
-        angle+=np.pi/2 %np.pi
+        angle = (angle + np.pi/2) % np.pi
     return x_center, y_center, semi_major, semi_minor, angle
 
 

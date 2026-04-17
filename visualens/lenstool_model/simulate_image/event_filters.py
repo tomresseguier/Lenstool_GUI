@@ -5,18 +5,26 @@ import pyqtgraph as pg
 from ...utils.utils_astro.utils_general import world_to_relative
 
 
+def _get_view(iv) :
+    """Return the ViewBox for both pg.ImageView and PlotWidget-based widgets."""
+    if hasattr(iv, 'getViewBox'):
+        return iv.getViewBox()
+    return iv.getView()
 
 
-class SourceFilter(QObject):
+
+
+class SourceFilter(QObject) :
     def __init__(self, imsim) :
         super().__init__()
         self.imsim = imsim
         
     def eventFilter(self, obj, event):
         if event.type() == QEvent.KeyPress and event.key() in (Qt.Key_Return, Qt.Key_Enter) :
-            self.imsim.simulate()
             if event.modifiers() == Qt.ShiftModifier :
                 self.imsim.optimize()
+            else :
+                self.imsim.simulate()
             return True  # Stop propagation
         return False     # Let other events pass through  
 
@@ -33,12 +41,12 @@ class ImageFilter(QObject) :
             txt.hide()
             iv.addItem(txt)
             self._hover_text_items[name] = txt
-            iv.getView().scene().sigMouseMoved.connect(
+            _get_view(iv).scene().sigMouseMoved.connect(
                 lambda pos, _name=name, _iv=iv: self._update_hover_text(_name, _iv, pos)
             )
 
             # Use pyqtgraph's mouse click signal (scene coordinates) for accurate mapping.
-            iv.getView().scene().sigMouseClicked.connect(
+            _get_view(iv).scene().sigMouseClicked.connect(
                 lambda ev, _name=name, _iv=iv: self._handle_image_double_click(_name, _iv, ev)
             )
 
@@ -50,7 +58,7 @@ class ImageFilter(QObject) :
         except Exception:
             return
 
-        vb = image_view.getView()
+        vb = _get_view(image_view)
         scene_pos = ev.scenePos()
         data_pos = vb.mapSceneToView(scene_pos)
         x, y = data_pos.x(), data_pos.y()
@@ -91,7 +99,7 @@ class ImageFilter(QObject) :
             text_item.hide()
             return
 
-        vb = image_view.getView()
+        vb = _get_view(image_view)
         data_pos = vb.mapSceneToView(scene_pos)
         x = int(np.floor(data_pos.x()))
         y_plot = int(np.floor(data_pos.y()))

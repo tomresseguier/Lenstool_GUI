@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import corner
 
@@ -11,6 +12,11 @@ from .lenstronomy_model import lenstronomy_model
 
 
 
+
+def is_mpi_running():
+    # Common environment variables set by different MPI implementations
+    mpi_vars = ['OMPI_COMM_WORLD_SIZE', 'PMI_SIZE', 'PMIX_SIZE']
+    return any(var in os.environ for var in mpi_vars)
 
 def optimize(imsim, fitting_kwargs_list=None) :
     print('Starting optimization')
@@ -34,7 +40,7 @@ def optimize(imsim, fitting_kwargs_list=None) :
     kwargs_model = lm_dict_opt['models'].copy()
     kwargs_model['fixed_magnification_list'] = [ True for src in lm_dict_opt['models']['point_source_model_list'] ]
     
-    fitting_seq = FittingSequence(kwargs_data_joint, kwargs_model, kwargs_constraints, kwargs_likelihood, imsim.optimization_params, mpi=True)
+    fitting_seq = FittingSequence(kwargs_data_joint, kwargs_model, kwargs_constraints, kwargs_likelihood, imsim.optimization_params, mpi=is_mpi_running())
     
     if fitting_kwargs_list is None :
         fitting_kwargs_list = [['PSO', {'sigma_scale': 1., 'n_particles': 100, 'n_iterations': 100, 'threadCount': 16}],

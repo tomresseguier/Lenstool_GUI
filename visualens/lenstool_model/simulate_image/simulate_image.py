@@ -14,7 +14,7 @@ from lenstronomy.Util import util
 
 from ...utils.utils_astro.utils_general import world_to_relative
 from ...utils.utils_general.sort_points import break_curves
-from ...utils.utils_Qt.drag_widgets import DragPlotWidget_special
+from ...utils.utils_Qt.drag_widgets import DragPlotWidget_special, DragImagePlotWidget_special
 from ...utils.utils_Qt.utils_general import transform_rectangle
 from .event_filters import SourceFilter, ImageFilter
 from .lenstronomy_model import lenstronomy_model
@@ -275,18 +275,23 @@ class image_simulator :
         self.image_plane_observed = pg.ImageView()
         self.image_plane_simulated = pg.ImageView()
         self.image_plane_residual = pg.ImageView()
-        self.image_plane_rgb = pg.ImageView()
+        self.image_plane_rgb = DragImagePlotWidget_special(extra_sliders=False, throttle_mode=throttle_mode)
         self.image_plane_plot = self.image_plane_simulated  # backward compatibility
 
         sim0 = np.zeros_like(self.image_data)
-        rgb_data = fits_image.image_data[ self._crop_y0 - self._crop_npix : self._crop_y0, self._crop_x0 : self._crop_x0 + self._crop_npix ]
+        rgb_data_full = fits_image.boosted_image if fits_image.boosted else fits_image.image_data
+        rgb_data = rgb_data_full[ self._crop_y0 - self._crop_npix : self._crop_y0, self._crop_x0 : self._crop_x0 + self._crop_npix ]
         self.simulated_image = sim0
         self.residual_image = self.image_data - sim0
         self.rgb_image_data = rgb_data
-        self.image_plane_observed.setImage(self.image_data[::-1, :])
-        self.image_plane_simulated.setImage(sim0[::-1, :])
-        self.image_plane_residual.setImage(self.residual_image[::-1, :])
-        self.image_plane_rgb.setImage(rgb_data[::-1, ...])
+        self.image_plane_observed.setImage(self.image_data)
+        self.image_plane_observed.getView().invertY(False)
+        self.image_plane_simulated.setImage(sim0)
+        self.image_plane_simulated.getView().invertY(False)
+        self.image_plane_residual.setImage(self.residual_image)
+        self.image_plane_residual.getView().invertY(False)
+        self.image_plane_rgb.setImage(rgb_data)
+        #self.image_plane_rgb.getAxis('bottom').setHeight(0)
 
         x_cc = (self._lt_curve_coords_relative_broken[0] - self._SquareOfInterest_xr_bottomleft) / (fits_image.pix_deg_scale * 3600)
         y_cc = self.image_data.shape[0] - (self._lt_curve_coords_relative_broken[1] - self._SquareOfInterest_yr_bottomleft) / (fits_image.pix_deg_scale * 3600)
@@ -307,7 +312,7 @@ class image_simulator :
         vb0 = self.image_plane_observed.getView()
         vb1 = self.image_plane_simulated.getView()
         vb2 = self.image_plane_residual.getView()
-        vb3 = self.image_plane_rgb.getView()
+        vb3 = self.image_plane_rgb.getViewBox()
         vb1.setXLink(vb0)
         vb1.setYLink(vb0)
         vb2.setXLink(vb0)
@@ -402,8 +407,12 @@ class image_simulator :
         simulate(self)
     
     def optimize(self, N_sigma=6., fitting_kwargs_list=None) :
+        fitting_kwargs_list = getattr(self, 'fitting_kwargs_list', None) if fitting_kwargs_list is None else fitting_kwargs_list
         self.simulate(N_sigma=6.)
         optimize(self, fitting_kwargs_list=fitting_kwargs_list)
+    
+    def set_fitting_kwargs_list(self, fitting_kwargs_list) :
+        self.fitting_kwargs_list = fitting_kwargs_list
     
     #def save(self) :
     #    self.model_local = format_lm_local(self.models, self.result_kwargs)

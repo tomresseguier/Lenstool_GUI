@@ -294,7 +294,7 @@ class DragPlotWidget_special(ThrottledPlotWidget):
             self.start_pos = QPointF(mouse_point.x(), mouse_point.y())
             self.last_roi = SelectableEllipseROI([self.start_pos.x(), self.start_pos.y()], [1e-9, 1e-9], pen='orange', invertible=True)
             self.last_roi.type = 1
-            self.last_roi.type_str = 'SERSIC_ELLIPSE'
+            self.last_roi.type_str = 'SERSIC_ELLIPSE_Q_PHI'
             self.roi_list.append(self.last_roi)
             for handle in self.last_roi.handles:
                 self.last_roi.removeHandle(handle['item'])
@@ -302,7 +302,7 @@ class DragPlotWidget_special(ThrottledPlotWidget):
             self.drawing1 = True
             
             # Add sliders to control light source parameters
-            params = ['amp', 'n_sersic']
+            params = ['amp', 'n_sersic', 'q', 'phi']
             attach_sliders(self, params)
         # Gaussian light source
         elif event.button() == Qt.LeftButton and event.modifiers() in (Qt.ControlModifier, QtCore.Qt.MetaModifier) :
@@ -451,6 +451,24 @@ class DragPlotWidget_special(ThrottledPlotWidget):
     #    pg.setConfigOptions(antialias=False)
         
 
+class DragImagePlotWidget_special(DragPlotWidget_special):
+    """
+    DragPlotWidget_special variant that also displays raster images.
+
+    This mirrors the API needed from pg.ImageView (`setImage`, `addItem`,
+    `getView`) while preserving ROI interactions from DragPlotWidget_special.
+    """
+    def __init__(self, extra_sliders=True, throttle_mode=0):
+        super().__init__(extra_sliders=extra_sliders, throttle_mode=throttle_mode)
+        self._image_item = pg.ImageItem()
+        self.addItem(self._image_item)
+
+    def setImage(self, image):
+        self._image_item.setImage(image)
+
+    def clearImage(self):
+        self._image_item.clear()
+
 
 class SelectableRectangleROI(pg.ROI):
     def __init__(self, pos, size, **kwargs):
@@ -587,7 +605,7 @@ def remove_dpos_square_overlay(plot_widget, roi):
 
 def attach_sliders(self, params) :
     if self.extra_sliders :
-        if self.last_roi.type_str in ['SERSIC', 'SERSIC_ELLIPSE'] :
+        if self.last_roi.type_str in ['SERSIC', 'SERSIC_ELLIPSE_Q_PHI'] :
             params += ['R_sersic']
         elif self.last_roi.type_str=='GAUSSIAN' :
             params += ['sigma']

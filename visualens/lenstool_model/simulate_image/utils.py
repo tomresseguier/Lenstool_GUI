@@ -33,6 +33,8 @@ def get_light_model_ranges() :
         'amp': [1e-3, 1000, 'log', 'triple_handle'],
         'n_sersic': [1, 10, 'linear', 'triple_handle'],
         'R_sersic': [1e-4, 10, 'log', 'triple_handle'],
+        'q': [0.0, 1.0, 'linear', 'triple_handle'],
+        'phi': [-np.pi, np.pi, 'linear', 'triple_handle'],
         'sigma': [1e-4, 10, 'log', 'triple_handle'],
         'dpos': [1e-6, 0.2, 'log', 'single_handle'],
     }
@@ -49,18 +51,18 @@ def make_lm_dict(imsim) :
     
     for roi in imsim.source_plane_widget.roi_list :
         if roi.type==1 :
-            LightModel_source_list.append('SERSIC_ELLIPSE')
+            LightModel_source_list.append('SERSIC_ELLIPSE_Q_PHI')
             amp = roi.sliders['amp'].vmid
             n_sersic = roi.sliders['n_sersic'].vmid
             x_center, y_center, semi_major, semi_minor, angle = transform_ROI_params(roi)
             q = semi_minor / semi_major
-            e = (1-q) / (1+q)
-            e1 = e * np.cos(2*angle)
-            e2 = e * np.sin(2*angle)
-            R_sersic = (semi_major + semi_minor) / 2.0
+            #e = (1-q) / (1+q)
+            #e1 = e * np.cos(2*angle)
+            #e2 = e * np.sin(2*angle)
+            R_sersic = np.sqrt(semi_major * semi_minor)
             src_xr = x_center + imsim.source_center_coordinates[0]
             src_yr = y_center + imsim.source_center_coordinates[1]
-            to_add = {'amp': amp, 'R_sersic': R_sersic, 'n_sersic': n_sersic, 'e1': e1, 'e2': e2, 'center_x': src_xr, 'center_y': src_yr}
+            to_add = {'amp': amp, 'R_sersic': R_sersic, 'n_sersic': n_sersic, 'q': q, 'phi': angle, 'center_x': src_xr, 'center_y': src_yr}
             LightModel_source_kwargs.append(to_add)
         elif roi.type==2 :
             LightModel_source_list.append('GAUSSIAN')
@@ -137,10 +139,16 @@ def make_lm_dict_opt(imsim, N_sigma=6.) :
                 kwargs_upper[param] = v + dpos
                 kwargs_sigma[param] = 2*dpos/N_sigma
                 kwargs_init[param] = v
-            elif param in ['e1', 'e2'] :
-                kwargs_lower[param] = -1.
-                kwargs_upper[param] = 1.
-                kwargs_sigma[param] = 2/N_sigma
+            #elif param in ['e1', 'e2'] :
+            #    kwargs_lower[param] = -1.
+            #    kwargs_upper[param] = 1.
+            #    kwargs_sigma[param] = 2/N_sigma
+            elif param in ['q', 'phi'] :
+                vmax = imsim.source_plane_widget.roi_list[ roi_indices[i] ].sliders[param].vmax
+                vmin = imsim.source_plane_widget.roi_list[ roi_indices[i] ].sliders[param].vmin
+                kwargs_lower[param] = vmin
+                kwargs_upper[param] = vmax
+                kwargs_sigma[param] = (vmax - vmin) / N_sigma
                 kwargs_init[param] = kwargs[param]
             else :
                 vmax = imsim.source_plane_widget.roi_list[ roi_indices[i] ].sliders[param].vmax
@@ -206,25 +214,26 @@ def make_lm_dict_opt(imsim, N_sigma=6.) :
         kwargs_ps_upper.append(kwargs_upper)
         kwargs_ps_sigma.append(kwargs_sigma)
         kwargs_ps_init.append(kwargs_init)
-
+        
     
-    param = Param(lm_dict_opt['models'],
-                  kwargs_fixed_lens=imsim.LensModel_kwargs,
-                  kwargs_fixed_source=kwargs_source_fixed,#self.imsim.fixed_source_kwargs,
-                  #kwargs_fixed_lens_light=kwargs_fixed_lens_light,
-                  kwargs_fixed_ps=kwargs_ps_fixed, 
-                  kwargs_lower_lens=[{}],
-                  kwargs_lower_source=kwargs_source_lower,
-                  #kwargs_lower_lens_light=kwargs_lower_lens_light,
-                  kwargs_lower_ps=kwargs_ps_lower,
-                  kwargs_upper_lens=[{}],
-                  kwargs_upper_source=kwargs_source_upper,
-                  #kwargs_upper_lens_light=kwargs_upper_lens_light,
-                  kwargs_upper_ps=kwargs_ps_upper,
-                  #kwargs_lens_init=kwargs_lens,
-                  #joint_lens_with_light: [[0, 0, ['center_x', 'center_y']]],
-                  linear_solver=imsim.use_linear_solver)
-    param.print_setting()
+    if False : # This produces an error if there is a SERSIC_ELLIPSE_Q_PHI light model
+        param = Param(lm_dict_opt['models'],
+                      kwargs_fixed_lens=imsim.LensModel_kwargs,
+                      kwargs_fixed_source=kwargs_source_fixed,#self.imsim.fixed_source_kwargs,
+                      #kwargs_fixed_lens_light=kwargs_fixed_lens_light,
+                      kwargs_fixed_ps=kwargs_ps_fixed, 
+                      kwargs_lower_lens=[{}],
+                      kwargs_lower_source=kwargs_source_lower,
+                      #kwargs_lower_lens_light=kwargs_lower_lens_light,
+                      kwargs_lower_ps=kwargs_ps_lower,
+                      kwargs_upper_lens=[{}],
+                      kwargs_upper_source=kwargs_source_upper,
+                      #kwargs_upper_lens_light=kwargs_upper_lens_light,
+                      kwargs_upper_ps=kwargs_ps_upper,
+                      #kwargs_lens_init=kwargs_lens,
+                      #joint_lens_with_light: [[0, 0, ['center_x', 'center_y']]],
+                      linear_solver=imsim.use_linear_solver)
+        param.print_setting()
     
     lm_dict_opt['kwargs_fixed'] = {'kwargs_source': kwargs_source_fixed, 'kwargs_source_ps': kwargs_ps_fixed}
     lm_dict_opt['kwargs_lower'] = {'kwargs_source': kwargs_source_lower, 'kwargs_source_ps': kwargs_ps_lower}
@@ -252,6 +261,8 @@ def make_samples_dict(lm_dict_opt, samples, linear_solver=False) :
                   'center_y_source_light': 'center_y',
                   'e1_source_light': 'e1',
                   'e2_source_light': 'e2',
+                  'q_source_light': 'q',
+                  'phi_source_light': 'phi',
                   'source_amp': 'amp',
                   'ra_source': 'center_x',
                   'dec_source': 'center_y'}
@@ -260,7 +271,7 @@ def make_samples_dict(lm_dict_opt, samples, linear_solver=False) :
             n=3 if linear_solver else 4
         elif model == 'SERSIC' :
             n=4 if linear_solver else 5
-        elif model == 'SERSIC_ELLIPSE' :
+        elif model in ('SERSIC_ELLIPSE', 'SERSIC_ELLIPSE_Q_PHI') :
             n=6 if linear_solver else 7
         param_list = param_list_full[ start:start+n ]
         for k, param in enumerate(param_list) :
