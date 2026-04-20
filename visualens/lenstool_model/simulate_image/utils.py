@@ -1,8 +1,10 @@
 import copy
 import numpy as np
 from ...utils.utils_Qt.utils_general import transform_ROI_params
+from ...utils.utils_Qt.drag_widgets import _roi_link_box_slider
 import re
 from lenstronomy.Sampling.parameters import Param
+from lenstronomy.LensModel.lens_model import LensModel
 
 
 
@@ -28,29 +30,95 @@ def format_lm_local(models, kwargs) :
     return model_local
 
 
-def get_light_model_ranges() :
-    ranges = {
-        'amp': [1e-3, 1000, 'log', 'triple_handle'],
-        'n_sersic': [1, 10, 'linear', 'triple_handle'],
-        'R_sersic': [1e-4, 10, 'log', 'triple_handle'],
-        'q': [0.0, 1.0, 'linear', 'triple_handle'],
-        'phi': [-np.pi, np.pi, 'linear', 'triple_handle'],
-        'sigma': [1e-4, 10, 'log', 'triple_handle'],
-        'dpos': [1e-6, 0.2, 'log', 'single_handle'],
+def get_ROI_slider_init_dict_light_model() :
+    """
+    Slider specs: ``[min, max, 'log'|'linear', handle_style, roi_link_mode]``.
+    Optional 5th entry ``roi_link_mode`` selects ROI coupling for any parameter name:
+    ``None``, ``'link_size'``, ``'link_ratio'``, ``'link_angle'``, ``'link_box'``.
+    """
+    slider_init_dict = {
+        'amp': [1e-3, 1000, 'log', 'triple_handle', None],
+        'n_sersic': [1, 10, 'linear', 'triple_handle', None],
+        'R_sersic': [1e-4, 10, 'log', 'triple_handle', 'link_size'],
+        'q': [0.0, 1.0, 'linear', 'triple_handle', 'link_ratio'],
+        'phi': [-np.pi, np.pi, 'linear', 'triple_handle', 'link_angle'],
+        'sigma': [1e-4, 10, 'log', 'triple_handle', 'link_size'],
+        'dpos': [1e-6, 0.2, 'log', 'single_handle', 'link_box'],
     }
-    return ranges
+    return slider_init_dict
     
+def get_ROI_param_dict_light_model() :
+    ROI_param_dict = {
+        'CIRCLE1': [ 'GAUSSIAN', ['amp', 'sigma', 'dpos'] ],
+        'CIRCLE2': [ 'SERSIC', ['amp', 'R_sersic', 'n_sersic', 'dpos'] ],
+        'ELLIPSE': [ 'SERSIC_ELLIPSE_Q_PHI', ['amp', 'R_sersic', 'n_sersic', 'q', 'phi', 'dpos'] ],
+        'POINT': [ 'SOURCE_POSITION', ['amp', 'dpos'] ]
+    }
+    return ROI_param_dict
+
+def get_ROI_slider_init_dict_lens_model() :
+    """Same shape as :func:`get_ROI_slider_init_dict_light_model` (optional 5th ``roi_link_mode``)."""
+    slider_init_dict = {
+        'sigma0': [1e-3, 1000, 'log', 'triple_handle', None],
+        'Ra': [1e-3, 100, 'log', 'triple_handle', None],
+        'Rs': [1e-3, 100, 'log', 'triple_handle', 'link_size'],
+        'q': [-1.0, 1.0, 'linear', 'triple_handle', 'link_ratio'],
+        'phi': [-1.0, 1.0, 'linear', 'triple_handle', 'link_angle'],
+        'dpos': [1e-4, 10, 'log', 'single_handle', 'link_box'],
+    }
+    return slider_init_dict
     
+def get_ROI_param_dict_lens_model() :
+    ROI_param_dict = {
+        'CIRCLE1': [ 'CIRCLE1', ['param'] ],
+        'CIRCLE2': [ 'CIRCLE2', ['param'] ],
+        'ELLIPSE': [ 'PJAFFE_ELLIPSE_POTENTIAL_Q_PHI', ['sigma0', 'Ra', 'Rs', 'q', 'phi', 'dpos'] ],
+        'POINT': [ 'POINT', ['param'] ]
+    }
+    return ROI_param_dict
+
 
 
 def make_lm_dict(imsim) :
+
+    """ Get the lens model parameters from the rgb image panel's ROIs """
+    # First, reset the lens model list and kwargs to just the base interpol model
+    imsim.LensModel_list = [imsim.LensModel_list[0]]
+    imsim.LensModel_kwargs = [imsim.LensModel_kwargs[0]]
+    # Then, add the PJAFFE_ELLIPSE_POTENTIAL_Q_PHI model for each ellipse ROI on the rgb image plane
+    for roi in imsim.image_plane_rgb.roi_list :
+        if roi.type=='PJAFFE_ELLIPSE_POTENTIAL_Q_PHI' :
+            imsim.LensModel_list.append('PJAFFE_ELLIPSE_POTENTIAL_Q_PHI')
+            x_center, y_center, semi_major, semi_minor, angle = transform_ROI_params(roi)
+            # This time, the intrinsic units of the rgb panel are pixels, so we need to convert the ROI's parameters to arcsec
+            npix = imsim._crop_npix
+            pix_scale = imsim.fits_image.pix_deg_scale * 3600.0
+            center_x = (x_center - npix / 2.0) * pix_scale
+            center_y = (npix / 2.0 - y_center) * pix_scale
+            q = semi_minor / semi_major
+            to_add = {
+                'sigma0': roi.sliders['sigma0'].vmid,
+                'Ra': roi.sliders['Ra'].vmid,
+                'Rs': roi.sliders['Rs'].vmid,
+                'q': q,
+                'phi': angle,
+                'center_x': center_x,
+                'center_y': center_y,
+            }
+            imsim.LensModel_kwargs.append(to_add)
+
+    imsim.LensModel = LensModel(lens_model_list=imsim.LensModel_list)
+    # Might be useful at some point to shift the source plane widget by the new source center coordinates for the curent lens model
+    imsim.source_center_coordinates_new = imsim.LensModel.ray_shooting(0.0, 0.0, imsim.LensModel_kwargs)
+
+    """ Get the light model parameters from the source plane widget's ROIs """
     LightModel_source_list = []
     LightModel_source_kwargs = []
     PSModel_source_list = []
     PSModel_source_kwargs = []
-    
+
     for roi in imsim.source_plane_widget.roi_list :
-        if roi.type==1 :
+        if roi.type=='SERSIC_ELLIPSE_Q_PHI' :
             LightModel_source_list.append('SERSIC_ELLIPSE_Q_PHI')
             amp = roi.sliders['amp'].vmid
             n_sersic = roi.sliders['n_sersic'].vmid
@@ -64,7 +132,7 @@ def make_lm_dict(imsim) :
             src_yr = y_center + imsim.source_center_coordinates[1]
             to_add = {'amp': amp, 'R_sersic': R_sersic, 'n_sersic': n_sersic, 'q': q, 'phi': angle, 'center_x': src_xr, 'center_y': src_yr}
             LightModel_source_kwargs.append(to_add)
-        elif roi.type==2 :
+        elif roi.type=='GAUSSIAN' :
             LightModel_source_list.append('GAUSSIAN')
             amp = roi.sliders['amp'].vmid
             x_center, y_center, semi_major, semi_minor, angle = transform_ROI_params(roi)
@@ -73,7 +141,7 @@ def make_lm_dict(imsim) :
             sigma = abs(roi.size()[0])
             to_add = {'amp': amp, 'sigma': sigma, 'center_x': src_xr, 'center_y': src_yr}
             LightModel_source_kwargs.append(to_add)
-        elif roi.type==3 :
+        elif roi.type=='SERSIC' :
             LightModel_source_list.append('SERSIC')
             amp = roi.sliders['amp'].vmid
             n_sersic = roi.sliders['n_sersic'].vmid
@@ -83,7 +151,7 @@ def make_lm_dict(imsim) :
             R_sersic = abs(roi.size()[0]) / 2.0
             to_add = {'amp': amp, 'R_sersic': R_sersic, 'n_sersic': n_sersic, 'center_x': src_xr, 'center_y': src_yr}
             LightModel_source_kwargs.append(to_add)
-        elif roi.type==4 :
+        elif roi.type=='SOURCE_POSITION' :
             PSModel_source_list.append('SOURCE_POSITION')
             amp = roi.sliders['amp'].vmid
             x_center, y_center, semi_major, semi_minor, angle = transform_ROI_params(roi)
@@ -109,7 +177,7 @@ def make_lm_dict_opt(imsim, N_sigma=6.) :
     lm_dict_opt = make_lm_dict(imsim)
     
     """ Source Light models """
-    roi_indices = np.where( [roi.type_str != 'SOURCE_POSITION' for roi in imsim.source_plane_widget.roi_list] )[0]
+    roi_indices = np.where( [roi.type != 'SOURCE_POSITION' for roi in imsim.source_plane_widget.roi_list] )[0]
     
     kwargs_source_fixed = []
     kwargs_source_lower = []
@@ -133,7 +201,8 @@ def make_lm_dict_opt(imsim, N_sigma=6.) :
             kwargs_fixed[param] = kwargs[param]
         for param in opt_params :
             if param in ['center_x', 'center_y'] :
-                dpos = imsim.source_plane_widget.roi_list[ roi_indices[i] ].sliders['dpos'].vmid
+                _, sbox = _roi_link_box_slider(imsim.source_plane_widget.roi_list[roi_indices[i]])
+                dpos = sbox.vmid
                 v = kwargs[param]
                 kwargs_lower[param] = v - dpos
                 kwargs_upper[param] = v + dpos
@@ -168,7 +237,7 @@ def make_lm_dict_opt(imsim, N_sigma=6.) :
 
 
     """ Point source models """
-    roi_indices = np.where( [roi.type_str == 'SOURCE_POSITION' for roi in imsim.source_plane_widget.roi_list] )[0]
+    roi_indices = np.where( [roi.type == 'SOURCE_POSITION' for roi in imsim.source_plane_widget.roi_list] )[0]
     
     kwargs_ps_fixed = []
     kwargs_ps_lower = []
@@ -192,7 +261,8 @@ def make_lm_dict_opt(imsim, N_sigma=6.) :
             kwargs_fixed[param] = kwargs[param]
         for param in opt_params :
             if param in ['ra_source', 'dec_source'] :
-                dpos = imsim.source_plane_widget.roi_list[ roi_indices[i] ].sliders['dpos'].vmid
+                _, sbox = _roi_link_box_slider(imsim.source_plane_widget.roi_list[roi_indices[i]])
+                dpos = sbox.vmid
                 v = kwargs[param]
                 kwargs_lower[param] = v - dpos
                 kwargs_upper[param] = v + dpos

@@ -1,3 +1,4 @@
+import copy
 import numpy as np
 import os
 import pyqtgraph as pg
@@ -15,6 +16,7 @@ from lenstronomy.Util import util
 from ...utils.utils_astro.utils_general import world_to_relative
 from ...utils.utils_general.sort_points import break_curves
 from ...utils.utils_Qt.drag_widgets import DragPlotWidget_special, DragImagePlotWidget_special
+from ...lenstool_model.simulate_image.utils import get_ROI_param_dict_light_model, get_ROI_slider_init_dict_light_model, get_ROI_param_dict_lens_model, get_ROI_slider_init_dict_lens_model
 from ...utils.utils_Qt.utils_general import transform_rectangle
 from .event_filters import SourceFilter, ImageFilter
 from .lenstronomy_model import lenstronomy_model
@@ -97,10 +99,13 @@ class image_simulator :
         x_axes, y_axes = util.get_axes(x_grid_interp, y_grid_interp)
         
         self.LensModel_kwargs = [{'grid_interp_x': x_axes,
-                                  'grid_interp_y': y_axes,
-                                  'f_': fits_image.lt.convergence_maps[fits_image.lt.lt_z][0],
-                                  'f_x': fits_image.lt.dpl_maps[fits_image.lt.lt_z][0],
-                                  'f_y': fits_image.lt.dpl_maps[fits_image.lt.lt_z][1]}]
+                                        'grid_interp_y': y_axes,
+                                        'f_': fits_image.lt.convergence_maps[fits_image.lt.lt_z][0],
+                                        'f_x': fits_image.lt.dpl_maps[fits_image.lt.lt_z][0],
+                                        'f_y': fits_image.lt.dpl_maps[fits_image.lt.lt_z][1]}]
+        # Preserved for ``make_lm_dict`` / ``_assemble_lens_model_kwargs``: INTERPOL dict only,
+        # so ellipse ROIs on the image plane can append ``PJAFFE_ELLIPSE_POTENTIAL_Q_PHI`` components.
+        self.LensModel_base_kwargs = copy.deepcopy(self.LensModel_kwargs[0])
         
         self.LensModel_list = ['INTERPOL']
         self.LensModel = LensModel(lens_model_list=self.LensModel_list)
@@ -113,7 +118,7 @@ class image_simulator :
         #-------------- Qt graphics definitions --------------#
         
         #This version of the code tends to freeze unfortunately
-        self.source_plane_widget = DragPlotWidget_special(throttle_mode=throttle_mode)
+        self.source_plane_widget = DragPlotWidget_special(ROI_param_dict=get_ROI_param_dict_light_model(), slider_init_dict=get_ROI_slider_init_dict_light_model(), throttle_mode=throttle_mode)
         self.source_plane_widget.setTitle('Source plane')
         #source_plane_widget.setAspectLocked(lock=True, ratio=1)
         
@@ -275,7 +280,7 @@ class image_simulator :
         self.image_plane_observed = pg.ImageView()
         self.image_plane_simulated = pg.ImageView()
         self.image_plane_residual = pg.ImageView()
-        self.image_plane_rgb = DragImagePlotWidget_special(extra_sliders=False, throttle_mode=throttle_mode)
+        self.image_plane_rgb = DragImagePlotWidget_special(ROI_param_dict=get_ROI_param_dict_lens_model(), slider_init_dict=get_ROI_slider_init_dict_lens_model(), throttle_mode=throttle_mode)
         self.image_plane_plot = self.image_plane_simulated  # backward compatibility
 
         sim0 = np.zeros_like(self.image_data)

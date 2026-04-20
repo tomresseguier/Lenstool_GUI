@@ -13,7 +13,7 @@ class TripleSlider(pg.GraphicsObject):
     valuesChanged = pyqtSignal(float, float, float)  # min, mid, max
     def __init__(self, min_range=0, max_range=10, label=None, above_text=None,
                  PlotWidget=None, roi=None, offset=0., log_scale=False,
-                 single_handle=False) :
+                 single_handle=False, roi_link_mode=None) :
         super().__init__()
         #self.debug = 0
         self.param_name = label
@@ -31,6 +31,8 @@ class TripleSlider(pg.GraphicsObject):
         self.log_scale = log_scale
         # If True, only the middle handle (vmid) is shown and draggable
         self.single_handle = single_handle
+        # None, or 'link_size' | 'link_ratio' | 'link_angle' | 'link_box' from slider_init_dict
+        self.roi_link_mode = roi_link_mode
 
         self.vmin = min_range
         self.vmid = (min_range + max_range) / 2 if not log_scale else 10**((np.log10(min_range) + np.log10(max_range)) / 2)
@@ -78,8 +80,9 @@ class TripleSlider(pg.GraphicsObject):
                     return (1 + 1/np.sqrt(2))*a, (1 - 1/np.sqrt(2))*b
                 self.get_anchor = anchor_func
                 self.roi.sigRegionChanged.connect(self.adjust_all)
-                # Optional 2-way binding between ROI size and vmid for sigma/R_sersic
-                self.roi.sigRegionChanged.connect(self._update_from_roi)
+                # Optional 2-way binding between ROI geometry and vmid (see roi_link_mode)
+                if self.roi_link_mode in ("link_size", "link_ratio", "link_angle"):
+                    self.roi.sigRegionChanged.connect(self._update_from_roi)
             
             # Ensure size is constant
             PlotWidget.getViewBox().sigRangeChanged.connect(self.adjust_all)
@@ -112,33 +115,45 @@ class TripleSlider(pg.GraphicsObject):
 
 
     def _update_from_roi(self):
-        """If bound sigma, R_sersic, q or phi, update vmid from ROI geometry."""
-        #print('Debug: running _update_from_roi')
+        """Update vmid from ROI geometry when ``roi_link_mode`` requests it."""
         if self._syncing_from_slider:
             return
-        if getattr(self, "roi", None) is None or getattr(self, "param_name", None) is None:
+        if getattr(self, "roi", None) is None:
             return
-        
-        roi_type = getattr(getattr(self, "roi", None), "type_str", None)
-        param = self.param_name
 
-        if param == "sigma" and roi_type == "GAUSSIAN":
-            new_vmid = abs(self.roi.size()[0])
-        elif param == "R_sersic" and roi_type == "SERSIC" :
-            new_vmid = abs(self.roi.size()[0]) / 2.0
-        elif param == "R_sersic" and roi_type == "SERSIC_ELLIPSE_Q_PHI" :
-            _, _, semi_major, semi_minor, _ = transform_ROI_params(self.roi)
-            # keep consistent with event_filters: R_sersic=(semi_major+semi_minor)/2
-            new_vmid = np.sqrt(semi_major * semi_minor)
-        elif param == "q" and roi_type == "SERSIC_ELLIPSE_Q_PHI":
+        mode = getattr(self, "roi_link_mode", None)
+        if mode in (None, "link_box"):
+            return
+
+        tg = getattr(self.roi, "type_general", None)
+        new_vmid = None
+
+        if mode == "link_size":
+            if tg == "CIRCLE1":
+                new_vmid = abs(self.roi.size()[0])
+            elif tg == "CIRCLE2":
+                new_vmid = abs(self.roi.size()[0]) / 2.0
+            elif tg == "ELLIPSE":
+                _, _, semi_major, semi_minor, _ = transform_ROI_params(self.roi)
+                new_vmid = np.sqrt(semi_major * semi_minor)
+            else:
+                return
+        elif mode == "link_ratio":
+            if tg != "ELLIPSE":
+                return
             _, _, semi_major, semi_minor, _ = transform_ROI_params(self.roi)
             if semi_major <= 0:
                 return
             new_vmid = semi_minor / semi_major
-        elif param == "phi" and roi_type == "SERSIC_ELLIPSE_Q_PHI":
+        elif mode == "link_angle":
+            if tg != "ELLIPSE":
+                return
             _, _, _, _, angle = transform_ROI_params(self.roi)
             new_vmid = float(np.arctan2(np.sin(angle), np.cos(angle)))
         else:
+            return
+
+        if new_vmid is None:
             return
 
         self._syncing_from_roi = True
@@ -150,46 +165,52 @@ class TripleSlider(pg.GraphicsObject):
             self._syncing_from_roi = False
 
     def _apply_to_roi(self):
-        """If bound sigma/R_sersic/q/phi, apply vmid to ROI geometry."""
+        """Apply vmid to ROI geometry when ``roi_link_mode`` requests it."""
         if self._syncing_from_roi:
             return
-        if getattr(self, "roi", None) is None or getattr(self, "param_name", None) is None:
+        if getattr(self, "roi", None) is None:
             return
 
-        roi_type = getattr(getattr(self, "roi", None), "type_str", None)
-        param = self.param_name
+        mode = getattr(self, "roi_link_mode", None)
+        if mode in (None, "link_box"):
+            return
 
-        if param == "sigma" and roi_type == "GAUSSIAN":
-            new_radius = float(self.vmid) / 2.0
-            #mode = "circle_diameter"
-        elif param == "R_sersic" and roi_type in ("SERSIC", "SERSIC_ELLIPSE_Q_PHI"):
-            new_radius = float(self.vmid)
-            #mode = "sersic_radius"
-        elif roi_type == "SERSIC_ELLIPSE_Q_PHI" and param in ("q", "phi"):
-            pass
+        tg = getattr(self.roi, "type_general", None)
+
+        if mode == "link_size":
+            if tg == "CIRCLE1":
+                new_radius = float(self.vmid) / 2.0
+            elif tg in ("CIRCLE2", "ELLIPSE"):
+                new_radius = float(self.vmid)
+            else:
+                return
+        elif mode == "link_ratio":
+            if tg != "ELLIPSE":
+                return
+            new_radius = None  # not used; ellipse q branch below
+        elif mode == "link_angle":
+            if tg != "ELLIPSE":
+                return
+            new_radius = None
         else:
             return
 
         self._syncing_from_slider = True
         try:
             if type(self.roi).__name__ == "SelectableCircleROI":
+                if mode != "link_size":
+                    return
                 # CircleROI pos is top-left; size is [diameter, diameter]
                 current_radius = float(abs(self.roi.size()[0])) / 2.0
                 center_x = self.roi.pos()[0] + current_radius
                 center_y = self.roi.pos()[1] + current_radius
-                #if mode == "sersic_radius":
-                #    #current code uses size()[0] as R_sersic for circle Sersic
-                #    new_d = new_radius
-                #else:
-                #    new_d = new_radius
-                #new_r = new_d / 2.0
                 new_diameter = new_radius * 2.0
                 self.roi.setPos([center_x - new_radius, center_y - new_radius])
                 self.roi.setSize([new_diameter, new_diameter])
             else:
-                # EllipseROI: scale semi-major/minor proportionally to change the mean radius
+                # EllipseROI
                 x_center, y_center, semi_major, semi_minor, angle = transform_ROI_params(self.roi)
-                if param == "R_sersic":
+                if mode == "link_size":
                     current_R = np.sqrt(semi_major * semi_minor)
                     if current_R <= 0:
                         return
@@ -197,7 +218,7 @@ class TripleSlider(pg.GraphicsObject):
                     semi_major_new = semi_major * scale
                     semi_minor_new = semi_minor * scale
                     angle_new = angle
-                elif param == "q":
+                elif mode == "link_ratio":
                     q_new = max(min(float(self.vmid), 1.0), self.eps)
                     current_R = np.sqrt(semi_major * semi_minor)
                     if current_R <= 0:
@@ -205,7 +226,7 @@ class TripleSlider(pg.GraphicsObject):
                     semi_major_new = current_R / np.sqrt(q_new)
                     semi_minor_new = current_R * np.sqrt(q_new)
                     angle_new = angle
-                elif param == "phi":
+                elif mode == "link_angle":
                     semi_major_new = semi_major
                     semi_minor_new = semi_minor
                     angle_new = float(np.arctan2(np.sin(self.vmid), np.cos(self.vmid)))
@@ -244,13 +265,9 @@ class TripleSlider(pg.GraphicsObject):
             self.above_text.setVisible(True)
 
     def _is_roi_resizing_slider(self) :
-        """Return True if dragging this slider can resize the ROI."""
-        roi_type = getattr(getattr(self, "roi", None), "type_str", None)
-        if self.param_name == "sigma" and roi_type == "GAUSSIAN":
-            return True
-        if self.param_name == "R_sersic" and roi_type in ("SERSIC", "SERSIC_ELLIPSE_Q_PHI"):
-            return True
-        if self.param_name in ("q", "phi") and roi_type == "SERSIC_ELLIPSE_Q_PHI":
+        """Return True if dragging this slider can resize or reshape the ROI."""
+        mode = getattr(self, "roi_link_mode", None)
+        if mode in ("link_size", "link_ratio", "link_angle"):
             return True
         return False
 
@@ -485,7 +502,7 @@ class TripleSlider(pg.GraphicsObject):
         self.valuesChanged.emit(self.vmin, self.vmid, self.vmax)
         self.update()
 
-        # If vmid is bound to ROI geometry (sigma/R_sersic), apply it while dragging.
+        # If vmid is linked to ROI geometry (see roi_link_mode), apply it while dragging.
         if self.dragging == "mid":
             self._apply_to_roi()
 

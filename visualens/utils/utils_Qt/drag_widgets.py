@@ -5,7 +5,6 @@ from pyqtgraph.Qt import QtCore
 
 from .utils_general import make_handles, transform_ROI_params
 from .sliders import TripleSlider
-from ...lenstool_model.simulate_image.utils import get_light_model_ranges
 
 
 
@@ -223,7 +222,7 @@ class DragPlotWidget_special(ThrottledPlotWidget):
     """
     Same as DragPlotWidget but with selecatble elliptical and two different types of circular ROI.
     """
-    def __init__(self, extra_sliders=True, throttle_mode=0):
+    def __init__(self, ROI_param_dict=None, slider_init_dict=None, throttle_mode=0):
         super().__init__(throttle_mode=throttle_mode)
         self.scene().sigMouseMoved.connect(self.mouse_moved)
         self.view = self.getViewBox()
@@ -234,8 +233,10 @@ class DragPlotWidget_special(ThrottledPlotWidget):
         self.drawing1 = False
         self.drawing2 = False
         self.drawing3 = False
-        self.ranges_dict = get_light_model_ranges()
-        self.extra_sliders = extra_sliders
+        
+        self.ROI_param_dict = ROI_param_dict if ROI_param_dict is not None else {'CIRCLE1': 'CIRCLE1', 'CIRCLE2': 'CIRCLE2', 'ELLIPSE': 'ELLIPSE', 'POINT': 'POINT'}
+        self.slider_init_dict = slider_init_dict if slider_init_dict is not None else {'param1': [1e-3, 1000, 'log', 'triple_handle'], 'param2': [0, 10, 'linear', 'single_handle']}
+        
         # This line because the many paint events can crash pyQt
         #self._run_low_performance_settings()
         axis = self.getAxis('left')
@@ -247,15 +248,15 @@ class DragPlotWidget_special(ThrottledPlotWidget):
         self.timer.timeout.connect(self.checkLongPress)
 
     def mousePressEvent(self, event):
-        # Circular Sérsic
+        # CIRCLE2
         if event.button() == Qt.LeftButton and (event.modifiers() & Qt.AltModifier) and (event.modifiers() & Qt.ControlModifier or event.modifiers() & Qt.MetaModifier) :
             self.view.setMouseEnabled(x=False, y=False)
             self.timer.start()
             mouse_point = self.view.mapSceneToView(event.pos()) # Convert click position to data coordinates
             self.start_pos = QPointF(mouse_point.x(), mouse_point.y())
             self.last_roi = SelectableCircleROI([self.start_pos.x(), self.start_pos.y()], radius=1e-9, pen='purple', invertible=True)
-            self.last_roi.type = 3
-            self.last_roi.type_str = 'SERSIC'
+            self.last_roi.type_general = 'CIRCLE2'
+            self.last_roi.type = self.ROI_param_dict['CIRCLE2'][0]
             self.roi_list.append(self.last_roi)
             for handle in self.last_roi.handles:
                 self.last_roi.removeHandle(handle['item'])
@@ -263,17 +264,17 @@ class DragPlotWidget_special(ThrottledPlotWidget):
             self.drawing3 = True
             
             # Add sliders to control light source parameters
-            params = ['amp', 'n_sersic']#, 'R_sersic']
+            params = self.ROI_param_dict['CIRCLE2'][1]
             attach_sliders(self, params)
-        # Point source
+        # POINT
         elif event.button() == Qt.LeftButton and (event.modifiers() & Qt.ShiftModifier) and (event.modifiers() & Qt.ControlModifier or event.modifiers() & Qt.MetaModifier) :
             self.view.setMouseEnabled(x=False, y=False)
             self.timer.start()
             mouse_point = self.view.mapSceneToView(event.pos()) # Convert click position to data coordinates
             self.start_pos = QPointF(mouse_point.x(), mouse_point.y())
             self.last_roi = SelectableCircleROI([self.start_pos.x(), self.start_pos.y()], radius=1e-3, pen='cyan', invertible=True)
-            self.last_roi.type = 4
-            self.last_roi.type_str = 'SOURCE_POSITION'
+            self.last_roi.type_general = 'POINT'
+            self.last_roi.type = self.ROI_param_dict['POINT'][0]
             self.roi_list.append(self.last_roi)
             for handle in self.last_roi.handles:
                 self.last_roi.removeHandle(handle['item'])
@@ -281,20 +282,20 @@ class DragPlotWidget_special(ThrottledPlotWidget):
             #self.drawing4 = True
             
             # Add sliders to control light source parameters
-            params = ['amp']
+            params = self.ROI_param_dict['POINT'][1]
             attach_sliders(self, params)        
         #
         elif event.button() == Qt.LeftButton and event.modifiers() == Qt.ShiftModifier :
             print('Shift modifier function not yet implemented')
-        # Elliptical Sérsic
+        # ELLIPSE
         elif event.button() == Qt.LeftButton and event.modifiers() == Qt.AltModifier :
             self.view.setMouseEnabled(x=False, y=False)
             self.timer.start()
             mouse_point = self.view.mapSceneToView(event.pos()) # Convert click position to data coordinates
             self.start_pos = QPointF(mouse_point.x(), mouse_point.y())
             self.last_roi = SelectableEllipseROI([self.start_pos.x(), self.start_pos.y()], [1e-9, 1e-9], pen='orange', invertible=True)
-            self.last_roi.type = 1
-            self.last_roi.type_str = 'SERSIC_ELLIPSE_Q_PHI'
+            self.last_roi.type_general = 'ELLIPSE'
+            self.last_roi.type = self.ROI_param_dict['ELLIPSE'][0]
             self.roi_list.append(self.last_roi)
             for handle in self.last_roi.handles:
                 self.last_roi.removeHandle(handle['item'])
@@ -302,17 +303,17 @@ class DragPlotWidget_special(ThrottledPlotWidget):
             self.drawing1 = True
             
             # Add sliders to control light source parameters
-            params = ['amp', 'n_sersic', 'q', 'phi']
+            params = self.ROI_param_dict['ELLIPSE'][1]
             attach_sliders(self, params)
-        # Gaussian light source
+        # CIRCLE1
         elif event.button() == Qt.LeftButton and event.modifiers() in (Qt.ControlModifier, QtCore.Qt.MetaModifier) :
             self.view.setMouseEnabled(x=False, y=False)
             self.timer.start()
             mouse_point = self.view.mapSceneToView(event.pos()) # Convert click position to data coordinates
             self.start_pos = QPointF(mouse_point.x(), mouse_point.y())
             self.last_roi = SelectableCircleROI([self.start_pos.x(), self.start_pos.y()], radius=1e-9, pen='red', invertible=True)
-            self.last_roi.type = 2
-            self.last_roi.type_str = 'GAUSSIAN'
+            self.last_roi.type_general = 'CIRCLE1'
+            self.last_roi.type = self.ROI_param_dict['CIRCLE1'][0]
             self.roi_list.append(self.last_roi)
             for handle in self.last_roi.handles:
                 self.last_roi.removeHandle(handle['item'])
@@ -320,7 +321,7 @@ class DragPlotWidget_special(ThrottledPlotWidget):
             self.drawing2 = True
             
             # Add sliders to control light source parameters
-            params = ['amp']
+            params = self.ROI_param_dict['CIRCLE1'][1]
             attach_sliders(self, params)
         else:
             super().mousePressEvent(event) #Default PlotWidget behavior, so that the user is still able to move around by click & drag
@@ -414,7 +415,7 @@ class DragPlotWidget_special(ThrottledPlotWidget):
             if len(self.roi_list)>0:
                 if type(self.last_roi).__name__ == 'SelectableEllipseROI' :
                     make_handles(self.last_roi)
-                elif type(self.last_roi).__name__ == 'SelectableCircleROI' and not self.last_roi.type_str == 'SOURCE_POSITION' :
+                elif type(self.last_roi).__name__ == 'SelectableCircleROI' and getattr(self.last_roi, "type_general", None) != 'POINT' :
                     #make_handles(self.roi2, make_rotation_handles=False, fixed_ratio=True)
                     self.last_roi.addScaleHandle([0.5+2**-1.5, 0.5+2**-1.5], [0.5, 0.5])
             self.view.setMouseEnabled(x=True, y=True)
@@ -458,8 +459,8 @@ class DragImagePlotWidget_special(DragPlotWidget_special):
     This mirrors the API needed from pg.ImageView (`setImage`, `addItem`,
     `getView`) while preserving ROI interactions from DragPlotWidget_special.
     """
-    def __init__(self, extra_sliders=True, throttle_mode=0):
-        super().__init__(extra_sliders=extra_sliders, throttle_mode=throttle_mode)
+    def __init__(self, ROI_param_dict=None, slider_init_dict=None, throttle_mode=0):
+        super().__init__(ROI_param_dict=ROI_param_dict, slider_init_dict=slider_init_dict, throttle_mode=throttle_mode)
         self._image_item = pg.ImageItem()
         self.addItem(self._image_item)
 
@@ -537,8 +538,24 @@ class SelectableCircleROI(pg.CircleROI):
     #    scene_pos = self.pos() + local_anchor
     #    self.proxy.setPos(scene_pos)
 
+def _roi_link_box_slider(roi):
+    """
+    Return ``(slider_key, slider)`` for the search-range box (``roi_link_mode == 'link_box'``),
+    or legacy ``('dpos', slider)`` if present. Otherwise ``(None, None)``.
+    """
+    sliders = getattr(roi, "sliders", None)
+    if not isinstance(sliders, dict):
+        return None, None
+    for name, s in sliders.items():
+        if getattr(s, "roi_link_mode", None) == "link_box":
+            return name, s
+    if "dpos" in sliders:
+        return "dpos", sliders["dpos"]
+    return None, None
+
+
 def _update_dpos_square_overlay(plot_widget, roi):
-    """Axis-aligned dashed square centered on ROI, half-side = |dpos.vmid| (side = 2*|dpos|)."""
+    """Axis-aligned dashed square centered on ROI; half-side = |vmid| of the ``link_box`` slider."""
     item = getattr(roi, "_dpos_square_plot", None)
     if item is None:
         return
@@ -547,11 +564,11 @@ def _update_dpos_square_overlay(plot_widget, roi):
     if not getattr(roi, "isVisible", lambda: True)():
         item.setVisible(False)
         return
-    sliders = getattr(roi, "sliders", None)
-    if not sliders or "dpos" not in sliders:
+    _, sbox = _roi_link_box_slider(roi)
+    if sbox is None:
         item.setVisible(False)
         return
-    d = abs(float(sliders["dpos"].vmid))
+    d = abs(float(sbox.vmid))
     if d < 1e-30:
         d = 1e-30
     x_center, y_center, _, _, _ = transform_ROI_params(roi)
@@ -562,8 +579,9 @@ def _update_dpos_square_overlay(plot_widget, roi):
 
 
 def attach_dpos_square_overlay(plot_widget, roi):
-    """Add dashed square for dpos search range; call after sliders include 'dpos'."""
-    if not getattr(roi, "sliders", None) or "dpos" not in roi.sliders:
+    """Add dashed square for the ``link_box`` search range (legacy key ``dpos`` still supported)."""
+    _, sbox = _roi_link_box_slider(roi)
+    if sbox is None:
         return
     remove_dpos_square_overlay(plot_widget, roi)
     pen = pg.mkPen(color=(255, 255, 255, 200), width=1, style=Qt.DashLine)
@@ -576,8 +594,9 @@ def attach_dpos_square_overlay(plot_widget, roi):
         _update_dpos_square_overlay(plot_widget, roi)
 
     roi._dpos_square_update = _on_change
+    roi._dpos_square_slider_ref = sbox
     roi.sigRegionChanged.connect(_on_change)
-    roi.sliders["dpos"].valuesChanged.connect(_on_change)
+    sbox.valuesChanged.connect(_on_change)
     _on_change()
 
 
@@ -590,12 +609,15 @@ def remove_dpos_square_overlay(plot_widget, roi):
             roi.sigRegionChanged.disconnect(roi._dpos_square_update)
         except (TypeError, RuntimeError):
             pass
-        try:
-            if "dpos" in getattr(roi, "sliders", {}):
-                roi.sliders["dpos"].valuesChanged.disconnect(roi._dpos_square_update)
-        except (TypeError, RuntimeError):
-            pass
+        sref = getattr(roi, "_dpos_square_slider_ref", None)
+        if sref is not None:
+            try:
+                sref.valuesChanged.disconnect(roi._dpos_square_update)
+            except (TypeError, RuntimeError):
+                pass
         del roi._dpos_square_update
+    if hasattr(roi, "_dpos_square_slider_ref"):
+        del roi._dpos_square_slider_ref
     try:
         plot_widget.removeItem(item)
     except Exception:
@@ -604,17 +626,12 @@ def remove_dpos_square_overlay(plot_widget, roi):
 
 
 def attach_sliders(self, params) :
-    if self.extra_sliders :
-        if self.last_roi.type_str in ['SERSIC', 'SERSIC_ELLIPSE_Q_PHI'] :
-            params += ['R_sersic']
-        elif self.last_roi.type_str=='GAUSSIAN' :
-            params += ['sigma']
-        params += ['dpos']
-    
     for i, param in enumerate(params) :
-        min_range, max_range = self.ranges_dict[param][0], self.ranges_dict[param][1]
-        log_scale = self.ranges_dict[param][2]=='log'
-        single_handle = self.ranges_dict[param][3]=='single_handle'
+        spec = self.slider_init_dict[param]
+        min_range, max_range = spec[0], spec[1]
+        log_scale = spec[2] == 'log'
+        single_handle = spec[3] == 'single_handle'
+        roi_link_mode = spec[4] if len(spec) > 4 else None
         if not hasattr(self.last_roi, 'sliders') :
             self.last_roi.sliders = {
                 param: TripleSlider(
@@ -625,6 +642,7 @@ def attach_sliders(self, params) :
                     roi=self.last_roi,
                     log_scale=log_scale,
                     single_handle=single_handle,
+                    roi_link_mode=roi_link_mode,
                 )
             }
         else :
@@ -640,10 +658,12 @@ def attach_sliders(self, params) :
                 offset=offset,
                 log_scale=log_scale,
                 single_handle=single_handle,
+                roi_link_mode=roi_link_mode,
             )
         self.last_roi.sliders[param].setParentItem(self.last_roi)
 
-    if getattr(self.last_roi, "sliders", None) and "dpos" in self.last_roi.sliders:
+    _, sbox = _roi_link_box_slider(self.last_roi)
+    if sbox is not None:
         attach_dpos_square_overlay(self, self.last_roi)
 
 def hide_roi(self):

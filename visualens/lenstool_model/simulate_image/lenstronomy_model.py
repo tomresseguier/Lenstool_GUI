@@ -22,6 +22,7 @@ from ...utils.utils_Qt.drag_widgets import (
     SelectableEllipseROI,
     attach_sliders,
     _update_dpos_square_overlay,
+    _roi_link_box_slider,
 )
 from ...utils.utils_Qt.utils_general import transform_ROI_params_inverse, make_handles
 
@@ -63,8 +64,9 @@ def _apply_kwargs_bounds_to_roi_sliders(roi, lo, hi, eps=1e-8, plot_widget=None)
         if k_kwargs in lo and k_kwargs in hi and k_slider in sliders:
             set_triple_bounds(sliders[k_slider], lo[k_kwargs], hi[k_kwargs])
 
-    if 'dpos' in sliders:
-        s = sliders['dpos']
+    _, s_link_box = _roi_link_box_slider(roi)
+    if s_link_box is not None:
+        s = s_link_box
         dpos_val = None
         if all(k in lo and k in hi for k in ('center_x', 'center_y')):
             dx = (float(hi['center_x']) - float(lo['center_x'])) / 2.0
@@ -425,8 +427,8 @@ class lenstronomy_model :
                 y_corner = y - radius
                 
                 PlotWidget.last_roi = SelectableCircleROI([x_corner, y_corner], radius=radius, pen='purple', invertible=True)
-                PlotWidget.last_roi.type = 3
-                PlotWidget.last_roi.type_str = 'SERSIC'
+                PlotWidget.last_roi.type_general = 'CIRCLE2'
+                PlotWidget.last_roi.type = 'SERSIC'
                 PlotWidget.roi_list.append(PlotWidget.last_roi)
                 for handle in PlotWidget.last_roi.handles:
                     PlotWidget.last_roi.removeHandle(handle['item'])
@@ -469,8 +471,8 @@ class lenstronomy_model :
                 )
                 
                 PlotWidget.last_roi = SelectableEllipseROI([x_corner, y_corner], [a, b], angle=angle, pen='orange', invertible=True)
-                PlotWidget.last_roi.type = 1
-                PlotWidget.last_roi.type_str = 'SERSIC_ELLIPSE_Q_PHI'
+                PlotWidget.last_roi.type_general = 'ELLIPSE'
+                PlotWidget.last_roi.type = 'SERSIC_ELLIPSE_Q_PHI'
                 PlotWidget.roi_list.append(PlotWidget.last_roi)
                 for handle in PlotWidget.last_roi.handles:
                     PlotWidget.last_roi.removeHandle(handle['item'])
@@ -497,8 +499,8 @@ class lenstronomy_model :
                 y_corner = y - radius
                 
                 PlotWidget.last_roi = SelectableCircleROI([x_corner, y_corner], radius=radius, pen='red', invertible=True)
-                PlotWidget.last_roi.type = 2
-                PlotWidget.last_roi.type_str = 'GAUSSIAN'
+                PlotWidget.last_roi.type_general = 'CIRCLE1'
+                PlotWidget.last_roi.type = 'GAUSSIAN'
                 PlotWidget.roi_list.append(PlotWidget.last_roi)
                 for handle in PlotWidget.last_roi.handles:
                     PlotWidget.last_roi.removeHandle(handle['item'])
@@ -526,8 +528,8 @@ class lenstronomy_model :
                 y_corner = y - radius
 
                 PlotWidget.last_roi = SelectableCircleROI([x_corner, y_corner], radius=radius, pen='cyan', invertible=True)
-                PlotWidget.last_roi.type = 4
-                PlotWidget.last_roi.type_str = 'SOURCE_POSITION'
+                PlotWidget.last_roi.type_general = 'POINT'
+                PlotWidget.last_roi.type = 'SOURCE_POSITION'
                 PlotWidget.roi_list.append(PlotWidget.last_roi)
                 for handle in PlotWidget.last_roi.handles:
                     PlotWidget.last_roi.removeHandle(handle['item'])
