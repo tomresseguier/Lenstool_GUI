@@ -57,6 +57,9 @@ def _apply_kwargs_bounds_to_roi_sliders(roi, lo, hi, eps=1e-8, plot_widget=None)
         ('n_sersic', 'n_sersic'),
         ('sigma', 'sigma'),
         ('R_sersic', 'R_sersic'),
+        ('sigma0', 'sigma0'),
+        ('Ra', 'Ra'),
+        ('Rs', 'Rs'),
         ('q', 'q'),
         ('phi', 'phi'),
         ('source_amp', 'amp'),
@@ -95,34 +98,51 @@ class lenstronomy_model :
         if 'chain_list' in lm_dict_or_str :
             self.chain_list = lm_dict_or_str['chain_list']
             del lm_dict_or_str['chain_list']
-        if 'lens_model_list' in lm_dict_or_str['models'] :
+        if self._is_local_model_dict(lm_dict_or_str) :
             self.local = lm_dict_or_str
+            #self._fix_ps_coord_names()
             self.world = self.to_world()
+            #self._remove_interpol(self.world)
         else :
             self.world = lm_dict_or_str
             self.local = self.to_local()
+    
+    def _fix_ps_coord_names(self) :
+        for block in self._iter_kwargs_blocks(self.local) :
+            for src in block['kwargs_source_ps'] :
+                if 'ra_source' in src and 'dec_source' in src :
+                    src['center_x'] = src['ra_source']
+                    src['center_y'] = src['dec_source']
+                    del src['ra_source']
+                    del src['dec_source']
+                    
+    def _remove_interpol(self, model_dict) :
+        if 'INTERPOL' in model_dict['models']['lens_model_list'] :
+            index_interpol = model_dict['models']['lens_model_list'].index('INTERPOL')
+            model_dict['models']['lens_model_list'].remove('INTERPOL')
+            for block in self._iter_kwargs_blocks(model_dict) :
+                del block['kwargs_lens'][index_interpol]
+
+    def _add_interpol(self, model_dict) :
+        model_dict['models']['lens_model_list'].insert(0, 'INTERPOL')
+        for block in self._iter_kwargs_blocks(model_dict) :
+            block['kwargs_lens'].insert(0, {})
+        model_dict['kwargs']['kwargs_lens'][0] = self.imsim.LensModel_kwargs[0]
+        model_dict['kwargs_fixed']['kwargs_lens'][0] = self.imsim.LensModel_kwargs[0]
 
     def _iter_kwargs_blocks(self, model_dict):
         """
-        Yield all sub-dicts that can contain kwargs_source / kwargs_source_ps blocks.
-
-        This includes the standard `model_dict['kwargs']` plus any optimization
-        blocks added by `make_lm_dict_opt` (e.g. kwargs_init/sigma/lower/upper/fixed,
-        kwargs_opt, kwargs_MCMC, ...).
+        Yield all sub-dicts that can contain kwargs_source / kwargs_source_ps blocks 
+        (e.g. kwargs_init/sigma/lower/upper/fixed, kwargs_opt, kwargs_MCMC, ...).
         """
-        if not isinstance(model_dict, dict):
-            return
         for k, v in model_dict.items():
             if k == 'models':
                 continue
-            if isinstance(v, dict) and ('kwargs_source' in v or 'kwargs_source_ps' in v):
+            if isinstance(v, dict) and ('kwargs_source' in v or 'kwargs_source_ps' in v or 'kwargs_lens' in v):
                 yield v
 
     def _local_to_world_coords(self, d):
         """Convert a single kwargs dict from local-relative to world coordinates."""
-        if not isinstance(d, dict):
-            return
-
         # visualens naming convention: center_x/center_y -> center_ra/center_dec
         if 'center_x' in d and 'center_y' in d:
             ra, dec = relative_to_world(d['center_x'], d['center_y'], self.imsim.center_world)
@@ -141,9 +161,6 @@ class lenstronomy_model :
 
     def _world_to_local_coords(self, d):
         """Convert a single kwargs dict from world to local-relative coordinates."""
-        if not isinstance(d, dict):
-            return
-
         if 'center_ra' in d and 'center_dec' in d:
             xr, yr = world_to_relative(d['center_ra'], d['center_dec'], self.imsim.center_world)
             d['center_x'] = xr
@@ -157,6 +174,12 @@ class lenstronomy_model :
         #    d['dec_source'] = yr
         #    del d['center_ra']
         #    del d['center_dec']
+
+    def _is_local_model_dict(self, lm_dict):
+        """Local models include INTERPOL by construction."""
+        if 'INTERPOL' in lm_dict['models']['lens_model_list']:
+            return True
+        return False
     
     def plot(self, source_resolution=1000, cmap='grey', axes=None, cutoff=1.) :
         if axes is None :
@@ -259,35 +282,71 @@ class lenstronomy_model :
     
     def to_world(self) :
         model_world = copy.deepcopy(self.local)
-        if 'lens_model_list' in model_world['models'] :
-            del model_world['models']['lens_model_list']
-        if 'kwargs' in model_world and 'kwargs_lens' in model_world['kwargs'] :
-            del model_world['kwargs']['kwargs_lens']
+        if 'models' not in model_world :
+            model_world['models'] = {}
+        if 'kwargs' not in model_world :
+            model_world['kwargs'] = {}
+
+        lens_models_local = model_world.get('models', {}).get('lens_model_list', [])
+        lens_kwargs_local = model_world.get('kwargs', {}).get('kwargs_lens', [])
+        lens_models_world = []
+        lens_kwargs_world = []
+        for i, (name, kw) in enumerate( zip(lens_models_local, lens_kwargs_local) ) :
+            kw_world = copy.deepcopy(kw)
+            self._local_to_world_coords(kw_world)
+            lens_models_world.append(name)
+            lens_kwargs_world.append(kw_world)
+        model_world['models']['lens_model_list'] = lens_models_world
+        model_world['kwargs']['kwargs_lens'] = lens_kwargs_world
 
         for block in self._iter_kwargs_blocks(model_world):
-            if 'kwargs_source' in block:
-                for src in block['kwargs_source']:
+            if 'kwargs_source' in block :
+                for src in block['kwargs_source'] :
                     self._local_to_world_coords(src)
-            if 'kwargs_source_ps' in block:
-                for ps in block['kwargs_source_ps']:
+            if 'kwargs_source_ps' in block :
+                for ps in block['kwargs_source_ps'] :
                     self._local_to_world_coords(ps)
+            if 'kwargs_lens' in block :
+                for lens in block['kwargs_lens'] :
+                    self._local_to_world_coords(lens)
+        
+        self._remove_interpol(model_world)
         return model_world
 
 
     def to_local(self) :        
         model_local = copy.deepcopy(self.world)
-        model_local['models']['lens_model_list'] = self.imsim.LensModel_list
-        if 'kwargs' not in model_local:
+        lens_models_world = model_local.get('models', {}).get('lens_model_list', [])
+        lens_kwargs_world = model_local.get('kwargs', {}).get('kwargs_lens', [])
+        lens_models_local = []
+        lens_kwargs_local = []
+        for name, kw in zip(lens_models_world, lens_kwargs_world) :
+            kw_local = copy.deepcopy(kw)
+            self._world_to_local_coords(kw_local)
+            lens_models_local.append(name)
+            lens_kwargs_local.append(kw_local)
+        model_local['models']['lens_model_list'] = lens_models_local
+        if 'kwargs' not in model_local :
             model_local['kwargs'] = {}
-        model_local['kwargs']['kwargs_lens'] = self.imsim.LensModel_kwargs
+        model_local['kwargs']['kwargs_lens'] = lens_kwargs_local
 
-        for block in self._iter_kwargs_blocks(model_local):
-            if 'kwargs_source' in block:
-                for src in block['kwargs_source']:
+        for block in self._iter_kwargs_blocks(model_local) :
+            if 'kwargs_source' in block :
+                for src in block['kwargs_source'] :
                     self._world_to_local_coords(src)
-            if 'kwargs_source_ps' in block:
-                for ps in block['kwargs_source_ps']:
+            if 'kwargs_source_ps' in block :
+                for ps in block['kwargs_source_ps'] :
                     self._world_to_local_coords(ps)
+                    if 'center_x' in ps and 'center_y' in ps :
+                        ps['ra_source'] = ps['center_x']
+                        ps['dec_source'] = ps['center_y']
+                        del ps['center_x']
+                        del ps['center_y']
+            if 'kwargs_lens' in block :
+                for lens in block['kwargs_lens'] :
+                    self._world_to_local_coords(lens)
+
+        self._add_interpol(model_local)
         return model_local
 
 
@@ -295,25 +354,59 @@ class lenstronomy_model :
         if type(model_2)==str :
             model_2 = self.load_lm(path=model_2)
         if 'lens_model_list' in model_2['models'] :
-            self.local['models']['source_light_model_list'] += model_2['models']['source_light_model_list']
-            self.local['models']['point_source_model_list'] += model_2['models']['point_source_model_list']
-            for name in ['kwargs', 'kwargs_fixed', 'kwargs_lower', 'kwargs_upper', 'kwargs_sigma', 'kwargs_init', 'kwargs_opt', 'kwargs_MCMC'] : #, 'kwargs_PSO'
-                self.local[name]['kwargs_source'] += model_2[name]['kwargs_source']
-                self.local[name]['kwargs_source_ps'] += model_2[name]['kwargs_source_ps']
+            if 'INTERPOL' in model_2['models']['lens_model_list'] :
+                """ The model to add is in local format """        
+                self._remove_interpol(model_2)
+                self.local['models']['lens_model_list'] += model_2['models']['lens_model_list']
+                self.local['models']['source_light_model_list'] += model_2['models']['source_light_model_list']
+                self.local['models']['point_source_model_list'] += model_2['models']['point_source_model_list']
+                for name in ['kwargs', 'kwargs_fixed', 'kwargs_lower', 'kwargs_upper', 'kwargs_sigma', 'kwargs_init', 'kwargs_opt', 'kwargs_MCMC'] : #, 'kwargs_PSO'
+                    if name in self.local and name in model_2 :
+                        self.local[name]['kwargs_lens'] += model_2[name]['kwargs_lens']
+                        self.local[name]['kwargs_source'] += model_2[name]['kwargs_source']
+                        self.local[name]['kwargs_source_ps'] += model_2[name]['kwargs_source_ps']
+                    elif name in self.local and name not in model_2 :
+                        self.local[name]['kwargs_lens'] += [{} for lens in model_2['models']['lens_model_list']]
+                        self.local[name]['kwargs_source'] += [{} for src in model_2['models']['source_light_model_list']]
+                        self.local[name]['kwargs_source_ps'] += [{} for ps in model_2['models']['point_source_model_list']]
+                    elif name in model_2 and name not in self.local :
+                        self.local[name] = {}
+                        self.local[name]['kwargs_lens'] = [{} for lens in self.local['models']['lens_model_list']] + model_2[name]['kwargs_lens']
+                        self.local[name]['kwargs_source'] = [{} for src in self.local['models']['source_light_model_list']] + model_2[name]['kwargs_source']
+                        self.local[name]['kwargs_source_ps'] = [{} for ps in self.local['models']['source_light_model_list']] + model_2[name]['kwargs_source_ps']
 
-            #self.__init__(self.local, self.imsim)
-            self.world = self.to_world()
-            return self.local
+                #self.__init__(self.local, self.imsim)
+                self.world = self.to_world()
+                return self.local
         else :
-            self.world['models']['source_light_model_list'] += model_2['models']['source_light_model_list']
-            self.world['models']['point_source_model_list'] += model_2['models']['point_source_model_list']
-            for name in ['kwargs', 'kwargs_fixed', 'kwargs_lower', 'kwargs_upper', 'kwargs_sigma', 'kwargs_init', 'kwargs_opt', 'kwargs_MCMC'] : #, 'kwargs_PSO'
+            """ Here we add a placeholder for the lens models """
+            model_2['models']['lens_model_list'] = []
+            for name in ['kwargs', 'kwargs_fixed', 'kwargs_lower', 'kwargs_upper', 'kwargs_sigma', 'kwargs_init', 'kwargs_opt', 'kwargs_MCMC'] :
+                if name in model_2 :
+                    model_2[name]['kwargs_lens'] = []
+
+        """ The model to add is in world format """        
+        self.world['models']['lens_model_list'] += model_2['models']['lens_model_list']
+        self.world['models']['source_light_model_list'] += model_2['models']['source_light_model_list']
+        self.world['models']['point_source_model_list'] += model_2['models']['point_source_model_list']
+        for name in ['kwargs', 'kwargs_fixed', 'kwargs_lower', 'kwargs_upper', 'kwargs_sigma', 'kwargs_init', 'kwargs_opt', 'kwargs_MCMC'] : #, 'kwargs_PSO'
+            if name in self.world and name in model_2 :
+                self.world[name]['kwargs_lens'] += model_2[name]['kwargs_lens']
                 self.world[name]['kwargs_source'] += model_2[name]['kwargs_source']
                 self.world[name]['kwargs_source_ps'] += model_2[name]['kwargs_source_ps']
+            elif name in self.world and name not in model_2 :
+                self.world[name]['kwargs_lens'] += [{} for lens in model_2['models']['lens_model_list']]
+                self.world[name]['kwargs_source'] += [{} for src in model_2['models']['source_light_model_list']]
+                self.world[name]['kwargs_source_ps'] += [{} for ps in model_2['models']['point_source_model_list']]
+            elif name in model_2 and name not in self.world :
+                self.world[name] = {}
+                self.world[name]['kwargs_lens'] = [{} for lens in self.world['models']['lens_model_list']] + model_2[name]['kwargs_lens']
+                self.world[name]['kwargs_source'] = [{} for src in self.world['models']['source_light_model_list']] + model_2[name]['kwargs_source']
+                self.world[name]['kwargs_source_ps'] = [{} for ps in self.world['models']['source_light_model_list']] + model_2[name]['kwargs_source_ps']
 
-            #self.__init__(self.world, self.imsim)
-            self.local = self.to_local()
-            return self.world
+        #self.__init__(self.world, self.imsim)
+        self.local = self.to_local()
+        return self.world
 
 
     def save(self, path='./lenstronomy_model.pkl') :
@@ -365,10 +458,10 @@ class lenstronomy_model :
         mcmc_block = self.local['kwargs_MCMC']
 
         columns, labels = [], []
-        for block_key in ('kwargs_source', 'kwargs_source_ps'):
+        for block_key in ('kwargs_lens', 'kwargs_source', 'kwargs_source_ps'):
             if block_key not in mcmc_block:
                 continue
-            prefix = 'src' if block_key == 'kwargs_source' else 'ps'
+            prefix = 'src' if block_key == 'kwargs_source' else 'ps' if block_key == 'kwargs_source_ps' else 'lens'
             for i, kw in enumerate(mcmc_block[block_key]):
                 for param, val in kw.items():
                     arr = np.array(val)
@@ -401,7 +494,7 @@ class lenstronomy_model :
             del self.local[name]['kwargs_source_ps'][index]
         self.world = self.to_world()
 
-    def _apply_bounds_if_present(self, roi, block_key, index):
+    def _apply_bounds_if_present(self, roi, block_key, index, plot_widget=None):
         """Apply ``kwargs_lower``/``kwargs_upper`` for ``block_key`` at ``index`` to ``roi`` sliders."""
         if 'kwargs_lower' not in self.local or 'kwargs_upper' not in self.local:
             return
@@ -410,12 +503,45 @@ class lenstronomy_model :
         if kl is None or ku is None or index >= len(kl) or index >= len(ku):
             return
         _apply_kwargs_bounds_to_roi_sliders(
-            roi, kl[index], ku[index], plot_widget=self.imsim.source_plane_widget
+            roi, kl[index], ku[index], plot_widget=self.imsim.source_plane_widget if plot_widget is None else plot_widget
         )
 
     def send_to_imsim(self) :
         PlotWidget = self.imsim.source_plane_widget
+        PlotWidget_lens = self.imsim.image_plane_rgb
         kwargs_name = 'kwargs_opt' if 'kwargs_opt' in self.local else 'kwargs'
+
+        for i, model in enumerate(self.local['models'].get('lens_model_list', [])):
+            if model != 'PJAFFE_ELLIPSE_POTENTIAL_Q_PHI':
+                continue
+            kwargs = self.local[kwargs_name]['kwargs_lens'][i]
+            if not all(k in kwargs for k in ['center_x', 'center_y', 'Ra', 'q', 'phi']):
+                continue
+            pix_scale = self.imsim.fits_image.pix_deg_scale * 3600.0
+            npix = self.imsim._crop_npix
+            x_center = kwargs['center_x'] / pix_scale + npix / 2.0
+            y_center = kwargs['center_y'] / pix_scale + npix / 2.0
+            semi_major = kwargs['Rs'] / np.sqrt(kwargs['q'])# / pix_scale
+            semi_minor = kwargs['Rs'] * np.sqrt(kwargs['q'])# / pix_scale
+            x_corner, y_corner, a, b, angle = transform_ROI_params_inverse(
+                x_center, y_center, semi_major, semi_minor, kwargs['phi']
+            )
+
+            PlotWidget_lens.last_roi = SelectableEllipseROI([x_corner, y_corner], [a, b], angle=angle, pen='orange', invertible=True)
+            PlotWidget_lens.last_roi.type_general = 'ELLIPSE'
+            PlotWidget_lens.last_roi.type = 'PJAFFE_ELLIPSE_POTENTIAL_Q_PHI'
+            PlotWidget_lens.roi_list.append(PlotWidget_lens.last_roi)
+            for handle in PlotWidget_lens.last_roi.handles:
+                PlotWidget_lens.last_roi.removeHandle(handle['item'])
+            PlotWidget_lens.addItem(PlotWidget_lens.last_roi)
+
+            make_handles(PlotWidget_lens.last_roi)
+            attach_sliders(PlotWidget_lens, ['sigma0', 'Ra', 'Rs', 'q', 'phi', 'dpos'])
+            for p, v in kwargs.items():
+                if p in PlotWidget_lens.last_roi.sliders:
+                    PlotWidget_lens.last_roi.sliders[p].vmid = v
+
+            self._apply_bounds_if_present(PlotWidget_lens.last_roi, 'kwargs_lens', i, plot_widget=PlotWidget_lens)
         
         for i, model in enumerate(self.local['models']['source_light_model_list']) :
             if model=='SERSIC' :
@@ -437,14 +563,14 @@ class lenstronomy_model :
                 PlotWidget.last_roi.addScaleHandle([0.5+2**-1.5, 0.5+2**-1.5], [0.5, 0.5])
                 
                 # Add sliders to control light source parameters
-                params = ['amp', 'n_sersic']#, 'R_sersic']
+                params = ['amp', 'n_sersic', 'dpos']
                 attach_sliders(PlotWidget, params)
                 
                 for p, v in kwargs.items() :
                     if p in PlotWidget.last_roi.sliders :
                         PlotWidget.last_roi.sliders[p].vmid = v
 
-                self._apply_bounds_if_present(PlotWidget.last_roi, 'kwargs_source', i)
+                self._apply_bounds_if_present(PlotWidget.last_roi, 'kwargs_source', i, plot_widget=PlotWidget)
 
             if model in ('SERSIC_ELLIPSE_Q_PHI', 'SERSIC_ELLIPSE') :
                 kwargs = self.local[kwargs_name]['kwargs_source'][i]
@@ -481,14 +607,14 @@ class lenstronomy_model :
                 make_handles(PlotWidget.last_roi)
                 
                 # Add sliders to control light source parameters
-                params = ['amp', 'n_sersic', 'q', 'phi']
+                params = ['amp', 'n_sersic', 'q', 'phi', 'dpos']
                 attach_sliders(PlotWidget, params)
                 
                 for p, v in kwargs.items() :
                     if p in PlotWidget.last_roi.sliders :
                         PlotWidget.last_roi.sliders[p].vmid = v
 
-                self._apply_bounds_if_present(PlotWidget.last_roi, 'kwargs_source', i)
+                self._apply_bounds_if_present(PlotWidget.last_roi, 'kwargs_source', i, plot_widget=PlotWidget)
 
             if model=='GAUSSIAN' :
                 kwargs = self.local[kwargs_name]['kwargs_source'][i]
@@ -509,20 +635,20 @@ class lenstronomy_model :
                 PlotWidget.last_roi.addScaleHandle([0.5+2**-1.5, 0.5+2**-1.5], [0.5, 0.5])
                 
                 # Add sliders to control light source parameters
-                params = ['amp']
+                params = ['amp', 'dpos']
                 attach_sliders(PlotWidget, params)
                 
                 for p, v in kwargs.items() :
                     if p in PlotWidget.last_roi.sliders :
                         PlotWidget.last_roi.sliders[p].vmid = v
 
-                self._apply_bounds_if_present(PlotWidget.last_roi, 'kwargs_source', i)
+                self._apply_bounds_if_present(PlotWidget.last_roi, 'kwargs_source', i, plot_widget=PlotWidget)
 
         for i, model in enumerate(self.local['models']['point_source_model_list']) :
             if model == 'SOURCE_POSITION' :
                 kwargs = self.local[kwargs_name]['kwargs_source_ps'][i]
-                x = kwargs['center_x'] - self.imsim.source_center_coordinates[0] #kwargs['ra_source']
-                y = kwargs['center_y'] - self.imsim.source_center_coordinates[1] #kwargs['dec_source']
+                x = kwargs['ra_source'] - self.imsim.source_center_coordinates[0] #kwargs['ra_source']
+                y = kwargs['dec_source'] - self.imsim.source_center_coordinates[1] #kwargs['dec_source']
                 radius = 1e-3
                 x_corner = x - radius
                 y_corner = y - radius
@@ -535,14 +661,14 @@ class lenstronomy_model :
                     PlotWidget.last_roi.removeHandle(handle['item'])
                 PlotWidget.addItem(PlotWidget.last_roi)
 
-                params = ['amp']
+                params = ['amp', 'dpos']
                 attach_sliders(PlotWidget, params)
 
                 amp_val = kwargs.get('source_amp', kwargs.get('amp'))
                 if amp_val is not None and 'amp' in PlotWidget.last_roi.sliders :
                     PlotWidget.last_roi.sliders['amp'].vmid = amp_val
 
-                self._apply_bounds_if_present(PlotWidget.last_roi, 'kwargs_source_ps', i)
+                self._apply_bounds_if_present(PlotWidget.last_roi, 'kwargs_source_ps', i, plot_widget=PlotWidget)
     
     
     def _make_source_array(self, source_resolution=1000) :
@@ -554,9 +680,10 @@ class lenstronomy_model :
         offset_ps = []
         
         kwargs_name = 'kwargs_opt' if 'kwargs_opt' in self.local else 'kwargs'
-        
-        x_list = [src['center_x'] for src in self.local[kwargs_name]['kwargs_source_ps']] + [src['center_x'] for src in self.local[kwargs_name]['kwargs_source']]
-        y_list = [src['center_y'] for src in self.local[kwargs_name]['kwargs_source_ps']] + [src['center_y'] for src in self.local[kwargs_name]['kwargs_source']]
+        print('Using ' + kwargs_name)
+
+        x_list = [src['ra_source'] for src in self.local[kwargs_name]['kwargs_source_ps']] + [src['center_x'] for src in self.local[kwargs_name]['kwargs_source']]
+        y_list = [src['dec_source'] for src in self.local[kwargs_name]['kwargs_source_ps']] + [src['center_y'] for src in self.local[kwargs_name]['kwargs_source']]
         x_mean, y_mean = np.mean(x_list), np.mean(y_list)
         
         for i, src in enumerate(self.local[kwargs_name]['kwargs_source']) :
@@ -571,9 +698,9 @@ class lenstronomy_model :
         for i, src in enumerate(self.local[kwargs_name]['kwargs_source_ps']) :
             offset_ps.append({})
             for param in src :
-                if param=='center_x' :
+                if param=='ra_source' :
                     offset_ps[i]['ra_source'] = src[param] - x_mean
-                elif param=='center_y' :
+                elif param=='dec_source' :
                     offset_ps[i]['dec_source'] = src[param] - y_mean
                 else :
                     offset_ps[i][param] = src[param]
@@ -607,12 +734,14 @@ class lenstronomy_model :
 
         ps = []
         kwargs_name = 'kwargs_opt' if 'kwargs_opt' in self.local else 'kwargs'
+        print('Using ' + kwargs_name)
+        
         for i, src in enumerate(self.local[kwargs_name]['kwargs_source_ps']) :
             ps.append({})
             for param in src :
-                if param=='center_x' :
+                if param=='ra_source' :
                     ps[i]['ra_source'] = src[param]
-                elif param=='center_y' :
+                elif param=='dec_source' :
                     ps[i]['dec_source'] = src[param]
                 else :
                     ps[i][param] = src[param]
@@ -627,7 +756,7 @@ class lenstronomy_model :
         image_array = image_model_class.image(kwargs_source=self.local[kwargs_name]['kwargs_source'],
                                                 kwargs_ps=ps,
                                                 #kwargs_lens_light=kwargs_light_lens,
-                                                kwargs_lens=self.local['kwargs']['kwargs_lens'], unconvolved=False)
+                                                kwargs_lens=self.local[kwargs_name]['kwargs_lens'], unconvolved=False)
         return image_array
 
     def make_latex(self, ref=None, pc=True, uncertainty='hpd', flux_per_amp=None, flux_unit=None):

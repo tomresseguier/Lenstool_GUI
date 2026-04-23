@@ -12,17 +12,18 @@ from lenstronomy.Data.psf import PSF
 #from lenstronomy.Plots import lens_plot
 from lenstronomy.Data.imaging_data import ImageData
 from lenstronomy.Util import util
+from lenstronomy.LensModel.lens_model_extensions import LensModelExtensions
 
 from ...utils.utils_astro.utils_general import world_to_relative
 from ...utils.utils_general.sort_points import break_curves
 from ...utils.utils_Qt.drag_widgets import DragPlotWidget_special, DragImagePlotWidget_special
-from ...lenstool_model.simulate_image.utils import get_ROI_param_dict_light_model, get_ROI_slider_init_dict_light_model, get_ROI_param_dict_lens_model, get_ROI_slider_init_dict_lens_model
 from ...utils.utils_Qt.utils_general import transform_rectangle
 from .event_filters import SourceFilter, ImageFilter
 from .lenstronomy_model import lenstronomy_model
-from .utils import make_lm_dict_opt
-from .simulate import simulate
+from .make_lm_dict import make_lm_dict_opt
+from .simulate import simulate, _update_curves
 from .optimize import optimize
+from .lm_initialize_functions import get_ROI_param_dict_light_model, get_ROI_slider_init_dict_light_model, get_ROI_param_dict_lens_model, get_ROI_slider_init_dict_lens_model
 
 
 
@@ -144,13 +145,13 @@ class image_simulator :
             fits_image.lt.compute_lt_curve()
         fits_image.lt.plot_lt_curve(color=[0, 255, 0], which='caustic') #to create self.lt_curve_coords_image_sorted
         
-        caustic_plot = pg.PlotDataItem()
-        caustic_plot.setPen( color=[0,255,0,255], width=4.0001 )
-        coords = break_curves(fits_image.lt.lt_caustic_coords_relative, distance_threshold=8.*fits_image.pix_deg_scale*3600) #sort_points(self.lt_caustic_coords_relative, distance_threshold=1.0, angle_threshold=np.pi)
-        x = coords[0] - xr_center - self.source_center_coordinates[0]
-        y = coords[1] - yr_center - self.source_center_coordinates[1]
-        caustic_plot.setData(x, y)
-        self.source_plane_widget.addItem(caustic_plot)
+        self.caustic_plot = pg.PlotDataItem()
+        self.caustic_plot.setPen( color=[0,255,0,255], width=4.0001 )
+        #coords = break_curves(fits_image.lt.lt_caustic_coords_relative, distance_threshold=8.*fits_image.pix_deg_scale*3600) #sort_points(self.lt_caustic_coords_relative, distance_threshold=1.0, angle_threshold=np.pi)
+        #x = coords[0] - xr_center - self.source_center_coordinates[0]
+        #y = coords[1] - yr_center - self.source_center_coordinates[1]
+
+        self.source_plane_widget.addItem(self.caustic_plot)
         self.source_plane_widget.setXRange(-3, 3)
         self.source_plane_widget.setYRange(-3, 3)
         
@@ -159,23 +160,9 @@ class image_simulator :
         self.filter_source = SourceFilter(self)
         self.source_plane_widget.installEventFilter(self.filter_source)
         
-        
-        #-------------- Plot source positions from multiple image catalog --------------#
-        SX = []
-        SY = []
-        XR = []
-        YR = []
-        for mult in fits_image.lt.mult.cat :
-            xr, yr = world_to_relative( mult['ra'], mult['dec'], self.center_world )
-            XR.append(xr)
-            YR.append(yr)
-            sx, sy = self.LensModel.ray_shooting(xr, yr, self.LensModel_kwargs)
-            SX.append(sx - self.source_center_coordinates[0])
-            SY.append(sy - self.source_center_coordinates[1])
-        
-        source_coord_plot = pg.ScatterPlotItem()
-        source_coord_plot.setData(SX, SY)
-        self.source_plane_widget.addItem(source_coord_plot)
+
+        self.source_coord_plot = pg.ScatterPlotItem(size=10, symbol='crosshair', brush=None, pen=(0,255,255))
+        self.source_plane_widget.addItem(self.source_coord_plot)
         
         
         #-------------- Set the PixelGrid for lenstronomy --------------#
@@ -298,21 +285,31 @@ class image_simulator :
         self.image_plane_rgb.setImage(rgb_data)
         #self.image_plane_rgb.getAxis('bottom').setHeight(0)
 
-        x_cc = (self._lt_curve_coords_relative_broken[0] - self._SquareOfInterest_xr_bottomleft) / (fits_image.pix_deg_scale * 3600)
-        y_cc = self.image_data.shape[0] - (self._lt_curve_coords_relative_broken[1] - self._SquareOfInterest_yr_bottomleft) / (fits_image.pix_deg_scale * 3600)
+        XR = []
+        YR = []
+        for mult in fits_image.lt.mult.cat :
+            xr, yr = world_to_relative( mult['ra'], mult['dec'], self.center_world )
+            XR.append(xr)
+            YR.append(yr)
+
+        #x_cc = (self._lt_curve_coords_relative_broken[0] - self._SquareOfInterest_xr_bottomleft) / (fits_image.pix_deg_scale * 3600)
+        #y_cc = self.image_data.shape[0] - (self._lt_curve_coords_relative_broken[1] - self._SquareOfInterest_yr_bottomleft) / (fits_image.pix_deg_scale * 3600)
+        #xr_crit, yr_crit = world_to_relative(ra_crit, dec_crit, self.center_world)
         pen_cc = pg.mkPen(color=[255, 0, 255, 255], width=4.0001)
         self.critical_curve_plots = []
-        for iv in (self.image_plane_observed, self.image_plane_simulated, self.image_plane_residual, self.image_plane_rgb):
+        for iv in (self.image_plane_observed, self.image_plane_simulated, self.image_plane_rgb) : #, self.image_plane_residual
             cc = pg.PlotDataItem()
             cc.setPen(pen_cc)
-            cc.setData(x_cc, y_cc)
             iv.addItem(cc)
             self.critical_curve_plots.append(cc)
 
-            mult_plot = pg.ScatterPlotItem()
-            mult_plot.setData(np.array(XR)/fits_image.pix_deg_scale/3600 + self._crop_npix/2, self._crop_npix/2 - np.array(YR)/fits_image.pix_deg_scale/3600)
+            mult_plot = pg.ScatterPlotItem(size=5, symbol='+', brush='r', pen=None)
+            mult_plot.setData(np.array(XR)/fits_image.pix_deg_scale/3600 + self._crop_npix/2, self._crop_npix/2 + np.array(YR)/fits_image.pix_deg_scale/3600)
             iv.addItem(mult_plot)
-        self.critical_curve_plot = self.critical_curve_plots[1]
+        #self.critical_curve_plot = self.critical_curve_plots[1]
+        self._curve_grid_scale = self._SquareOfInterest_side_arcsec / 100.0
+        _update_curves(self)
+        self._last_curve_lens_kwargs = copy.deepcopy(self.LensModel_kwargs)
 
         vb0 = self.image_plane_observed.getView()
         vb1 = self.image_plane_simulated.getView()
@@ -445,6 +442,19 @@ class filter_lite() :
         self.image_data = image_data
         self.header = {'EXPTIME': exptime}
         self.psf = None
+
+
+def compute_curves(imsim, grid_scale=0.01) :
+    lens_model_extensions = LensModelExtensions(imsim.LensModel)
+    ra_crit, dec_crit, ra_caustic, dec_caustic = lens_model_extensions.critical_curve_caustics(
+            imsim.LensModel_kwargs,
+            compute_window=imsim._SquareOfInterest_side_arcsec,
+            grid_scale=grid_scale,
+            center_x=0.,
+            center_y=0.
+            )
+    return ra_crit, dec_crit, ra_caustic, dec_caustic
+
 
 
 #class SpecialWindow(QMainWindow):

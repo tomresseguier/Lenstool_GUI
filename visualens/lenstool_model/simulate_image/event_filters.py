@@ -13,6 +13,15 @@ def _get_view(iv) :
 
 
 
+def _simulate_optimize_filter_function(filter_object, obj, event):
+    if event.type() == QEvent.KeyPress and event.key() in (Qt.Key_Return, Qt.Key_Enter) :
+        if event.modifiers() == Qt.ShiftModifier :
+            filter_object.imsim.optimize()
+        else :
+            filter_object.imsim.simulate()
+        return True  # Stop propagation
+    return False     # Let other events pass through  
+
 
 class SourceFilter(QObject) :
     def __init__(self, imsim) :
@@ -20,14 +29,7 @@ class SourceFilter(QObject) :
         self.imsim = imsim
         
     def eventFilter(self, obj, event):
-        if event.type() == QEvent.KeyPress and event.key() in (Qt.Key_Return, Qt.Key_Enter) :
-            if event.modifiers() == Qt.ShiftModifier :
-                self.imsim.optimize()
-            else :
-                self.imsim.simulate()
-            return True  # Stop propagation
-        return False     # Let other events pass through  
-
+        return _simulate_optimize_filter_function(self, obj, event)
 
 
 class ImageFilter(QObject) :
@@ -65,7 +67,7 @@ class ImageFilter(QObject) :
         
         # Convert from local pixel to full-image pixel coordinates (bottom-origin convention).
         x_im_full = self.imsim._crop_x0 + x
-        y_im_full = self.imsim._crop_y0 - y
+        y_im_full = self.imsim._crop_y0 + y - self.imsim._crop_npix
 
         ra, dec = self.imsim.fits_image.image_to_world(x_im_full, y_im_full)
         xr, yr = world_to_relative(ra, dec, self.imsim.center_world)
@@ -130,6 +132,7 @@ class ImageFilter(QObject) :
             txt.hide()
 
     def eventFilter(self, obj, event) :
+        _simulate_optimize_filter_function(self, obj, event)
         if event.type() == QEvent.KeyPress and event.key() == Qt.Key_Space :
             print("Spacebar function not yet implemented.")
             return True  # Stop propagation

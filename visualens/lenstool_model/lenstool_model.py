@@ -3,6 +3,7 @@ import glob
 import shutil
 import numpy as np
 from matplotlib import pyplot as plt
+from astropy.io import fits
 from astropy.wcs import WCS
 from astropy.coordinates import SkyCoord
 from tqdm import tqdm
@@ -929,6 +930,62 @@ class lenstool_model :
         fig, ax = plt.subplots()
         ax.imshow(self.shear_map, origin='lower')
         
+    def compute_mass(self, ra, dec, z=None) :
+        initial_field = self.lt.get_field([])
+        z = self.lt_z if z is None else z
+        xr, yr = self.world_to_relative(ra, dec)
+        delta = 0.0001 # 0.1 milli arcsec
+        self.lt.set_field([xr-delta, xr+delta, yr-delta, yr+delta])
+        npix = 2
+        kappa, _ = self.lt.g_mass(1, npix, self.z_lens, z)
+        self.lt.set_field(initial_field)
+        return np.mean(kappa)
+    
+    def compute_magnification(self, ra, dec, z=None) :
+        initial_field = self.lt.get_field([])
+        z = self.lt_z if z is None else z
+        xr, yr = self.world_to_relative(ra, dec)
+        delta = 0.0001 # 0.1 milli arcsec
+        self.lt.set_field([xr-delta, xr+delta, yr-delta, yr+delta])
+        npix = 2
+        ampli, _ = self.lt.g_ampli(1, npix, z)
+        self.lt.set_field(initial_field)
+        return np.mean(ampli)
+    
+    def compute_time(self, ra, dec, z=None) :
+        initial_field = self.lt.get_field([])
+        z = self.lt_z if z is None else z
+        xr, yr = self.world_to_relative(ra, dec)
+        delta = 0.0001 # 0.1 milli arcsec
+        self.lt.set_field([xr-delta, xr+delta, yr-delta, yr+delta])
+        npix = 2
+        time, _ = self.lt.g_time(1, npix, z)
+        self.lt.set_field(initial_field)
+        return np.mean(time)
+    
+    def compute_shear(self, ra, dec, z=None, which='gamma') :
+        initial_field = self.lt.get_field([])
+        z = self.lt_z if z is None else z
+        ishear = 1 if which=='gamma' else 3 if which=='gamma1' else 4 if which=='gamma2' else None
+        xr, yr = self.world_to_relative(ra, dec)
+        delta = 0.0001 # 0.1 milli arcsec
+        self.lt.set_field([xr-delta, xr+delta, yr-delta, yr+delta])
+        npix = 2
+        shear, _ = self.lt.g_shear(ishear, npix, z)
+        self.lt.set_field(initial_field)
+        return np.mean(shear)
+        
+    def compute_displacement(self, ra, dec, z=None) :
+        initial_field = self.lt.get_field([])
+        z = self.lt_z if z is None else z
+        xr, yr = self.world_to_relative(ra, dec)
+        delta = 0.0001 # 0.1 milli arcsec
+        self.lt.set_field([xr-delta, xr+delta, yr-delta, yr+delta])
+        npix = 2
+        dx, dy, _ = self.lt.g_dpl(npix, z)
+        self.lt.set_field(initial_field)
+        return np.mean(dx), np.mean(dy)
+    
     
     def set_field(self) :
         # Careful, this function only works when the ROI is flat and image in world frame
@@ -1018,7 +1075,83 @@ class lenstool_model :
                 im[f'{col}_50_percentile'] = np.percentile(self.samples_dict[im['id']][col], 50)
         
 
+    def compute_map_as(self, fits_file_path, which='dpl') :
+        with fits.open(fits_file_path) as hdul :
+            data_hdu = None
+            for hdu in hdul :
+                if getattr(hdu, 'data', None) is not None :
+                    data_hdu = hdu
+                    break
+            if data_hdu is None :
+                raise ValueError(f"No image data found in FITS file: {fits_file_path}")
             
+            target_header = data_hdu.header
+            target_data = data_hdu.data
+            target_wcs = WCS(target_header)
+        
+        ndim = target_data.ndim
+        if ndim > 2 :
+            ny, nx = target_data.shape[-2], target_data.shape[-1]
+        else :
+            ny, nx = target_data.shape
+        
+        which_norm = which.lower().strip()
+        if which_norm in ['displacement', 'disp'] :
+            which_norm = 'dpl'
+        elif which_norm in ['magnification', 'mu', 'ampli'] :
+            which_norm = 'magnification'
+        elif which_norm in ['convergence', 'kappa', 'mass'] :
+            which_norm = 'convergence'
+        elif which_norm in ['shear', 'gamma'] :
+            which_norm = 'shear'
+        
+        valid_which = ['dpl', 'magnification', 'shear', 'convergence']
+        if which_norm not in valid_which :
+            raise ValueError(
+                f"Invalid 'which' value: {which}. "
+                f"Allowed values are: {valid_which}"
+            )
+        
+        if which_norm == 'dpl' :
+            map_data = np.full((2, ny, nx), np.nan, dtype=float)
+        else :
+            map_data = np.full((ny, nx), np.nan, dtype=float)
+        self._vprint(f"Computing '{which_norm}' map on input pixel grid ({ny} x {nx})...")
+        for iy in tqdm(range(ny), disable=not self.verbose) :
+            for ix in range(nx) :
+                if ndim == 3 :
+                    ra, dec, _ = target_wcs.pixel_to_world_values(ix, iy, 0.)
+                else :
+                    ra, dec = target_wcs.pixel_to_world_values(ix, iy)
+                    
+                if which_norm == 'dpl' :
+                    dx, dy = self.compute_displacement(ra, dec)
+                    map_data[0, iy, ix] = dx
+                    map_data[1, iy, ix] = dy
+                elif which_norm == 'magnification' :
+                    map_data[iy, ix] = self.compute_magnification(ra, dec)
+                elif which_norm == 'shear' :
+                    map_data[iy, ix] = self.compute_shear(ra, dec, which='gamma')
+                elif which_norm == 'convergence' :
+                    map_data[iy, ix] = self.compute_mass(ra, dec)
+        
+        out_header = target_wcs.to_header()
+        out_header['BUNIT'] = 'arcsec' if which_norm == 'dpl' else ''
+        out_header['MAPTYPE'] = which_norm
+        
+        input_dir = os.path.dirname(fits_file_path)
+        input_name = os.path.basename(fits_file_path)
+        root_name, _ = os.path.splitext(input_name)
+        out_path = os.path.join(input_dir, f"{root_name}_{which_norm}_map.fits")
+        
+        if which_norm == 'dpl' :
+            fits.PrimaryHDU(data=map_data[0], header=out_header).writeto(out_path.replace('.fits', '_dx.fits'), overwrite=True)
+            fits.PrimaryHDU(data=map_data[1], header=out_header).writeto(out_path.replace('.fits', '_dy.fits'), overwrite=True)
+        else :
+            fits.PrimaryHDU(data=map_data, header=out_header).writeto(out_path, overwrite=True)
+        self._vprint(f"Saved map to {out_path}")
+        
+        return map_data, target_wcs
 
 
 def import_lenstool(model_dir, fits_image, use_wrapper=None, compute_predictions=False, verbose=True) :
