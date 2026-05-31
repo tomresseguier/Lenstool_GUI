@@ -16,6 +16,7 @@ from .utils.utils_plots.plot_utils_general import *
 from .utils.utils_Qt.selectable_classes import SelectableEllipse, SelectableScatter, SelectSources, ellipse_maker_ROI
 from .utils.utils_Qt.utils_general import make_handles, InRectangle, make_full_color
 from .utils.utils_general.utils_general import make_colnames_dict
+from .utils.utils_LaTeX.catalog_to_latex import catalog_to_latex
 
 
 
@@ -501,160 +502,30 @@ class catalog :
     #    else :
     #        print('No imported_cat')
     
-    def transfer_col(self, col_to_transfer, which_cat="imported_cat", index=None):
+    def transfer_col(self, col_to_transfer, which_cat="imported_cat", index=None, match_radius=0.5, overwrite=False) :
         if index is not None :
             source_cat = self.fits_image.imported_cat_list[index]
         else :
             source_cat = getattr(self.fits_image, which_cat, None)
     
-        if source_cat is not None:
+        if source_cat is not None :
             if col_to_transfer in source_cat.cat.colnames:
-                temp_cat, match_idx = match_cat2([self.cat, source_cat.cat], keep_all_col=True, return_match_idx=True) #, fill_in_value=-1.0
-                if col_to_transfer in self.cat.colnames:
-                    col_to_transfer = col_to_transfer + '_CAT2'
+                temp_cat, match_idx = match_cat2([self.cat, source_cat.cat], keep_all_col=True, return_match_idx=True, match_radius=match_radius) #, fill_in_value=-1.0
+                if col_to_transfer in self.cat.colnames :
+                    if overwrite :
+                        self.cat.replace_column(col_to_transfer, temp_cat[col_to_transfer])
+                    else :
+                        col_to_transfer = col_to_transfer + '_CAT2'
                 self.cat[col_to_transfer] = temp_cat[col_to_transfer]
                 self._vprint(f'###############\nColumn {col_to_transfer} added.\n###############')
             else:
                 self._vprint(f'{col_to_transfer} not found in {which_cat}')
-        else:
+        else :
             self._vprint(f'No {which_cat}')
         return match_idx
     
-    def export_to_LaTeX(self, columns=[], file_path=None, use_best_fit_value=False) :
-        if len(columns)==0 :
-            columns = list(self.cat.colnames)
-        
-        # Detect triplets/quadruplets involving _16/_50/_84_percentile columns and fold
-        # them into a single column with asymmetric uncertainties as super/subscript.
-        #
-        # use_best_fit_value=True  → value source is the base column (name);
-        #                            _50_percentile columns are suppressed entirely.
-        # use_best_fit_value=False → value source is name_50_percentile when available,
-        #                            falling back to the base column otherwise.
-        columns_set = set(columns)
-        percentile_map = {}   # base_col -> (col_16, col_value, col_84)
-        percentile_cols = set()
-        for col in columns :
-            if col.endswith('_16_percentile') :
-                base   = col[:-len('_16_percentile')]
-                col_84 = base + '_84_percentile'
-                col_50 = base + '_50_percentile'
-                if col_84 not in columns_set :
-                    continue
-                # Require the base column when using best-fit values; otherwise it is
-                # optional because _50_percentile can stand in as the display column.
-                if use_best_fit_value and base not in columns_set :
-                    continue
-                if not use_best_fit_value and base not in columns_set and col_50 not in columns_set :
-                    continue
-
-                col_value = base if (use_best_fit_value or col_50 not in columns_set) else col_50
-                percentile_map[base] = (col, col_value, col_84)
-                percentile_cols.add(col)
-                percentile_cols.add(col_84)
-                if col_50 in columns_set :
-                    percentile_cols.add(col_50)
-
-        # When using the median as central value, the base column is not necessarily
-        # in the catalog; add a sentinel so display_columns still contains it.
-        if not use_best_fit_value :
-            for base, (col_16, col_value, col_84) in percentile_map.items() :
-                if base not in columns_set :
-                    columns_set.add(base)
-                    # Insert the synthetic base name right before its _16_percentile column
-                    idx = columns.index(col_16)
-                    columns.insert(idx, base)
-
-        # Merge z_in / z_opt into a single 'z' column.
-        # z_in takes priority; z_opt is used (marked with *) when z_in is absent or invalid.
-        merge_z = 'z_in' in columns_set and 'z_opt' in columns_set
-        suppressed_cols = percentile_cols.copy()
-        if merge_z :
-            suppressed_cols.add('z_opt')
-
-        # Only display the base columns; percentile partners are merged into them.
-        display_columns = [col for col in columns if col not in suppressed_cols]
-
-        def _colhead(col) :
-            return 'z' if (merge_z and col == 'z_in') else col
-
-        _UNITS_MAP = {
-            'ra'    : 'deg',
-            'dec'   : 'deg',
-            'theta' : 'deg',
-            'x'     : 'pix',
-            'y'     : 'pix',
-            'a'     : 'pix',
-            'b'     : 'pix',
-        }
-        def _units(col) :
-            name = _colhead(col)
-            if name in _UNITS_MAP :
-                return _UNITS_MAP[name]
-            if 'mag' in name.lower() :
-                return 'mag'
-            return ''
-
-        # Build both header lines; only emit the units line when at least one column
-        # has a known unit (otherwise the second line would be all empty colheads).
-        col_names_row = " &\n".join(f"\\colhead{{{_colhead(col)}}}" for col in display_columns)
-        units_entries = [f"({_units(col)})" if _units(col) else "" for col in display_columns]
-        has_units     = any(u for u in units_entries)
-        units_row     = " &\n".join(f"\\colhead{{{u}}}" for u in units_entries)
-
-        table_str = ("\\begin{deluxetable*}{l" + " c"*len(display_columns) + "}\n"
-                     "\\tablecaption{\\label{tab:}}\n"
-                     "\\tablewidth{\\columnwidth}\n"
-                     "\\tablehead{\n")
-        if has_units :
-            table_str += col_names_row + " \\\\\n"
-            table_str += units_row + "\n"
-        else :
-            table_str += col_names_row + "\n"
-        table_str += ("\\vspace{-0.07in}\\\\}\n"
-                      "\\startdata\n")
-        for src in self.cat :
-            for col in display_columns :
-                if merge_z and col == 'z_in' :
-                    z_in_val = src['z_in']
-                    if not (np.isnan(float(z_in_val)) or float(z_in_val) <= 0) :
-                        to_parse = f"{z_in_val:.3g}"
-                    else :
-                        if 'z_opt' in percentile_map :
-                            col_16, col_value, col_84 = percentile_map['z_opt']
-                            val    = src[col_value]
-                            upper  = src[col_84] - val
-                            lower  = val - src[col_16]
-                            to_parse = f"${val:.3g}^{{+{upper:.3g}}}_{{-{lower:.3g}}}$"
-                        else :
-                            z_opt_val = src['z_opt']
-                            to_parse = f"{z_opt_val:.3g}*"
-                elif col in percentile_map :
-                    col_16, col_value, col_84 = percentile_map[col]
-                    val    = src[col_value]
-                    upper  = src[col_84] - val
-                    lower  = val - src[col_16]
-                    to_parse = f"${val:.3g}^{{+{upper:.3g}}}_{{-{lower:.3g}}}$"
-                elif type(src[col]) in [np.str_, str] :
-                    to_parse = src[col]
-                elif col in ['ra', 'dec'] :
-                    to_parse = f"{src[col]:#.8g}"
-                else :
-                    to_parse = f"{src[col]:.3g}"
-                table_str += to_parse + " &\n"
-            table_str = table_str[:-3] + "\\\\\n"
-        table_str += ("\\enddata\n"
-                      "\\tablecomments{}\n"
-                      "\\end{deluxetable*}")
-        self._vprint(table_str)
-        
-        if file_path is None and self.path is not None :
-            file_path = os.path.join(os.path.dirname(self.path), 'catalog_latex_table.txt')
-        if file_path is not None :
-            with open(file_path, 'w') as f :
-                f.write(table_str)
-            self._vprint('LaTeX table saved at ' + file_path)
-        return table_str
+    def export_to_LaTeX(self, columns=[], file_path=None, use_best_fit_value=False, deluxetable=True) :
+        return catalog_to_latex(self, columns=columns, file_path=file_path, use_best_fit_value=use_best_fit_value, deluxetable=deluxetable)
     
     #def export_thumbnails(self, mask=None, group_images=True) :
     #    if mask is None :

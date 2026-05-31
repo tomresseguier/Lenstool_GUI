@@ -10,7 +10,7 @@ def get_ROI_slider_init_dict_light_model() :
     """
     slider_init_dict = {
         'amp': [1e-3, 1000, 'log', 'triple_handle', None],
-        'n_sersic': [1, 10, 'linear', 'triple_handle', None],
+        'n_sersic': [0, 10, 'linear', 'triple_handle', None],
         'R_sersic': [1e-4, 10, 'log', 'triple_handle', 'link_size'],
         'q': [0.0, 1.0, 'linear', 'triple_handle', 'link_ratio'],
         'phi': [0., np.pi, 'linear', 'triple_handle', 'link_angle'],
@@ -32,14 +32,14 @@ def get_ROI_slider_init_dict_lens_model() :
     """Same shape as :func:`get_ROI_slider_init_dict_light_model` (optional 5th ``roi_link_mode``)."""
     slider_init_dict = {
         #'sigma0': [1e-3, 1000, 'log', 'triple_handle', None],
-        'sigma0': [1, 100, 'log', 'triple_handle', None],
+        'sigma0': [0.03, 100, 'log', 'triple_handle', None],
         #'Ra': [1e-4, 100, 'log', 'triple_handle', None],
-        'Ra': [1e-4, 1, 'log', 'triple_handle', None],
+        'Ra': [3e-6, 0.03, 'log', 'triple_handle', None],
         #'Rs': [1e-3, 100, 'log', 'triple_handle', 'link_size'],
-        'Rs': [1, 100, 'log', 'triple_handle', 'link_size'],
+        'Rs': [0.03, 100, 'log', 'triple_handle', 'link_size'],
         'q': [0.0, 1.0, 'linear', 'triple_handle', 'link_ratio'],
-        'phi': [0., np.pi, 'linear', 'triple_handle', 'link_angle'],
-        'dpos': [1e-4, 10, 'log', 'single_handle', 'link_box'],
+        'phi': [-np.pi/2, np.pi/2, 'linear', 'triple_handle', 'link_angle'],
+        'dpos': [1e-5, 1, 'log', 'single_handle', 'link_box'],
     }
     return slider_init_dict
     

@@ -5,6 +5,7 @@ import pyqtgraph as pg
 from PyQt5.QtWidgets import QMainWindow, QSplitter, QWidget, QVBoxLayout, QHBoxLayout
 from PyQt5.QtCore import Qt
 from pyqtgraph.Qt import QtWidgets
+from tqdm import tqdm
 
 from lenstronomy.Data.pixel_grid import PixelGrid     
 from lenstronomy.LensModel.lens_model import LensModel
@@ -14,7 +15,7 @@ from lenstronomy.Data.imaging_data import ImageData
 from lenstronomy.Util import util
 from lenstronomy.LensModel.lens_model_extensions import LensModelExtensions
 
-from ...utils.utils_astro.utils_general import world_to_relative
+from ...utils.utils_astro.utils_general import world_to_relative, relative_to_world
 from ...utils.utils_general.sort_points import break_curves
 from ...utils.utils_Qt.drag_widgets import DragPlotWidget_special, DragImagePlotWidget_special
 from ...utils.utils_Qt.utils_general import transform_rectangle
@@ -24,12 +25,28 @@ from .make_lm_dict import make_lm_dict_opt
 from .simulate import simulate, _update_curves
 from .optimize import optimize
 from .lm_initialize_functions import get_ROI_param_dict_light_model, get_ROI_slider_init_dict_light_model, get_ROI_param_dict_lens_model, get_ROI_slider_init_dict_lens_model
+from .make_samples_dict_utils import _load_or_init_samples_dict, _sample_is_computed, _merge_and_dump_samples_dict
 
+
+
+_DEFAULT_LENSING_COLUMNS = [
+    'magnification',
+    'convergence',
+    'shear',
+    'gamma1',
+    'gamma2',
+    'time',
+    'tangential_magnification',
+    'radial_magnification',
+    'ra_source',
+    'dec_source',
+]
 
 
 class image_simulator :
     def __init__(self, fits_image, which_filter=None, throttle_mode=0, use_linear_solver=False, dpl_resolution=200) :
         self.fits_image = fits_image
+        self._DEFAULT_LENSING_COLUMNS = _DEFAULT_LENSING_COLUMNS
         self.z_source = fits_image.lt.lt_z
         self.ROI = fits_image.image_widget.current_ROI
         #self.fits_image.qt_image.addItem(ROI)
@@ -100,16 +117,16 @@ class image_simulator :
         x_axes, y_axes = util.get_axes(x_grid_interp, y_grid_interp)
         
         self.LensModel_kwargs = [{'grid_interp_x': x_axes,
-                                        'grid_interp_y': y_axes,
-                                        'f_': fits_image.lt.convergence_maps[fits_image.lt.lt_z][0],
-                                        'f_x': fits_image.lt.dpl_maps[fits_image.lt.lt_z][0],
-                                        'f_y': fits_image.lt.dpl_maps[fits_image.lt.lt_z][1]}]
+                                  'grid_interp_y': y_axes,
+                                  'f_': fits_image.lt.convergence_maps[fits_image.lt.lt_z][0],
+                                  'f_x': fits_image.lt.dpl_maps[fits_image.lt.lt_z][0],
+                                  'f_y': fits_image.lt.dpl_maps[fits_image.lt.lt_z][1]}]
         # Preserved for ``make_lm_dict`` / ``_assemble_lens_model_kwargs``: INTERPOL dict only,
         # so ellipse ROIs on the image plane can append ``PJAFFE_ELLIPSE_POTENTIAL_Q_PHI`` components.
         self.LensModel_base_kwargs = copy.deepcopy(self.LensModel_kwargs[0])
         
         self.LensModel_list = ['INTERPOL']
-        self.LensModel = LensModel(lens_model_list=self.LensModel_list)
+        self.LensModel = LensModel(lens_model_list=self.LensModel_list, z_lens=self.fits_image.lt.z_lens, z_source=self.z_source)
         
         #m=4
         #f, ax = plt.subplots(1, 1, figsize=(10, 10), sharex=False, sharey=False)
@@ -223,21 +240,24 @@ class image_simulator :
                 fits_image.filters = {which_filter: self.individual_filter}
         
         #-------------- ImageData --------------#
-        if not hasattr(self.individual_filter, 'rms') :
-            print('Calculating RMS...')
-            self.individual_filter.rms = np.std(self.individual_filter.image_data)
-            print('done: ' + str(self.individual_filter.rms))
-            if not hasattr(self.individual_filter, 'wcs') : # test if is instance of filter_lite instead of full filter class
-                fits_image.rms = self.individual_filter.rms
+        self.image_data = self.individual_filter.image_data[ self._crop_y0 - self._crop_npix : self._crop_y0, self._crop_x0 : self._crop_x0 + self._crop_npix ]
+        
+        #if not hasattr(self.individual_filter, 'rms') :
+        #    print('Calculating RMS...')
+        #    self.individual_filter.rms = np.std(self.individual_filter.image_data)
+        #    print('done: ' + str(self.individual_filter.rms))
+        #    if not hasattr(self.individual_filter, 'wcs') : # test if is instance of filter_lite instead of full filter class
+        #        fits_image.rms = self.individual_filter.rms
         if 'EXPTIME' not in self.individual_filter.header :
             print('\nCareful: EXPTIME not found in header. Using arbitrary value EXPTIME=1ks.')
             exptime = 1000.
         else :
             exptime = self.individual_filter.header['EXPTIME']
-
-        self.image_data = self.individual_filter.image_data[ self._crop_y0 - self._crop_npix : self._crop_y0, self._crop_x0 : self._crop_x0 + self._crop_npix ]
+        
+        self.rms = np.std(self.image_data)
+        
         self.ImageData_kwargs = {'image_data': self.image_data,
-                                'background_rms': self.individual_filter.rms,
+                                'background_rms': self.rms, #self.individual_filter.rms
                                 'exposure_time': exptime,
                                 'transform_pix2angle': transform_pix2angle,
                                 'ra_at_xy_0': - square_size_arcsec / 2,
@@ -267,7 +287,7 @@ class image_simulator :
         self.image_plane_observed = pg.ImageView()
         self.image_plane_simulated = pg.ImageView()
         self.image_plane_residual = pg.ImageView()
-        self.image_plane_rgb = DragImagePlotWidget_special(ROI_param_dict=get_ROI_param_dict_lens_model(), slider_init_dict=get_ROI_slider_init_dict_lens_model(), throttle_mode=throttle_mode)
+        self.image_plane_rgb = DragImagePlotWidget_special(ROI_param_dict=get_ROI_param_dict_lens_model(), slider_init_dict=get_ROI_slider_init_dict_lens_model(), size_sliders_scaling=fits_image.pix_deg_scale*3600, throttle_mode=throttle_mode)
         self.image_plane_plot = self.image_plane_simulated  # backward compatibility
 
         sim0 = np.zeros_like(self.image_data)
@@ -402,16 +422,29 @@ class image_simulator :
         #fits_image.lt.lt.set_field(self._initial_field)
         self.previous_state_current_ROI = self.ROI.getState()
     
+
+    def clear(self) :
+        self.image_plane_rgb.remove_all_ROIs()
+        self.source_plane_widget.remove_all_ROIs()
     
-    def simulate(self, N_sigma=6.) :
+    def world_to_relative(self, ra, dec) :
+        return world_to_relative(ra, dec, self.center_world)
+
+    def relative_to_world(self, x, y) :
+        return relative_to_world(x, y, self.center_world)
+    
+    def simulate(self, N_sigma=40., verbose=True) :
         self.lm_dict_opt = make_lm_dict_opt(self, N_sigma=N_sigma)
         self.lm_current = lenstronomy_model(self.lm_dict_opt, self)
-        simulate(self)
+        simulate(self, verbose=verbose)
     
-    def optimize(self, N_sigma=6., fitting_kwargs_list=None) :
+    def optimize(self, N_sigma=40., fitting_kwargs_list=None, lm_dict_opt=None) :
         fitting_kwargs_list = getattr(self, 'fitting_kwargs_list', None) if fitting_kwargs_list is None else fitting_kwargs_list
-        self.simulate(N_sigma=6.)
-        optimize(self, fitting_kwargs_list=fitting_kwargs_list)
+        if lm_dict_opt is None : # This will initialize self.lm_dict_opt
+            self.simulate(N_sigma=40.)
+        else :
+            self.lm_dict_opt = lm_dict_opt
+        return optimize(self, fitting_kwargs_list=fitting_kwargs_list)
     
     def set_fitting_kwargs_list(self, fitting_kwargs_list) :
         self.fitting_kwargs_list = fitting_kwargs_list
@@ -432,8 +465,195 @@ class image_simulator :
         
         #self.imported_kwargs = {'kwargs_lens': self.LensModel_kwargs}
         #self.imported_kwargs['kwargs_source'] = self.imported_source_model['results']['kwargs_source']
+    
+    def add_lensing_columns(self, cat=None, which_cat='mult', index=None, overwrite=None, disable_tqdm=False) :
+        if cat is None :
+            if index is not None :
+                cat = self.fits_image.imported_cat_list[index].cat
+            else :
+                if which_cat == 'mult' :
+                    cat = self.fits_image.lt.mult.cat
+                elif which_cat == 'imported_cat' :
+                    cat = self.fits_image.imported_cat.cat
+                else :
+                    if getattr(self.fits_image, which_cat, None) is not None :
+                        cat = getattr(self.fits_image, which_cat, None).cat
+                    elif getattr(self.fits_image.lt, which_cat, None) is not None :
+                        cat = getattr(self.fits_image.lt, which_cat, None).cat
+                    else :
+                        raise ValueError('Catalog ' + which_cat + ' not found.')
         
+        check = False
+        existing_cols = []
+        for name in self._DEFAULT_LENSING_COLUMNS :
+            if name in cat.colnames :
+                check = True
+                existing_cols.append(name)
+        yesno = 'y' if overwrite is None else 'y' if overwrite else 'n'
+        if check and overwrite is None :
+            yesno = input(f"Following lensing columns already exist: {existing_cols}. Overwrite? [Y]/n")
+        
+        if yesno.lower() in ['y', ''] :
+            mu_col = np.full(len(cat), np.nan)
+            gamma_col = np.full(len(cat), np.nan)
+            kappa_col = np.full(len(cat), np.nan)
+            tmu_col = np.full(len(cat), np.nan)
+            rmu_col = np.full(len(cat), np.nan)
+            time_col = np.full(len(cat), np.nan)
+            gamma1_col = np.full(len(cat), np.nan)
+            gamma2_col = np.full(len(cat), np.nan)
+            
+            ra_source_col = np.full(len(cat), np.nan)
+            dec_source_col = np.full(len(cat), np.nan)
+            
+            z_colname = None
+            for name in ['z', 'z_spec', 'zspec', 'z_phot', 'zphot'] :
+                if name in cat.colnames :
+                    z_colname = name
+                    break
+            if z_colname is not None :
+                if np.unique(cat[z_colname]).shape[0] > 1 or np.unique(cat[z_colname])[0] != self.z_source :
+                    print('Warning: catalog contains sources at multiple redshifts different from current source plane redshift. Lensing quantities will be calculated for sources at redshift ' + str(self.z_source) + '.')
+            else :
+                print('Calculating lensing quantities for sources at redshift ' + str(self.z_source) + '.')
+                
+            for i in tqdm(range(len(cat)), disable=disable_tqdm) :
+                ra, dec = cat['ra'][i], cat['dec'][i]
+                xr, yr = self.world_to_relative(ra, dec)
+                delta = self.fits_image.pix_deg_scale * 3600 / 2
 
+                x_grid = np.array([xr])
+                y_grid = np.array([yr])
+                
+                # Magnification
+                mag_map = util.array2image(self.LensModel.magnification(x_grid, y_grid, self.LensModel_kwargs))
+                mu_col[i] = mag_map[0][0]
+
+                # Shear
+                g1, g2 = self.LensModel.gamma(x_grid, y_grid, self.LensModel_kwargs)
+                gamma1_col[i] = g1[0]
+                gamma2_col[i] = g2[0]
+                gamma_col[i] = np.sqrt(gamma1_col[i]**2 + gamma2_col[i]**2)
+
+                # Convergence
+                kappa_map = self.LensModel.kappa(x_grid, y_grid, self.LensModel_kwargs)
+                kappa_col[i] = kappa_map[0]
+
+                # Tangential and radial magnification
+                tmu_col[i] = 1 / (1 - kappa_col[i] - gamma_col[i] )
+                rmu_col[i] = 1 / (1 - kappa_col[i] + gamma_col[i] )
+
+                # Time delays
+                time_map = self.LensModel.arrival_time(x_grid, y_grid, self.LensModel_kwargs)
+                time_col[i] = time_map[0]
+
+                # Displacement
+                dx_map, dy_map = self.LensModel.alpha(x_grid, y_grid, self.LensModel_kwargs)
+                dx = dx_map[0]
+                dy = dy_map[0]
+                
+                # Source coordinates
+                ra_source_col[i] = ra + dx /3600 /np.cos( dec * np.pi/180 )
+                dec_source_col[i] = dec - dy /3600
+            
+            columns_to_add = [mu_col, kappa_col, gamma_col, gamma1_col, gamma2_col, time_col, tmu_col, rmu_col, ra_source_col, dec_source_col]
+            for i, name in enumerate(self._DEFAULT_LENSING_COLUMNS) :
+                if name in cat.colnames :
+                    cat.replace_column(name, columns_to_add[i])
+                else :
+                    cat.add_column(columns_to_add[i], name=name)
+
+    def make_samples_dict(self, nsamples, recompute=False, start_sample_index=None, stop_sample_index=None) :
+        lensing_columns = self._DEFAULT_LENSING_COLUMNS
+        if start_sample_index is None :
+            start_sample_index = 0
+        if stop_sample_index is None :
+            stop_sample_index = nsamples
+
+        self.samples_dir = os.path.join(self.fits_image.lt.model_dir, 'samples_lenstronomy')
+        if not os.path.exists(self.samples_dir) :
+            print('Creating samples directory')
+            os.makedirs(self.samples_dir)
+
+        samples_dict_path = os.path.join(self.samples_dir, 'samples_dict_' + str(nsamples) + '.pkl')
+        im_ids = self.fits_image.lt.mult.cat['id']
+
+        self.samples_dict = _load_or_init_samples_dict(
+            samples_dict_path,
+            nsamples,
+            lensing_columns,
+            im_ids,
+            start_sample_index,
+            stop_sample_index,
+            recompute,
+        )
+
+        for i in tqdm(range(start_sample_index, stop_sample_index), desc=f'samples [{start_sample_index}:{stop_sample_index})') :
+            if not recompute and _sample_is_computed(self.samples_dict, i, im_ids, lensing_columns) :
+                continue
+
+            sample_kwargs_name = self.lm_imported._make_sample_kwargs('MCMC', i)
+            self.LensModel_list = self.lm_imported.local['models']['lens_model_list']
+            self.LensModel = LensModel(lens_model_list=self.LensModel_list, z_lens=self.fits_image.lt.z_lens, z_source=self.z_source)
+            self.LensModel_kwargs = self.lm_imported.local[sample_kwargs_name]['kwargs_lens']
+            del self.lm_imported.local[sample_kwargs_name]
+            del self.lm_imported.world[sample_kwargs_name]
+
+            #self.clear()
+            #self.lm_imported.send_to_imsim(step='MCMC', sample_index=i)
+            #self.simulate(verbose=False)
+            self.add_lensing_columns(cat=self.fits_image.lt.mult.cat, overwrite=True, disable_tqdm=True)
+            for im in self.fits_image.lt.mult.cat :
+                for col in lensing_columns :
+                    self.samples_dict[im['id']][col][i] = im[col]
+
+            if i % 10 == 0 or i == stop_sample_index - 1 :
+                self.samples_dict = _merge_and_dump_samples_dict(samples_dict_path, 
+                                                                 self.samples_dict,
+                                                                 start_sample_index,
+                                                                 stop_sample_index,
+                                                                 nsamples,
+                                                                 lensing_columns,
+                                                                 im_ids)
+
+    def compute_uncertainties(self, nsamples=None, recompute=False, start_sample_index=None, stop_sample_index=None) :
+        if nsamples is None :
+            nsamples_list = []
+            for i, kwargs_lens_sampled in enumerate(self.lm_imported.local['kwargs_MCMC']['kwargs_lens']) :
+                for param_name, param_value in kwargs_lens_sampled.items() :
+                    nsamples_list.append(len(param_value))
+            nsamples = np.min(nsamples_list)
+            print(str(nsamples) + ' full samples found in imported lenstronomy model.')
+
+        self.make_samples_dict(nsamples, recompute=recompute, start_sample_index=start_sample_index, stop_sample_index=stop_sample_index)
+        
+        for col in self._DEFAULT_LENSING_COLUMNS :
+            col_16_percentile = np.full(len(self.fits_image.lt.mult.cat), np.nan)
+            col_84_percentile = np.full(len(self.fits_image.lt.mult.cat), np.nan)
+            col_50_percentile = np.full(len(self.fits_image.lt.mult.cat), np.nan)
+
+            name = f'{col}_16_percentile'
+            if name in self.fits_image.lt.mult.cat.colnames :
+                self.fits_image.lt.mult.cat.replace_column(name, col_16_percentile)
+            else :
+                self.fits_image.lt.mult.cat.add_column(col_16_percentile, name=name)
+
+            name = f'{col}_84_percentile'
+            if name in self.fits_image.lt.mult.cat.colnames :
+                self.fits_image.lt.mult.cat.replace_column(name, col_84_percentile)
+            else :
+                self.fits_image.lt.mult.cat.add_column(col_84_percentile, name=name)
+
+            name = f'{col}_50_percentile'
+            if name in self.fits_image.lt.mult.cat.colnames :
+                self.fits_image.lt.mult.cat.replace_column(name, col_50_percentile)
+            else :
+                self.fits_image.lt.mult.cat.add_column(col_50_percentile, name=name)
+
+            for im in self.fits_image.lt.mult.cat :
+                im[f'{col}_16_percentile'] = np.percentile(self.samples_dict[im['id']][col], 16)
+                im[f'{col}_84_percentile'] = np.percentile(self.samples_dict[im['id']][col], 84)
+                im[f'{col}_50_percentile'] = np.percentile(self.samples_dict[im['id']][col], 50)
 
 
 

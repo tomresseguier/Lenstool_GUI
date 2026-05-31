@@ -119,26 +119,32 @@ class DragPlotWidget(pg.PlotWidget):
             self.drawing2 = True
         else:
             super().mousePressEvent(event) #Default PlotWidget behavior, so that the user is still able to move around by click & drag
+    
+    def remove_all_ROIs(self):
+        for roi in self.roi_list :
+            self.removeItem(roi)
+            del roi
+        self.last_roi = None
+        self.roi_list = []
+    
+    def remove_selected_ROIs(self):
+        roi_list_new = []
+        for roi in self.roi_list :
+            if roi.selected :
+                self.removeItem(roi)
+                del roi
+            else :
+                roi_list_new.append(roi)
+        self.roi_list = roi_list_new
+        if len(self.roi_list)>0:
+            self.last_roi = self.roi_list[-1]
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
-            for roi in self.roi_list :
-                self.removeItem(roi)
-                del roi
-            self.last_roi = None
-            self.roi_list = []
+            self.remove_all_ROIs()
             event.accept()
         elif event.key() in (QtCore.Qt.Key_Backspace, QtCore.Qt.Key_Delete) :
-            roi_list_new = []
-            for roi in self.roi_list :
-                if roi.selected :
-                    self.removeItem(roi)
-                    del roi
-                else :
-                    roi_list_new.append(roi)
-            self.roi_list = roi_list_new
-            if len(self.roi_list)>0:
-                self.last_roi = self.roi_list[-1]
+            self.remove_selected_ROIs()
             event.accept()
             
     def checkLongPress(self):
@@ -222,7 +228,7 @@ class DragPlotWidget_special(ThrottledPlotWidget):
     """
     Same as DragPlotWidget but with selecatble elliptical and two different types of circular ROI.
     """
-    def __init__(self, ROI_param_dict=None, slider_init_dict=None, throttle_mode=0):
+    def __init__(self, ROI_param_dict=None, slider_init_dict=None, size_sliders_scaling=1., throttle_mode=0) :
         super().__init__(throttle_mode=throttle_mode)
         self.scene().sigMouseMoved.connect(self.mouse_moved)
         self.view = self.getViewBox()
@@ -236,6 +242,9 @@ class DragPlotWidget_special(ThrottledPlotWidget):
         
         self.ROI_param_dict = ROI_param_dict if ROI_param_dict is not None else {'CIRCLE1': 'CIRCLE1', 'CIRCLE2': 'CIRCLE2', 'ELLIPSE': 'ELLIPSE', 'POINT': 'POINT'}
         self.slider_init_dict = slider_init_dict if slider_init_dict is not None else {'param1': [1e-3, 1000, 'log', 'triple_handle'], 'param2': [0, 10, 'linear', 'single_handle']}
+        
+        # Setting size_sliders_scaling is necessary in case you want the slider units to be different from the ViewBox units.
+        self.size_sliders_scaling = size_sliders_scaling
         
         # This line because the many paint events can crash pyQt
         #self._run_low_performance_settings()
@@ -265,7 +274,7 @@ class DragPlotWidget_special(ThrottledPlotWidget):
             
             # Add sliders to control light source parameters
             params = self.ROI_param_dict['CIRCLE2'][1]
-            attach_sliders(self, params)
+            attach_sliders(self, params, size_sliders_scaling=self.size_sliders_scaling)
         # POINT
         elif event.button() == Qt.LeftButton and (event.modifiers() & Qt.ShiftModifier) and (event.modifiers() & Qt.ControlModifier or event.modifiers() & Qt.MetaModifier) :
             self.view.setMouseEnabled(x=False, y=False)
@@ -283,7 +292,7 @@ class DragPlotWidget_special(ThrottledPlotWidget):
             
             # Add sliders to control light source parameters
             params = self.ROI_param_dict['POINT'][1]
-            attach_sliders(self, params)        
+            attach_sliders(self, params, size_sliders_scaling=self.size_sliders_scaling)        
         #
         elif event.button() == Qt.LeftButton and event.modifiers() == Qt.ShiftModifier :
             print('Shift modifier function not yet implemented')
@@ -304,7 +313,7 @@ class DragPlotWidget_special(ThrottledPlotWidget):
             
             # Add sliders to control light source parameters
             params = self.ROI_param_dict['ELLIPSE'][1]
-            attach_sliders(self, params)
+            attach_sliders(self, params, size_sliders_scaling=self.size_sliders_scaling)
         # CIRCLE1
         elif event.button() == Qt.LeftButton and event.modifiers() in (Qt.ControlModifier, QtCore.Qt.MetaModifier) :
             self.view.setMouseEnabled(x=False, y=False)
@@ -322,18 +331,34 @@ class DragPlotWidget_special(ThrottledPlotWidget):
             
             # Add sliders to control light source parameters
             params = self.ROI_param_dict['CIRCLE1'][1]
-            attach_sliders(self, params)
+            attach_sliders(self, params, size_sliders_scaling=self.size_sliders_scaling)
         else:
             super().mousePressEvent(event) #Default PlotWidget behavior, so that the user is still able to move around by click & drag
 
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Escape:
-            for roi in self.roi_list :
+    def remove_all_ROIs(self):
+        for roi in self.roi_list :
+            remove_dpos_square_overlay(self, roi)
+            self.removeItem(roi)
+            del roi
+        self.last_roi = None
+        self.roi_list = []
+    
+    def remove_selected_ROIs(self):
+        roi_list_new = []
+        for roi in self.roi_list :
+            if roi.selected :
                 remove_dpos_square_overlay(self, roi)
                 self.removeItem(roi)
                 del roi
-            self.last_roi = None
-            self.roi_list = []
+            else :
+                roi_list_new.append(roi)
+        self.roi_list = roi_list_new
+        if len(self.roi_list)>0:
+            self.last_roi = self.roi_list[-1]
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self.remove_all_ROIs()
             event.accept()
 
         elif event.modifiers() in (Qt.ControlModifier, QtCore.Qt.MetaModifier) and event.key() == Qt.Key_D:
@@ -388,21 +413,11 @@ class DragPlotWidget_special(ThrottledPlotWidget):
                     pen = roi.selected_pen if selection_bool else roi.normal_pen
                     roi.setPen(pen)
                 except Exception:
-                    pass                
+                    pass
             event.accept()
 
         elif event.key() in (QtCore.Qt.Key_Backspace, QtCore.Qt.Key_Delete) :
-            roi_list_new = []
-            for roi in self.roi_list :
-                if roi.selected :
-                    remove_dpos_square_overlay(self, roi)
-                    self.removeItem(roi)
-                    del roi
-                else :
-                    roi_list_new.append(roi)
-            self.roi_list = roi_list_new
-            if len(self.roi_list)>0:
-                self.last_roi = self.roi_list[-1]
+            self.remove_selected_ROIs()
             event.accept()
             
     def checkLongPress(self):
@@ -459,8 +474,8 @@ class DragImagePlotWidget_special(DragPlotWidget_special):
     This mirrors the API needed from pg.ImageView (`setImage`, `addItem`,
     `getView`) while preserving ROI interactions from DragPlotWidget_special.
     """
-    def __init__(self, ROI_param_dict=None, slider_init_dict=None, throttle_mode=0):
-        super().__init__(ROI_param_dict=ROI_param_dict, slider_init_dict=slider_init_dict, throttle_mode=throttle_mode)
+    def __init__(self, ROI_param_dict=None, slider_init_dict=None, size_sliders_scaling=1., throttle_mode=0):
+        super().__init__(ROI_param_dict=ROI_param_dict, slider_init_dict=slider_init_dict, size_sliders_scaling=size_sliders_scaling, throttle_mode=throttle_mode)
         self._image_item = pg.ImageItem()
         self.addItem(self._image_item)
 
@@ -568,7 +583,7 @@ def _update_dpos_square_overlay(plot_widget, roi):
     if sbox is None:
         item.setVisible(False)
         return
-    d = abs(float(sbox.vmid))
+    d = abs(float(sbox.vmid)) / sbox.roi_link_size_scale
     if d < 1e-30:
         d = 1e-30
     x_center, y_center, _, _, _ = transform_ROI_params(roi)
@@ -625,7 +640,7 @@ def remove_dpos_square_overlay(plot_widget, roi):
     roi._dpos_square_plot = None
 
 
-def attach_sliders(self, params) :
+def attach_sliders(self, params, size_sliders_scaling=1.) :
     for i, param in enumerate(params) :
         spec = self.slider_init_dict[param]
         min_range, max_range = spec[0], spec[1]
@@ -643,6 +658,7 @@ def attach_sliders(self, params) :
                     log_scale=log_scale,
                     single_handle=single_handle,
                     roi_link_mode=roi_link_mode,
+                    roi_link_size_scale=size_sliders_scaling,
                 )
             }
         else :
@@ -659,6 +675,7 @@ def attach_sliders(self, params) :
                 log_scale=log_scale,
                 single_handle=single_handle,
                 roi_link_mode=roi_link_mode,
+                roi_link_size_scale=size_sliders_scaling,
             )
         self.last_roi.sliders[param].setParentItem(self.last_roi)
 

@@ -79,7 +79,7 @@ def _kwargs_are_same(kwargs1, kwargs2) :
     return True
 
 
-def simulate(imsim) :
+def simulate(imsim, verbose=True) :
     lm_dict_opt = imsim.lm_dict_opt
 
     if not _kwargs_are_same(imsim.LensModel_kwargs, imsim._last_curve_lens_kwargs) :
@@ -105,7 +105,7 @@ def simulate(imsim) :
                                             #lens_light_model_class=,
                                             kwargs_numerics=imsim.kwargs_numerics )
     
-    print('Start simulating image')
+    print('Start simulating image') if verbose else None
     imsim.simulated_image = imsim.ImageModel.image(kwargs_source=lm_dict_opt['kwargs']['kwargs_source'],
                                                     kwargs_ps=lm_dict_opt['kwargs']['kwargs_source_ps'],
                                                     #kwargs_lens_light=kwargs_light_lens,
@@ -123,6 +123,6 @@ def simulate(imsim) :
     # Re-apply the original range once updates are done.
     vb_ref.setXRange(x_range[0], x_range[1], padding=0)
     vb_ref.setYRange(y_range[0], y_range[1], padding=0)
-    print('done')
+    print('done') if verbose else None
     
     #solver = LensEquationSolver(imsim.lens_model)

@@ -5,8 +5,7 @@ import corner
 from lenstronomy.Workflow.fitting_sequence import FittingSequence
 from lenstronomy.Plots import chain_plot
 
-from .simulate import simulate
-from .utils import make_samples_dict
+from .extract_samples import make_samples_dict
 from .lenstronomy_model import lenstronomy_model
 
 
@@ -42,13 +41,20 @@ def optimize(imsim, fitting_kwargs_list=None) :
     
     if fitting_kwargs_list is None :
         fitting_kwargs_list = [['PSO', {'sigma_scale': 1., 'n_particles': 100, 'n_iterations': 100, 'threadCount': 16}],
-                               ['MCMC', {'n_burn': 100, 'n_run': 100, 'n_walkers': 50, 'sigma_scale': .01, 'threadCount': 16}]]
+                               ['MCMC', {'n_burn': 100, 'n_run': 100, 'n_walkers': 50, 'sigma_scale': .001, 'threadCount': 16}]]
         
     imsim.fitting_seq = fitting_seq
     imsim.chain_list = fitting_seq.fit_sequence(fitting_kwargs_list)
     imsim.result_kwargs = fitting_seq.best_fit()
     
-    
+    """ To try """
+    if False :
+        fitting_kwargs_list = [['PSO', {'sigma_scale': 1., 'n_particles': 100, 'n_iterations': 100, 'threadCount': 16}]]
+        imsim.chain_list = fitting_seq.fit_sequence(fitting_kwargs_list)  
+        fitting_kwargs_list = [['MCMC', {'n_burn': 100, 'n_run': 100, 'n_walkers': 50, 'sigma_scale': .01, 'threadCount': 16, 
+                                         'init_samples': imsim.chain_list[0], 're_use_samples': True}]]
+        imsim.result_kwargs = fitting_seq.best_fit()
+
     #for i in range(len(chain_list)):
     chain_plot.plot_chain_list(imsim.chain_list, 0)
     
@@ -68,9 +74,9 @@ def optimize(imsim, fitting_kwargs_list=None) :
     imsim.lm_dict_opt['kwargs_opt'] = {'kwargs_lens': imsim.result_kwargs['kwargs_lens'], 'kwargs_source': imsim.result_kwargs['kwargs_source'], 'kwargs_source_ps': imsim.result_kwargs['kwargs_ps']}
         
     
-    for i, samples in enumerate(imsim.chain_list) :
-        if fitting_kwargs_list[i][0] in ('MCMC', 'emcee') :
-            imsim.lm_dict_opt['kwargs_MCMC'] = make_samples_dict(imsim.lm_dict_opt, samples)
+    #for i, samples in enumerate(imsim.chain_list) :
+        #if fitting_kwargs_list[i][0] in ('MCMC', 'emcee') :
+        #    imsim.lm_dict_opt['kwargs_MCMC'] = make_samples_dict(imsim.lm_dict_opt, samples)
         #elif fitting_kwargs_list[i][0] == 'PSO' :
         #    imsim.lm_dict_opt['kwargs_PSO'] = None #format_samples(samples)
     
@@ -88,6 +94,7 @@ def optimize(imsim, fitting_kwargs_list=None) :
     #imsim.lm_optimized.plot()
     #imsim.lm_optimized.save('./last_optimized_lm.pkl')
     
+    return fitting_seq
     
     
     

@@ -1,5 +1,4 @@
 import numpy as np
-import math
 import os
 import matplotlib.pyplot as plt
 import pickle
@@ -15,8 +14,7 @@ from lenstronomy.PointSource.point_source import PointSource
 from lenstronomy.Data.pixel_grid import PixelGrid  
 from lenstronomy.Util import param_util
         
-from ...utils.utils_astro.utils_general import world_to_relative, relative_to_world, arcsec_to_kpc
-from ...utils.utils_astro.get_cosmology import get_cosmo
+from ...utils.utils_astro.utils_general import world_to_relative, relative_to_world
 from ...utils.utils_Qt.drag_widgets import (
     SelectableCircleROI,
     SelectableEllipseROI,
@@ -25,6 +23,8 @@ from ...utils.utils_Qt.drag_widgets import (
     _roi_link_box_slider,
 )
 from ...utils.utils_Qt.utils_general import transform_ROI_params_inverse, make_handles
+from .extract_samples import make_samples_dict
+from .utils_LaTeX import make_lm_LaTeX, make_lm_table, table_to_LaTeX_str
 
 
 def _apply_kwargs_bounds_to_roi_sliders(roi, lo, hi, eps=1e-8, plot_widget=None):
@@ -101,11 +101,23 @@ class lenstronomy_model :
         if self._is_local_model_dict(lm_dict_or_str) :
             self.local = lm_dict_or_str
             #self._fix_ps_coord_names()
-            self.world = self.to_world()
+            self.to_world()
             #self._remove_interpol(self.world)
         else :
             self.world = lm_dict_or_str
-            self.local = self.to_local()
+            self.to_local()
+        
+        if self.chain_list is not None :
+            steps = [step[0] for step in self.chain_list]
+            if 'kwargs_PSO' not in self.local and 'PSO' in steps :
+                i = steps.index('PSO')  
+                self.local['kwargs_PSO'] = make_samples_dict(self.local, self.chain_list[i])
+                self.to_world()
+            if 'kwargs_MCMC' not in self.local and 'emcee' in steps :
+                i = steps.index('emcee')
+                self.local['kwargs_MCMC'] = make_samples_dict(self.local, self.chain_list[i])
+                self.to_world()
+                
     
     def _fix_ps_coord_names(self) :
         for block in self._iter_kwargs_blocks(self.local) :
@@ -126,6 +138,10 @@ class lenstronomy_model :
     def _add_interpol(self, model_dict) :
         model_dict['models']['lens_model_list'].insert(0, 'INTERPOL')
         for block in self._iter_kwargs_blocks(model_dict) :
+            ### To remove, backward compatibility ###
+            if not 'kwargs_lens' in block :
+                block['kwargs_lens'] = []
+            ### End of backward compatibility block ###
             block['kwargs_lens'].insert(0, {})
         model_dict['kwargs']['kwargs_lens'][0] = self.imsim.LensModel_kwargs[0]
         model_dict['kwargs_fixed']['kwargs_lens'][0] = self.imsim.LensModel_kwargs[0]
@@ -177,47 +193,58 @@ class lenstronomy_model :
 
     def _is_local_model_dict(self, lm_dict):
         """Local models include INTERPOL by construction."""
-        if 'INTERPOL' in lm_dict['models']['lens_model_list']:
-            return True
+        ### To remove, backward compatibility ###
+        if 'lens_model_list' in lm_dict['models'] :
+            ### End of backward compatibility block ###
+            if 'INTERPOL' in lm_dict['models']['lens_model_list']:
+                return True
         return False
     
-    def plot(self, source_resolution=1000, cmap='grey', axes=None, cutoff=1.) :
+    def plot(self, source_resolution=1000, cmap='grey', with_cbar=True, axes=None, title=None, cutoff=None) :
         if axes is None :
-            fig, axes = plt.subplots(1, 4, figsize=(4, 16), sharex=False, sharey=False)
+            fig, axes = plt.subplots(4, 1, figsize=(4, 16), sharex=False, sharey=False)
         else :
             fig = axes[0].figure
 
+        if title is not None :
+            axes[0].set_title(title)
+
         """ Observed image """
         observed_image = self.imsim.image_data.copy()
-        observed_image_crop = observed_image.copy()
-        observed_image_crop[observed_image>cutoff] = cutoff
+        self.observed_image = observed_image
 
         """ Image simulated """
-        image_array = self._make_image_array()
-        image_array_crop = image_array.copy()
-        image_array_crop[image_array>cutoff] = cutoff
+        simulated_image = self._make_image_array()
+        self.simulated_image = simulated_image
 
-        vmin = min(observed_image_crop.min(), image_array_crop.min())
-        vmax = max(observed_image_crop.max(), image_array_crop.max())
-        axes[0].imshow(observed_image_crop, origin='lower', cmap=cmap, vmin=vmin, vmax=vmax)
-        axes[1].imshow(image_array_crop, origin='lower', cmap=cmap, vmin=vmin, vmax=vmax)
+        vmin = min(observed_image.min(), simulated_image.min())
+        vmax = max(observed_image.max(), simulated_image.max()) if cutoff is None else cutoff
+        im0 = axes[0].imshow(observed_image, origin='lower', cmap=cmap, vmin=vmin, vmax=vmax)
+        im1 = axes[1].imshow(simulated_image, origin='lower', cmap=cmap, vmin=vmin, vmax=vmax)
 
         """ Residuals """
-        residuals = observed_image - image_array
-        axes[2].imshow(residuals, origin='lower', cmap='bwr')
+        residuals = (observed_image - simulated_image) / np.std(self.imsim.image_data)
+        self.residuals = residuals
+        res_abs_max = 6.#np.max(np.abs(residuals))
+        im2 = axes[2].imshow(residuals, origin='lower', cmap='bwr', vmin=-res_abs_max, vmax=res_abs_max)
 
         """ Source plane """
         source_array = self._make_source_array(source_resolution=source_resolution)
+        self.source_array = source_array
         #axes[3].imshow(source_array, origin='lower', cmap='inferno')
-        source_array_crop = source_array.copy()
-        #cutoff_src = 0.008
-        #source_array_crop[source_array>cutoff_src] = cutoff_src
-        axes[3].imshow(np.log10(source_array), origin='lower', cmap=cmap)
+        #source_array_crop = source_array.copy()
+        if with_cbar :
+            im3 = axes[3].imshow(np.log10(source_array), origin='lower', cmap=cmap)
 
-        for ax in axes :
-            ax.axis('off')
-        fig.tight_layout(pad=0)
-
+        if with_cbar :
+            for ax, im in zip(axes, [im0, im1, im2, im3]) :
+                ax.axis('off')
+                fig.colorbar(im, ax=ax, orientation='horizontal', fraction=0.046, pad=0.005, location='bottom') #, shrink=0.98)
+        else :
+            for ax in axes :
+                ax.axis('off')
+        #fig.set_constrained_layout(True)
+        #fig.tight_layout(pad=0.02)
 
 
         if False :
@@ -272,9 +299,9 @@ class lenstronomy_model :
             a3.imshow( np.exp(source_array), vmax=0.06, origin="lower", cmap='gray' )
         
         
-        #if self.chain_list is not None :
-        #    for i in range(len(self.chain_list)):
-        #        chain_plot.plot_chain_list(self.chain_list, 0)
+        if self.chain_list is not None :
+            for i in range(len(self.chain_list)):
+                chain_plot.plot_chain_list(self.chain_list, 0)
         
         #return ax, source_array
         #return source_array
@@ -311,7 +338,8 @@ class lenstronomy_model :
                     self._local_to_world_coords(lens)
         
         self._remove_interpol(model_world)
-        return model_world
+        self.world = model_world
+        #return model_world
 
 
     def to_local(self) :        
@@ -347,7 +375,8 @@ class lenstronomy_model :
                     self._world_to_local_coords(lens)
 
         self._add_interpol(model_local)
-        return model_local
+        self.local = model_local
+        #return model_local
 
 
     def add(self, model_2) :
@@ -357,27 +386,25 @@ class lenstronomy_model :
             if 'INTERPOL' in model_2['models']['lens_model_list'] :
                 """ The model to add is in local format """        
                 self._remove_interpol(model_2)
-                self.local['models']['lens_model_list'] += model_2['models']['lens_model_list']
-                self.local['models']['source_light_model_list'] += model_2['models']['source_light_model_list']
-                self.local['models']['point_source_model_list'] += model_2['models']['point_source_model_list']
                 for name in ['kwargs', 'kwargs_fixed', 'kwargs_lower', 'kwargs_upper', 'kwargs_sigma', 'kwargs_init', 'kwargs_opt', 'kwargs_MCMC'] : #, 'kwargs_PSO'
                     if name in self.local and name in model_2 :
                         self.local[name]['kwargs_lens'] += model_2[name]['kwargs_lens']
                         self.local[name]['kwargs_source'] += model_2[name]['kwargs_source']
                         self.local[name]['kwargs_source_ps'] += model_2[name]['kwargs_source_ps']
-                    elif name in self.local and name not in model_2 :
+                    elif name in self.local and not name in model_2 :
                         self.local[name]['kwargs_lens'] += [{} for lens in model_2['models']['lens_model_list']]
                         self.local[name]['kwargs_source'] += [{} for src in model_2['models']['source_light_model_list']]
                         self.local[name]['kwargs_source_ps'] += [{} for ps in model_2['models']['point_source_model_list']]
-                    elif name in model_2 and name not in self.local :
+                    elif name in model_2 and not name in self.local :
                         self.local[name] = {}
                         self.local[name]['kwargs_lens'] = [{} for lens in self.local['models']['lens_model_list']] + model_2[name]['kwargs_lens']
                         self.local[name]['kwargs_source'] = [{} for src in self.local['models']['source_light_model_list']] + model_2[name]['kwargs_source']
-                        self.local[name]['kwargs_source_ps'] = [{} for ps in self.local['models']['source_light_model_list']] + model_2[name]['kwargs_source_ps']
-
-                #self.__init__(self.local, self.imsim)
-                self.world = self.to_world()
-                return self.local
+                        self.local[name]['kwargs_source_ps'] = [{} for ps in self.local['models']['point_source_model_list']] + model_2[name]['kwargs_source_ps']
+                self.local['models']['lens_model_list'] += model_2['models']['lens_model_list']
+                self.local['models']['source_light_model_list'] += model_2['models']['source_light_model_list']
+                self.local['models']['point_source_model_list'] += model_2['models']['point_source_model_list']
+                self.to_world()
+                return None
         else :
             """ Here we add a placeholder for the lens models """
             model_2['models']['lens_model_list'] = []
@@ -386,27 +413,24 @@ class lenstronomy_model :
                     model_2[name]['kwargs_lens'] = []
 
         """ The model to add is in world format """        
-        self.world['models']['lens_model_list'] += model_2['models']['lens_model_list']
-        self.world['models']['source_light_model_list'] += model_2['models']['source_light_model_list']
-        self.world['models']['point_source_model_list'] += model_2['models']['point_source_model_list']
         for name in ['kwargs', 'kwargs_fixed', 'kwargs_lower', 'kwargs_upper', 'kwargs_sigma', 'kwargs_init', 'kwargs_opt', 'kwargs_MCMC'] : #, 'kwargs_PSO'
             if name in self.world and name in model_2 :
                 self.world[name]['kwargs_lens'] += model_2[name]['kwargs_lens']
                 self.world[name]['kwargs_source'] += model_2[name]['kwargs_source']
                 self.world[name]['kwargs_source_ps'] += model_2[name]['kwargs_source_ps']
-            elif name in self.world and name not in model_2 :
+            elif name in self.world and not name in model_2 :
                 self.world[name]['kwargs_lens'] += [{} for lens in model_2['models']['lens_model_list']]
                 self.world[name]['kwargs_source'] += [{} for src in model_2['models']['source_light_model_list']]
                 self.world[name]['kwargs_source_ps'] += [{} for ps in model_2['models']['point_source_model_list']]
-            elif name in model_2 and name not in self.world :
+            elif name in model_2 and not name in self.world :
                 self.world[name] = {}
                 self.world[name]['kwargs_lens'] = [{} for lens in self.world['models']['lens_model_list']] + model_2[name]['kwargs_lens']
                 self.world[name]['kwargs_source'] = [{} for src in self.world['models']['source_light_model_list']] + model_2[name]['kwargs_source']
-                self.world[name]['kwargs_source_ps'] = [{} for ps in self.world['models']['source_light_model_list']] + model_2[name]['kwargs_source_ps']
-
-        #self.__init__(self.world, self.imsim)
-        self.local = self.to_local()
-        return self.world
+                self.world[name]['kwargs_source_ps'] = [{} for ps in self.world['models']['point_source_model_list']] + model_2[name]['kwargs_source_ps']
+        self.world['models']['lens_model_list'] += model_2['models']['lens_model_list']
+        self.world['models']['source_light_model_list'] += model_2['models']['source_light_model_list']
+        self.world['models']['point_source_model_list'] += model_2['models']['point_source_model_list']
+        self.to_local()
 
 
     def save(self, path='./lenstronomy_model.pkl') :
@@ -445,7 +469,7 @@ class lenstronomy_model :
             del imported_model_world['results']
         
         #self.__init__(self.world, self.imsim)
-        #self.local = self.to_local()
+        #self.to_local()
         return imported_model_world
     
     
@@ -485,14 +509,34 @@ class lenstronomy_model :
 
         fig = corner.corner(data, **kw)
         plt.show()
-        return fig
+        #return fig
+    
+    def plot_logL(self) :
+        if self.chain_list is not None :
+            fig, ax = plt.subplots()
+            step = 0
+            for i, chain in enumerate(self.chain_list) :
+                if chain[0] == 'PSO' :
+                    start = step
+                    end = step + len(chain[1][0])
+                    x = np.arange(start, end)
+                    ax.plot(x, chain[1][0])
+                    step = end
+                elif chain[0] in ['emcee', 'MCMC'] :
+                    start = step
+                    end = step + len(chain[3])
+                    x = np.arange(start, end)
+                    ax.plot(x, chain[3])
+                    step = end
+            plt.show()
+            return fig, ax
 
     def remove_source(self, index) :
         del self.local['models']['source_light_model_list'][index]
         for name in ['kwargs', 'kwargs_fixed', 'kwargs_lower', 'kwargs_upper', 'kwargs_sigma', 'kwargs_init', 'kwargs_opt', 'kwargs_MCMC', 'kwargs_PSO'] :
             del self.local[name]['kwargs_source'][index]
             del self.local[name]['kwargs_source_ps'][index]
-        self.world = self.to_world()
+        self.to_world()
 
     def _apply_bounds_if_present(self, roi, block_key, index, plot_widget=None):
         """Apply ``kwargs_lower``/``kwargs_upper`` for ``block_key`` at ``index`` to ``roi`` sliders."""
@@ -506,23 +550,98 @@ class lenstronomy_model :
             roi, kl[index], ku[index], plot_widget=self.imsim.source_plane_widget if plot_widget is None else plot_widget
         )
 
-    def send_to_imsim(self) :
+    def _apply_fixed_if_present(self, roi, block_key, index):
+        """Apply ``kwargs_fixed`` for ``block_key`` at ``index`` to ROI sliders."""
+        if 'kwargs_fixed' not in self.local:
+            return
+        kf = self.local['kwargs_fixed'].get(block_key)
+        if kf is None or index >= len(kf) or not isinstance(kf[index], dict):
+            return
+
+        fixed_kwargs = kf[index]
+        sliders = getattr(roi, "sliders", None)
+        if not isinstance(sliders, dict):
+            return
+
+        # Scalar params map directly to slider names except source_amp -> amp.
+        for k_kwargs, k_slider in (
+            ('amp', 'amp'),
+            ('n_sersic', 'n_sersic'),
+            ('sigma', 'sigma'),
+            ('R_sersic', 'R_sersic'),
+            ('sigma0', 'sigma0'),
+            ('Ra', 'Ra'),
+            ('Rs', 'Rs'),
+            ('q', 'q'),
+            ('phi', 'phi'),
+            ('source_amp', 'amp'),
+        ):
+            if k_kwargs in fixed_kwargs and k_slider in sliders:
+                sliders[k_slider].fixed = True
+                sliders[k_slider].vmid = fixed_kwargs[k_kwargs]
+                sliders[k_slider].update()
+
+        # Position fixing is controlled by the dpos (link_box) slider.
+        if any(k in fixed_kwargs for k in ('center_x', 'center_y', 'ra_source', 'dec_source')):
+            _, sbox = _roi_link_box_slider(roi)
+            if sbox is not None:
+                sbox.fixed = True
+                sbox.update()
+
+    def _get_kwargs_name(self, sub_kwargs_name, i) :
+        if getattr(self, '_kwargs_name_to_send', None) is not None :
+            return self._kwargs_name_to_send
+        elif not 'kwargs_opt' in self.local :
+            return 'kwargs'
+        elif len(self.local['kwargs_opt'][sub_kwargs_name][i])==0 :
+            return 'kwargs'
+        else :
+            return 'kwargs_opt'
+
+    def _make_sample_kwargs(self, step, sample_index) :
+        new_kwargs_name = 'kwargs_' + step + '_' + str(sample_index)
+        kwargs_samples_name = 'kwargs_' + step
+        """ Create sample dict and fill it with values extracted from the PSO or MCMC (step) samples """
+        self.local[new_kwargs_name] = {}
+        for kwargs_name, kwargs in self.local[kwargs_samples_name].items() :
+            self.local[new_kwargs_name][kwargs_name] = []
+            for i, indiv_kwargs in enumerate(kwargs) :
+                self.local[new_kwargs_name][kwargs_name].append({})
+                for param_name, param_array in indiv_kwargs.items() :
+                    self.local[new_kwargs_name][kwargs_name][i][param_name] = param_array[sample_index]
+        """ Complete the sample dict with fixed parameters """
+        for kwargs_name, kwargs in self.local['kwargs_fixed'].items() :
+            if not kwargs_name in self.local[new_kwargs_name] :
+                self.local[new_kwargs_name][kwargs_name] = []
+            for i, indiv_kwargs in enumerate(kwargs) :
+                for param_name, param_value in indiv_kwargs.items() :
+                    if param_name in self.local[new_kwargs_name][kwargs_name][i] :
+                        print('Debug: both fixed and sampled values present for same model and parameter!')
+                    self.local[new_kwargs_name][kwargs_name][i][param_name] = self.local['kwargs_fixed'][kwargs_name][i][param_name]
+        self.to_world()
+        return new_kwargs_name
+
+
+    def send_to_imsim(self, step=None, sample_index=None, kwargs_name=None) :
         PlotWidget = self.imsim.source_plane_widget
         PlotWidget_lens = self.imsim.image_plane_rgb
-        kwargs_name = 'kwargs_opt' if 'kwargs_opt' in self.local else 'kwargs'
+        if step is not None and sample_index is not None :
+            self._kwargs_name_to_send = self._make_sample_kwargs(step, sample_index)
+        elif kwargs_name is not None :
+            self._kwargs_name_to_send = kwargs_name
 
         for i, model in enumerate(self.local['models'].get('lens_model_list', [])):
             if model != 'PJAFFE_ELLIPSE_POTENTIAL_Q_PHI':
                 continue
+            # This is in case we have added two models together where one was optimized but not the other
+            kwargs_name = self._get_kwargs_name('kwargs_lens', i)
             kwargs = self.local[kwargs_name]['kwargs_lens'][i]
-            if not all(k in kwargs for k in ['center_x', 'center_y', 'Ra', 'q', 'phi']):
-                continue
-            pix_scale = self.imsim.fits_image.pix_deg_scale * 3600.0
+            pix_scale = self.imsim.fits_image.pix_deg_scale * 3600.0 # because this is the RGB panel
             npix = self.imsim._crop_npix
             x_center = kwargs['center_x'] / pix_scale + npix / 2.0
             y_center = kwargs['center_y'] / pix_scale + npix / 2.0
-            semi_major = kwargs['Rs'] / np.sqrt(kwargs['q'])# / pix_scale
-            semi_minor = kwargs['Rs'] * np.sqrt(kwargs['q'])# / pix_scale
+            semi_major = kwargs['Rs'] / np.sqrt(kwargs['q']) / pix_scale
+            semi_minor = kwargs['Rs'] * np.sqrt(kwargs['q']) / pix_scale
             x_corner, y_corner, a, b, angle = transform_ROI_params_inverse(
                 x_center, y_center, semi_major, semi_minor, kwargs['phi']
             )
@@ -536,15 +655,18 @@ class lenstronomy_model :
             PlotWidget_lens.addItem(PlotWidget_lens.last_roi)
 
             make_handles(PlotWidget_lens.last_roi)
-            attach_sliders(PlotWidget_lens, ['sigma0', 'Ra', 'Rs', 'q', 'phi', 'dpos'])
+            attach_sliders(PlotWidget_lens, ['sigma0', 'Ra', 'Rs', 'q', 'phi', 'dpos'], size_sliders_scaling=PlotWidget_lens.size_sliders_scaling)
             for p, v in kwargs.items():
                 if p in PlotWidget_lens.last_roi.sliders:
                     PlotWidget_lens.last_roi.sliders[p].vmid = v
 
             self._apply_bounds_if_present(PlotWidget_lens.last_roi, 'kwargs_lens', i, plot_widget=PlotWidget_lens)
+            self._apply_fixed_if_present(PlotWidget_lens.last_roi, 'kwargs_lens', i)
         
         for i, model in enumerate(self.local['models']['source_light_model_list']) :
             if model=='SERSIC' :
+                # This is in case we have added two models together where one was optimized but not the other
+                kwargs_name = self._get_kwargs_name('kwargs_source', i)
                 kwargs = self.local[kwargs_name]['kwargs_source'][i]
                 x = kwargs['center_x'] - self.imsim.source_center_coordinates[0]
                 y = kwargs['center_y'] - self.imsim.source_center_coordinates[1]
@@ -563,16 +685,19 @@ class lenstronomy_model :
                 PlotWidget.last_roi.addScaleHandle([0.5+2**-1.5, 0.5+2**-1.5], [0.5, 0.5])
                 
                 # Add sliders to control light source parameters
-                params = ['amp', 'n_sersic', 'dpos']
-                attach_sliders(PlotWidget, params)
+                params = ['amp', 'R_sersic', 'n_sersic', 'dpos']
+                attach_sliders(PlotWidget, params, size_sliders_scaling=PlotWidget.size_sliders_scaling)
                 
                 for p, v in kwargs.items() :
                     if p in PlotWidget.last_roi.sliders :
                         PlotWidget.last_roi.sliders[p].vmid = v
 
                 self._apply_bounds_if_present(PlotWidget.last_roi, 'kwargs_source', i, plot_widget=PlotWidget)
+                self._apply_fixed_if_present(PlotWidget.last_roi, 'kwargs_source', i)
 
             if model in ('SERSIC_ELLIPSE_Q_PHI', 'SERSIC_ELLIPSE') :
+                # This is in case we have added two models together where one was optimized but not the other
+                kwargs_name = self._get_kwargs_name('kwargs_source', i)
                 kwargs = self.local[kwargs_name]['kwargs_source'][i]
                 x_center = kwargs['center_x'] - self.imsim.source_center_coordinates[0]
                 y_center = kwargs['center_y'] - self.imsim.source_center_coordinates[1]
@@ -607,16 +732,19 @@ class lenstronomy_model :
                 make_handles(PlotWidget.last_roi)
                 
                 # Add sliders to control light source parameters
-                params = ['amp', 'n_sersic', 'q', 'phi', 'dpos']
-                attach_sliders(PlotWidget, params)
+                params = ['amp', 'R_sersic', 'n_sersic', 'q', 'phi', 'dpos']
+                attach_sliders(PlotWidget, params, size_sliders_scaling=PlotWidget.size_sliders_scaling)
                 
                 for p, v in kwargs.items() :
                     if p in PlotWidget.last_roi.sliders :
                         PlotWidget.last_roi.sliders[p].vmid = v
 
                 self._apply_bounds_if_present(PlotWidget.last_roi, 'kwargs_source', i, plot_widget=PlotWidget)
+                self._apply_fixed_if_present(PlotWidget.last_roi, 'kwargs_source', i)
 
             if model=='GAUSSIAN' :
+                # This is in case we have added two models together where one was optimized but not the other
+                kwargs_name = self._get_kwargs_name('kwargs_source', i)
                 kwargs = self.local[kwargs_name]['kwargs_source'][i]
                 x = kwargs['center_x'] - self.imsim.source_center_coordinates[0]
                 y = kwargs['center_y'] - self.imsim.source_center_coordinates[1]
@@ -635,17 +763,20 @@ class lenstronomy_model :
                 PlotWidget.last_roi.addScaleHandle([0.5+2**-1.5, 0.5+2**-1.5], [0.5, 0.5])
                 
                 # Add sliders to control light source parameters
-                params = ['amp', 'dpos']
-                attach_sliders(PlotWidget, params)
+                params = ['amp', 'sigma', 'dpos']
+                attach_sliders(PlotWidget, params, size_sliders_scaling=PlotWidget.size_sliders_scaling)
                 
                 for p, v in kwargs.items() :
                     if p in PlotWidget.last_roi.sliders :
                         PlotWidget.last_roi.sliders[p].vmid = v
 
                 self._apply_bounds_if_present(PlotWidget.last_roi, 'kwargs_source', i, plot_widget=PlotWidget)
+                self._apply_fixed_if_present(PlotWidget.last_roi, 'kwargs_source', i)
 
         for i, model in enumerate(self.local['models']['point_source_model_list']) :
             if model == 'SOURCE_POSITION' :
+                # This is in case we have added two models together where one was optimized but not the other
+                kwargs_name = self._get_kwargs_name('kwargs_source_ps', i)
                 kwargs = self.local[kwargs_name]['kwargs_source_ps'][i]
                 x = kwargs['ra_source'] - self.imsim.source_center_coordinates[0] #kwargs['ra_source']
                 y = kwargs['dec_source'] - self.imsim.source_center_coordinates[1] #kwargs['dec_source']
@@ -662,13 +793,16 @@ class lenstronomy_model :
                 PlotWidget.addItem(PlotWidget.last_roi)
 
                 params = ['amp', 'dpos']
-                attach_sliders(PlotWidget, params)
+                attach_sliders(PlotWidget, params, size_sliders_scaling=PlotWidget.size_sliders_scaling)
 
                 amp_val = kwargs.get('source_amp', kwargs.get('amp'))
                 if amp_val is not None and 'amp' in PlotWidget.last_roi.sliders :
                     PlotWidget.last_roi.sliders['amp'].vmid = amp_val
 
                 self._apply_bounds_if_present(PlotWidget.last_roi, 'kwargs_source_ps', i, plot_widget=PlotWidget)
+                self._apply_fixed_if_present(PlotWidget.last_roi, 'kwargs_source_ps', i)
+
+        self._kwargs_name_to_send = None
     
     
     def _make_source_array(self, source_resolution=1000) :
@@ -758,345 +892,46 @@ class lenstronomy_model :
                                                 #kwargs_lens_light=kwargs_light_lens,
                                                 kwargs_lens=self.local[kwargs_name]['kwargs_lens'], unconvolved=False)
         return image_array
+    
+    def optimize(self, fitting_kwargs_list=None) :
+        fitting_kwargs_list = getattr(self.imsim, 'fitting_kwargs_list', None) if fitting_kwargs_list is None else fitting_kwargs_list
+        lm_dict_opt = copy.deepcopy(self.local)
+        if 'kwargs_opt' in lm_dict_opt :
+            del lm_dict_opt['kwargs_opt']
+        if 'kwargs_MCMC' in lm_dict_opt :
+            del lm_dict_opt['kwargs_MCMC']
+        self.imsim.optimize(fitting_kwargs_list=fitting_kwargs_list, lm_dict_opt=lm_dict_opt)
 
-    def make_latex(self, ref=None, pc=True, uncertainty='hpd', flux_per_amp=None, flux_unit=None):
-        """Return (and print) a LaTeX table of all light-model component parameters.
 
-        When ``kwargs_MCMC`` is present, each cell shows the central value with
-        asymmetric uncertainties ``$v^{+hi}_{-lo}$``.  The method used depends
-        on ``uncertainty``:
+    def make_lens_table(self, columns=None) :
+        self.lens_table, self.lens_columns = make_lm_table(self, kwargs_name_list=['kwargs_lens'], columns=columns)
+        return self.lens_table, self.lens_columns
 
-        * ``'hpd'`` *(default)* – centre is the best-fit (``kwargs_opt``);
-          bounds are the 68.3 % Highest Posterior Density interval of the MCMC
-          chain.
-        * ``'median'`` – centre is the MCMC median (50th percentile); bounds
-          are the 16th and 84th percentiles.  When ``ref`` is an integer index
-          the reference position is also taken from the MCMC median of that
-          component (not the best-fit).
+    def make_source_table(self, columns=None) :
+        self.source_table, self.source_columns = make_lm_table(self, kwargs_name_list=['kwargs_source', 'kwargs_source_ps'], columns=columns)
+        return self.source_table, self.source_columns
+    
+    def make_table(self, kwargs_name_list=['kwargs_lens', 'kwargs_source', 'kwargs_source_ps'], columns=None) :
+        self.table, self.columns = make_lm_table(self, kwargs_name_list=kwargs_name_list, columns=columns)
+        return self.table, self.columns
 
-        Parameters are not MCMC-sampled fall back to the plain point estimate.
+    def make_lens_latex(self, columns=None, uncertainty='best', deluxetable=True) :
+        if getattr(self, 'lens_table', None) is None :
+            return make_lm_LaTeX(self, kwargs_name_list=['kwargs_lens'], columns=columns, uncertainty=uncertainty, deluxetable=deluxetable)
+        else :
+            return table_to_LaTeX_str(self.lens_table, columns=self.lens_columns, uncertainty=uncertainty, deluxetable=deluxetable)
 
-        Parameters
-        ----------
-        ref : None, tuple, or int
-            * ``None``  – coordinates are left as-is (arcsec relative to the
-              image-cutout centre; no unit conversion is applied).
-            * ``(ra, dec)`` – world coordinates (degrees) used as the origin;
-              each component's position is expressed relative to this point.
-            * ``int``   – index into the combined list of components (source
-              light models first, then point-source models); the position of
-              that component becomes the origin.
-        pc : bool
-            When ``ref`` is not ``None``, convert the relative arcsec offsets
-            to parsecs using ``imsim.z_source`` and the default cosmology.
-            Has no effect when ``ref=None``.
-        uncertainty : {'hpd', 'median'}
-            Method used to derive uncertainties from the MCMC chain.
+    def make_source_latex(self, columns=None, uncertainty='best', deluxetable=True) :
+        if getattr(self, 'source_table', None) is None :
+            return make_lm_LaTeX(self, kwargs_name_list=['kwargs_source', 'kwargs_source_ps'], columns=columns, uncertainty=uncertainty, deluxetable=deluxetable)
+        else :
+            return table_to_LaTeX_str(self.source_table, columns=self.source_columns, uncertainty=uncertainty, deluxetable=deluxetable)
 
-        Returns
-        -------
-        str  – the complete LaTeX ``table`` environment as a string.
-        """
-        if uncertainty not in ('hpd', 'median'):
-            raise ValueError(f"uncertainty must be 'hpd' or 'median', got {uncertainty!r}")
-        
-        cosmo = get_cosmo()
-        z = self.imsim.z_source
-        
-        if flux_unit is None :
-            if 'BUNIT' in self.imsim.individual_filter.header :
-                flux_unit = self.imsim.individual_filter.header['BUNIT']
-            else :
-                flux_unit = 'arbitrary units'
-        flux_per_amp = 1. if flux_per_amp is None else flux_per_amp
-        
-        kwargs_key = 'kwargs_opt' if 'kwargs_opt' in self.local else 'kwargs'
-        kw_block = self.local[kwargs_key]
-        models = self.local['models']
-
-        # --- collect all components as (kind, local_index, model_name, kwargs) ---
-        components = []
-        for i, model in enumerate(models.get('source_light_model_list', [])):
-            components.append(('src', i, model, dict(kw_block['kwargs_source'][i])))
-        for i, model in enumerate(models.get('point_source_model_list', [])):
-            components.append(('ps', i, model, dict(kw_block['kwargs_source_ps'][i])))
-
-        # --- MCMC samples (optional) ---
-        mcmc_block = self.local.get('kwargs_MCMC')
-        mcmc_src   = (mcmc_block or {}).get('kwargs_source',    [])
-        mcmc_ps    = (mcmc_block or {}).get('kwargs_source_ps', [])
-
-        def _mcmc_kw(kind, idx):
-            """Return the MCMC kwargs dict for this component, or None."""
-            if mcmc_block is None:
-                return None
-            pool = mcmc_src if kind == 'src' else mcmc_ps
-            return pool[idx] if idx < len(pool) else None
-
-        def _samples(mcmc_kw, col):
-            """Return a 1-D float array of MCMC samples for ``col``, or None."""
-            if mcmc_kw is None:
-                return None
-            keys = ('amp', 'source_amp') if col == 'amp' else (col,)
-            for k in keys:
-                if k in mcmc_kw:
-                    arr = np.asarray(mcmc_kw[k], dtype=float).ravel()
-                    if arr.size > 1:
-                        return arr
-            return None
-
-        # --- resolve reference position in local arcsec ---
-        do_offset = ref is not None
-        ref_x, ref_y = 0.0, 0.0
-
-        if isinstance(ref, (tuple, list)):
-            ref_x, ref_y = world_to_relative(ref[0], ref[1], self.imsim.center_world)
-        elif isinstance(ref, int):
-            if ref < 0 or ref >= len(components):
-                raise IndexError(
-                    f"ref={ref} is out of range for {len(components)} component(s)."
-                )
-            ref_kind, ref_idx, _, kw_ref = components[ref]
-            ref_x = float(kw_ref.get('center_x', kw_ref.get('ra_source', 0.0)))
-            ref_y = float(kw_ref.get('center_y', kw_ref.get('dec_source', 0.0)))
-            # For the median method, override with the MCMC median position
-            if uncertainty == 'median' and mcmc_block is not None:
-                ref_mk = _mcmc_kw(ref_kind, ref_idx)
-                for raw_key, alt_key, attr in (
-                    ('center_x', 'ra_source',  'ref_x'),
-                    ('center_y', 'dec_source', 'ref_y'),
-                ):
-                    samp = _samples(ref_mk, raw_key)
-                    if samp is None:
-                        samp = _samples(ref_mk, alt_key)
-                    if samp is not None:
-                        if attr == 'ref_x':
-                            ref_x = float(np.median(samp))
-                        else:
-                            ref_y = float(np.median(samp))
-        elif ref is not None:
-            raise TypeError(f"ref must be None, a (ra, dec) tuple, or an int; got {type(ref)}")
-
-        # arcsec → pc scale factor (used for both coordinate offsets and size params)
-        _pc_scale    = float(arcsec_to_kpc(1.0, z).value) * 1000.0 if pc else 1.0
-        _coord_scale = _pc_scale if do_offset else 1.0
-
-        coord_unit   = 'pc' if (do_offset and pc) else 'arcsec'
-        size_unit    = 'pc' if pc else 'arcsec'
-        coord_prefix = r'$\Delta$' if do_offset else ''
-        x_header = rf'{coord_prefix}$x$ [{coord_unit}]'
-        y_header = rf'{coord_prefix}$y$ [{coord_unit}]'
-
-        # --- parameter display order and LaTeX header names ---
-        _latex_name = {
-            'flux':     f'Flux density [{flux_unit}]',
-            'ab_mag':   r'$m_{\rm AB}$',
-            'size':     f'sigma or R_sersic [{size_unit}]',
-            'n_sersic': r'$n$',
-            'e1':       r'$e_1$',
-            'e2':       r'$e_2$',
-            'q':        r'$q$',
-            'phi':      r'$\phi$',
-            'r':        rf'{coord_prefix}$r$ [{coord_unit}]',
-        }
-        _param_order = ['flux', 'ab_mag', 'size', 'n_sersic', 'e1', 'e2', 'q', 'phi']
-        _amp_aliases = {'source_amp'}
-        _size_keys   = {'R_sersic', 'sigma'}   # angular sizes converted alongside coords
-        _coord_keys  = {'center_x', 'center_y', 'ra_source', 'dec_source'}
-
-        # --- formatters ---
-        def _fmt(v):
-            if isinstance(v, (float, np.floating)):
-                return f'{float(v):.4g}'
-            if isinstance(v, (int, np.integer)):
-                return str(int(v))
-            return str(v).replace('_', r'\_')
-
-        def _hpd(samples, credible_level=0.6827):
-            """Return the shortest interval containing ``credible_level`` of the samples."""
-            s = np.sort(samples)
-            n = len(s)
-            n_in = max(1, int(np.floor(credible_level * n)))
-            if n_in >= n:
-                return s[0], s[-1]
-            widths  = s[n_in:] - s[:n - n_in]
-            i_min   = int(np.argmin(widths))
-            return float(s[i_min]), float(s[i_min + n_in])
-
-        def _fmt_unc(val, lo, hi):
-            """Format ``val +hi / -lo`` with precision set by the uncertainty."""
-            ref_unc = min(lo, hi)
-            if ref_unc <= 0:
-                return _fmt(val)
-            mag      = math.floor(math.log10(ref_unc))
-            decimals = max(0, 1 - mag)          # 2 sig figs on the uncertainty
-            fs = f'.{decimals}f'
-            return (rf'${val:{fs}}^{{+{hi:{fs}}}}_{{-{lo:{fs}}}}$')
-
-        def _cell_from_samples(samples, point_val):
-            """Format a cell using the chosen uncertainty method, or plain point estimate."""
-            if samples is None:
-                return _fmt(point_val)
-            if uncertainty == 'median':
-                p16, p50, p84 = np.percentile(samples, [16, 50, 84])
-                return _fmt_unc(p50, p50 - p16, p84 - p50)
-            else:  # 'hpd'
-                v = float(point_val)
-                hpd_lo, hpd_hi = _hpd(samples)
-                return _fmt_unc(v, v - hpd_lo, hpd_hi - v)
-
-        # --- build table rows ---
-        table_rows = []
-        extra_cols_seen = []
-        extra_cols_set  = set()
-
-        for kind, idx, model, kw in components:
-            mk = _mcmc_kw(kind, idx)
-
-            cx = float(kw.get('center_x', kw.get('ra_source', 0.0)))
-            cy = float(kw.get('center_y', kw.get('dec_source', 0.0)))
-
-            # Coordinate cells (with possible MCMC)
-            coord_data = {}
-            for coord_key, raw_val, ref_val, col in (
-                ('center_x', cx, ref_x, 'x'),
-                ('center_y', cy, ref_y, 'y'),
-            ):
-                point_out = (raw_val - ref_val) * _coord_scale
-                samp_raw  = _samples(mk, coord_key) if mk is not None else None
-                if samp_raw is None and mk is not None:
-                    # try the alternate coordinate key name
-                    alt = 'ra_source' if coord_key == 'center_x' else 'dec_source'
-                    samp_raw = _samples(mk, alt)
-                samp_out = (samp_raw - ref_val) * _coord_scale if samp_raw is not None else None
-                if samp_out is not None:
-                    # HPD: centre on best-fit; median: centre on sample median (point_out unused)
-                    center = point_out if uncertainty == 'hpd' else None
-                    cell = _cell_from_samples(samp_out, center)
-                else:
-                    cell = _fmt(point_out)
-                coord_data[col] = {
-                    'cell': cell,
-                    'point': float(point_out),
-                    'samples': samp_out,
-                }
-
-            row = {
-                '_type': model.replace('_', r'\_'),
-                'x': coord_data['x']['cell'],
-                'y': coord_data['y']['cell'],
-            }
-            if do_offset:
-                x_point = coord_data['x']['point']
-                y_point = coord_data['y']['point']
-                x_samp = coord_data['x']['samples']
-                y_samp = coord_data['y']['samples']
-                r_point = float(np.hypot(x_point, y_point))
-                r_samp = None
-                if x_samp is not None and y_samp is not None:
-                    n = min(len(x_samp), len(y_samp))
-                    if n > 1:
-                        r_samp = np.hypot(x_samp[:n], y_samp[:n])
-                elif x_samp is not None and len(x_samp) > 1:
-                    r_samp = np.hypot(x_samp, y_point)
-                elif y_samp is not None and len(y_samp) > 1:
-                    r_samp = np.hypot(x_point, y_samp)
-                center = r_point if uncertainty == 'hpd' else None
-                row['r'] = _cell_from_samples(r_samp, center)
-
-            for k, v in kw.items():
-                if k in _coord_keys:
-                    continue
-                col = 'flux' if k in _amp_aliases or k == 'amp' else k
-                if col == 'flux':
-                    scaled_v    = float(v) * flux_per_amp
-                    samp        = _samples(mk, 'amp')
-                    scaled_samp = samp * flux_per_amp if samp is not None else None
-                    row[col] = _cell_from_samples(scaled_samp, scaled_v)
-                    if flux_unit == 'nJy':
-                        if scaled_v > 0:
-                            mag_v = 31.4 - 2.5 * np.log10(scaled_v)
-                            mag_samp = None
-                            if scaled_samp is not None:
-                                pos = scaled_samp[scaled_samp > 0]
-                                if pos.size > 1:
-                                    mag_samp = 31.4 - 2.5 * np.log10(pos)
-                            center = mag_v if uncertainty == 'hpd' else None
-                            row['ab_mag'] = _cell_from_samples(mag_samp, center)
-                        else:
-                            row['ab_mag'] = '--'
-                elif col in _size_keys:
-                    scaled_v    = float(v) * _pc_scale
-                    samp        = _samples(mk, col)
-                    scaled_samp = samp * _pc_scale if samp is not None else None
-                    row['size'] = _cell_from_samples(scaled_samp, scaled_v)
-                else:
-                    row[col] = _cell_from_samples(_samples(mk, col), v)
-                out_col = 'size' if col in _size_keys else col
-                if out_col not in extra_cols_set and out_col not in {'x', 'y'}:
-                    extra_cols_seen.append(out_col)
-                    extra_cols_set.add(out_col)
-                if col == 'flux' and flux_unit == 'nJy' and 'ab_mag' not in extra_cols_set:
-                    extra_cols_seen.append('ab_mag')
-                    extra_cols_set.add('ab_mag')
-
-            table_rows.append(row)
-
-        # --- ordered non-coordinate param columns ---
-        param_cols = [k for k in _param_order if k in extra_cols_set]
-        leftover   = [k for k in extra_cols_seen if k not in set(_param_order)]
-        param_cols += leftover
-
-        all_col_keys  = ['_type', 'x', 'y'] + (['r'] if do_offset else []) + param_cols
-        all_col_heads = [
-            'Type', x_header, y_header,
-        ] + ([_latex_name['r']] if do_offset else []) + [_latex_name.get(k, k.replace('_', r'\_')) for k in param_cols]
-
-        ncols    = len(all_col_keys)
-        col_spec = 'l' + 'r' * (ncols - 1)
-
-        # --- assemble LaTeX ---
-        lines = [
-            r'\begin{table}[h]',
-            r'\centering',
-            rf'\begin{{tabular}}{{{col_spec}}}',
-            r'\hline\hline',
-            ' & '.join(all_col_heads) + r' \\',
-            r'\hline',
-        ]
-
-        for row in table_rows:
-            cells = [row.get(k, '--') for k in all_col_keys]
-            lines.append(' & '.join(cells) + r' \\')
-
-        lines.append(r'\hline')
-        lines.append(r'\end{tabular}')
-
-        # caption / note
-        if isinstance(ref, (tuple, list)):
-            note = (
-                rf'Coordinates relative to '
-                rf'$(\alpha,\delta)=({ref[0]:.6f}^\circ,\,{ref[1]:.6f}^\circ)$.'
-            )
-        elif isinstance(ref, int):
-            note = rf'Coordinates relative to component {ref} ({components[ref][2]}).'
-        else:
-            note = 'Coordinates in arcsec relative to the image-cutout centre.'
-        if mcmc_block is not None:
-            if uncertainty == 'hpd':
-                note += (r' Central values are best-fit (kwargs\_opt); '
-                         r'uncertainties are 68.3\,\% HPD intervals.')
-            else:
-                note += (r' Central values are MCMC medians; '
-                         r'uncertainties are 16th/84th percentiles.')
-
-        lines.append(rf'\caption{{{note}}}')
-        lines.append(r'\end{table}')
-
-        latex = '\n'.join(lines)
-        print(latex)
-        return latex
-
+    def make_latex(self, kwargs_name_list=['kwargs_lens', 'kwargs_source', 'kwargs_source_ps'], columns=None, uncertainty='best', deluxetable=True) :
+        if getattr(self, 'table', None) is None :
+            return make_lm_LaTeX(self, kwargs_name_list=kwargs_name_list, columns=columns, uncertainty=uncertainty, deluxetable=deluxetable)
+        else :
+            return table_to_LaTeX_str(self.table, columns=self.columns, uncertainty=uncertainty, deluxetable=deluxetable)
 
 
 def make_model_path(path) :

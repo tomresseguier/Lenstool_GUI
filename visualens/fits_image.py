@@ -295,11 +295,11 @@ class fits_image :
     
     
         
-    def import_lenstool(self, model_dir, use_wrapper=None, compute_predictions=True) :
+    def import_lenstool(self, model_dir, use_wrapper=None, compute_predictions=True, verbose=True) :
         #self.lt_dir = model_dir
         #if hasattr(self, 'lt'):
         #    del self.lt
-        self.lt = lenstool_model(model_dir, self, use_wrapper=use_wrapper, compute_predictions=compute_predictions)
+        self.lt = lenstool_model(model_dir, self, use_wrapper=use_wrapper, compute_predictions=compute_predictions, verbose=verbose)
     
     
     

@@ -13,7 +13,7 @@ class TripleSlider(pg.GraphicsObject):
     valuesChanged = pyqtSignal(float, float, float)  # min, mid, max
     def __init__(self, min_range=0, max_range=10, label=None, above_text=None,
                  PlotWidget=None, roi=None, offset=0., log_scale=False,
-                 single_handle=False, roi_link_mode=None) :
+                 single_handle=False, roi_link_mode=None, roi_link_size_scale=1.) :
         super().__init__()
         #self.debug = 0
         self.param_name = label
@@ -31,8 +31,11 @@ class TripleSlider(pg.GraphicsObject):
         self.log_scale = log_scale
         # If True, only the middle handle (vmid) is shown and draggable
         self.single_handle = single_handle
+        # If True, the slider keeps vmin/vmax fixed and only vmid is interactive.
+        self.fixed = False
         # None, or 'link_size' | 'link_ratio' | 'link_angle' | 'link_box' from slider_init_dict
         self.roi_link_mode = roi_link_mode
+        self.roi_link_size_scale = roi_link_size_scale
 
         self.vmin = min_range
         self.vmid = (min_range + max_range) / 2 if not log_scale else 10**((np.log10(min_range) + np.log10(max_range)) / 2)
@@ -99,6 +102,17 @@ class TripleSlider(pg.GraphicsObject):
             metrics = QFontMetricsF(self._label_font)
             self._label_width = metrics.horizontalAdvance(self.label_str)
             self.bounding_width += self._label_width
+            self._fixed_text = "fixed"
+            self._fixed_font = QFont()
+            self._fixed_font.setPointSizeF(10)
+            self._fixed_font_bold = QFont(self._fixed_font)
+            self._fixed_font_bold.setBold(True)
+            fixed_metrics = QFontMetricsF(self._fixed_font)
+            self._fixed_text_width = fixed_metrics.horizontalAdvance(self._fixed_text)
+            self._fixed_text_height = fixed_metrics.height()
+            self._fixed_pad_x = 6.0
+            self._fixed_pad_y = 2.0
+            self._fixed_gap_below_label = 2.0
             
             
         self._value_font = QFont()
@@ -130,12 +144,12 @@ class TripleSlider(pg.GraphicsObject):
 
         if mode == "link_size":
             if tg == "CIRCLE1":
-                new_vmid = abs(self.roi.size()[0])
+                new_vmid = abs(self.roi.size()[0]) * self.roi_link_size_scale
             elif tg == "CIRCLE2":
-                new_vmid = abs(self.roi.size()[0]) / 2.0
+                new_vmid = abs(self.roi.size()[0]) / 2.0 * self.roi_link_size_scale
             elif tg == "ELLIPSE":
                 _, _, semi_major, semi_minor, _ = transform_ROI_params(self.roi)
-                new_vmid = np.sqrt(semi_major * semi_minor)
+                new_vmid = np.sqrt(semi_major * semi_minor) * self.roi_link_size_scale
             else:
                 return
         elif mode == "link_ratio":
@@ -179,9 +193,9 @@ class TripleSlider(pg.GraphicsObject):
 
         if mode == "link_size":
             if tg == "CIRCLE1":
-                new_radius = float(self.vmid) / 2.0
+                new_radius = float(self.vmid) / 2.0 / self.roi_link_size_scale
             elif tg in ("CIRCLE2", "ELLIPSE"):
-                new_radius = float(self.vmid)
+                new_radius = float(self.vmid) / self.roi_link_size_scale
             else:
                 return
         elif mode == "link_ratio":
@@ -410,6 +424,21 @@ class TripleSlider(pg.GraphicsObject):
         
         return v
 
+    def _show_only_mid_handle(self):
+        return self.single_handle or self.fixed
+
+    def _fixed_button_rect_text_coords(self):
+        if not hasattr(self, "_fixed_text"):
+            return None
+        text_x = self._left_pad_frac*self.slider_width/2
+        bar_left = self._label_width + self.slider_width * self._left_pad_frac
+        bar_bottom = self.bounding_height - self.slider_height * (1 + self._bar_height_frac)/2
+        label_baseline_y = -bar_bottom
+        button_top_y = label_baseline_y + self._fixed_gap_below_label
+        button_h = self._fixed_text_height + 2 * self._fixed_pad_y
+        button_w = self._fixed_text_width + 2 * self._fixed_pad_x
+        return QRectF(text_x - self._fixed_pad_x, button_top_y, button_w, button_h)
+
     def paint(self, p, *_):
         # Draw background
         p.setBrush(QColor(200, 200, 255))
@@ -431,7 +460,7 @@ class TripleSlider(pg.GraphicsObject):
         handle_bottom = self.bounding_height - self.slider_height/2 - handle_height/2
 
         p.setPen(Qt.NoPen)
-        handles = (self.vmid,) if self.single_handle else (self.vmin, self.vmid, self.vmax)
+        handles = (self.vmid,) if self._show_only_mid_handle() else (self.vmin, self.vmid, self.vmax)
         for v in handles:
             x = self.val_to_x(v)
             p.setBrush(QBrush(self._mid_color if v == self.vmid else self._handle_color))
@@ -446,7 +475,7 @@ class TripleSlider(pg.GraphicsObject):
         metrics = QFontMetricsF(self._value_font)
         
         for i, v in enumerate(handles) :
-            show_value_mid = (i==1 or self.single_handle) and not (self.dragging == "min" or self.dragging == "max")
+            show_value_mid = (i==1 or self._show_only_mid_handle()) and not (self.dragging == "min" or self.dragging == "max")
             show_value_minmax = (i==0 and self.dragging == "min") or (i==2 and self.dragging == "max")
             show_value = show_value_mid or show_value_minmax
             if show_value :
@@ -468,13 +497,38 @@ class TripleSlider(pg.GraphicsObject):
         text_x = self._left_pad_frac*self.slider_width/2
         text_y = -bar_bottom
         p.drawText(QPointF(text_x, text_y), self.label_str)
+
+        # Draw the "fixed" toggle under the parameter label.
+        fixed_rect = self._fixed_button_rect_text_coords()
+        if fixed_rect is not None:
+            if self.fixed:
+                p.setPen(QPen(QColor(140, 140, 170), 1))
+                p.setBrush(QBrush(QColor(235, 235, 255)))
+                p.drawRoundedRect(fixed_rect, 4, 4)
+                p.setFont(self._fixed_font_bold)
+            else:
+                p.setFont(self._fixed_font)
+            p.setPen(QColor(60, 60, 90))
+            text_pt = QPointF(fixed_rect.left() + self._fixed_pad_x, fixed_rect.top() + self._fixed_pad_y + self._fixed_text_height * 0.8)
+            p.drawText(text_pt, self._fixed_text)
         
         p.restore()
         
         
     def mousePressEvent(self, e) :
         pos = e.pos()
-        if self.single_handle:
+
+        fixed_rect = self._fixed_button_rect_text_coords()
+        if fixed_rect is not None:
+            pos_text = QPointF(pos.x(), -pos.y())
+            if fixed_rect.contains(pos_text):
+                self.fixed = not self.fixed
+                self.dragging = None
+                self.update()
+                e.accept()
+                return
+
+        if self._show_only_mid_handle():
             self.dragging = "mid"
         else:
             dist = {"min": abs(self.val_to_x(self.vmin) - pos.x()),

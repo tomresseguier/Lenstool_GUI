@@ -104,14 +104,13 @@ class ImageFilter(QObject) :
         vb = _get_view(image_view)
         data_pos = vb.mapSceneToView(scene_pos)
         x = int(np.floor(data_pos.x()))
-        y_plot = int(np.floor(data_pos.y()))
+        y = int(np.floor(data_pos.y()))
         h, w = data.shape[:2]
-        if x < 0 or x >= w or y_plot < 0 or y_plot >= h:
+        if x < 0 or x >= w or y < 0 or y >= h:
             text_item.hide()
             return
 
         # Images are displayed flipped in y (data[::-1, :]); convert plotted y to array row.
-        y = h - 1 - y_plot
         val = data[y, x]
         if np.ndim(val) == 0:
             value_str = f"{float(val):.4g}"

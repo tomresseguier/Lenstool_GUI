@@ -35,7 +35,7 @@ def make_lm_dict(imsim) :
             }
             imsim.LensModel_kwargs.append(to_add)
 
-    imsim.LensModel = LensModel(lens_model_list=imsim.LensModel_list)
+    imsim.LensModel = LensModel(lens_model_list=imsim.LensModel_list, z_lens=imsim.fits_image.lt.z_lens, z_source=imsim.z_source)
     # Might be useful at some point to shift the source plane widget by the new source center coordinates for the curent lens model
     imsim.source_center_coordinates_new = imsim.LensModel.ray_shooting(0.0, 0.0, imsim.LensModel_kwargs)
 
@@ -103,6 +103,20 @@ def make_lm_dict(imsim) :
 
 def make_lm_dict_opt(imsim, N_sigma=6.) :
     lm_dict_opt = make_lm_dict(imsim)
+
+    def _position_is_fixed(roi):
+        _, sbox = _roi_link_box_slider(roi)
+        return bool(sbox is not None and getattr(sbox, "fixed", False))
+
+    def _get_param_slider(roi, param_name):
+        slider_name = 'amp' if param_name == 'source_amp' else param_name
+        return getattr(roi, "sliders", {}).get(slider_name, None)
+
+    def _param_is_fixed(roi, param_name):
+        if param_name in ('center_x', 'center_y', 'ra_source', 'dec_source'):
+            return _position_is_fixed(roi)
+        s = _get_param_slider(roi, param_name)
+        return bool(s is not None and getattr(s, "fixed", False))
     
     """ Lens models """
     roi_indices = np.where( [roi.type != 'LENS_LIGHT_MODEL' for roi in imsim.image_plane_rgb.roi_list] )[0]
@@ -127,20 +141,18 @@ def make_lm_dict_opt(imsim, N_sigma=6.) :
             kwargs_sigma = {}
             kwargs_init = {}
             
-            fixed_params = []#['center_x', 'center_y']                    
             opt_params = lm_dict_opt['kwargs']['kwargs_lens'][i].keys()
-            
-            for param in fixed_params :
-                opt_params.remove(param)
-            for param in fixed_params :
-                kwargs_fixed[param] = kwargs[param]
+            roi = imsim.image_plane_rgb.roi_list[roi_indices[i-1]]
             for param in opt_params :
+                if _param_is_fixed(roi, param):
+                    kwargs_fixed[param] = kwargs[param]
+                    continue
                 if param in ['center_x', 'center_y'] :
-                    _, sbox = _roi_link_box_slider(imsim.image_plane_rgb.roi_list[roi_indices[i-1]])
+                    _, sbox = _roi_link_box_slider(roi)
                     dpos = sbox.vmid
                     v = kwargs[param]
-                    kwargs_lower[param] = v - dpos * imsim.fits_image.pix_deg_scale*3600
-                    kwargs_upper[param] = v + dpos * imsim.fits_image.pix_deg_scale*3600
+                    kwargs_lower[param] = v - dpos # * imsim.fits_image.pix_deg_scale*3600
+                    kwargs_upper[param] = v + dpos # * imsim.fits_image.pix_deg_scale*3600
                     kwargs_sigma[param] = 2*dpos/N_sigma
                     kwargs_init[param] = v
                 #elif param in ['e1', 'e2'] :
@@ -148,8 +160,8 @@ def make_lm_dict_opt(imsim, N_sigma=6.) :
                 #    kwargs_upper[param] = 1.
                 #    kwargs_sigma[param] = 2/N_sigma
                 else : # param in ['q', 'phi'] :
-                    vmax = imsim.image_plane_rgb.roi_list[ roi_indices[i-1] ].sliders[param].vmax
-                    vmin = imsim.image_plane_rgb.roi_list[ roi_indices[i-1] ].sliders[param].vmin
+                    vmax = roi.sliders[param].vmax
+                    vmin = roi.sliders[param].vmin
                     kwargs_lower[param] = vmin
                     kwargs_upper[param] = vmax
                     kwargs_sigma[param] = (vmax - vmin) / N_sigma
@@ -178,16 +190,14 @@ def make_lm_dict_opt(imsim, N_sigma=6.) :
         kwargs_sigma = {}
         kwargs_init = {}
         
-        fixed_params = []#['center_x', 'center_y']                    
         opt_params = lm_dict_opt['kwargs']['kwargs_source'][i].keys()
-        
-        for param in fixed_params :
-            opt_params.remove(param)
-        for param in fixed_params :
-            kwargs_fixed[param] = kwargs[param]
+        roi = imsim.source_plane_widget.roi_list[roi_indices[i]]
         for param in opt_params :
+            if _param_is_fixed(roi, param):
+                kwargs_fixed[param] = kwargs[param]
+                continue
             if param in ['center_x', 'center_y'] :
-                _, sbox = _roi_link_box_slider(imsim.source_plane_widget.roi_list[roi_indices[i]])
+                _, sbox = _roi_link_box_slider(roi)
                 dpos = sbox.vmid
                 v = kwargs[param]
                 kwargs_lower[param] = v - dpos
@@ -199,8 +209,8 @@ def make_lm_dict_opt(imsim, N_sigma=6.) :
             #    kwargs_upper[param] = 1.
             #    kwargs_sigma[param] = 2/N_sigma
             else : # param in ['q', 'phi'] :
-                vmax = imsim.source_plane_widget.roi_list[ roi_indices[i] ].sliders[param].vmax
-                vmin = imsim.source_plane_widget.roi_list[ roi_indices[i] ].sliders[param].vmin
+                vmax = roi.sliders[param].vmax
+                vmin = roi.sliders[param].vmin
                 kwargs_lower[param] = vmin
                 kwargs_upper[param] = vmax
                 kwargs_sigma[param] = (vmax - vmin) / N_sigma
@@ -229,16 +239,14 @@ def make_lm_dict_opt(imsim, N_sigma=6.) :
         kwargs_sigma = {}
         kwargs_init = {}
         
-        fixed_params = []#['center_x', 'center_y']                    
         opt_params = lm_dict_opt['kwargs']['kwargs_source_ps'][i].keys()
-        
-        for param in fixed_params :
-            opt_params.remove(param)
-        for param in fixed_params :
-            kwargs_fixed[param] = kwargs[param]
+        roi = imsim.source_plane_widget.roi_list[roi_indices[i]]
         for param in opt_params :
+            if _param_is_fixed(roi, param):
+                kwargs_fixed[param] = kwargs[param]
+                continue
             if param in ['ra_source', 'dec_source'] :
-                _, sbox = _roi_link_box_slider(imsim.source_plane_widget.roi_list[roi_indices[i]])
+                _, sbox = _roi_link_box_slider(roi)
                 dpos = sbox.vmid
                 v = kwargs[param]
                 kwargs_lower[param] = v - dpos
@@ -247,9 +255,9 @@ def make_lm_dict_opt(imsim, N_sigma=6.) :
                 kwargs_init[param] = v
             else : # Here only source_amp
                 param_slider = 'amp' if param=='source_amp' else param
-                vmax = imsim.source_plane_widget.roi_list[ roi_indices[i] ].sliders[param_slider].vmax
-                vmin = imsim.source_plane_widget.roi_list[ roi_indices[i] ].sliders[param_slider].vmin
-                vmid = imsim.source_plane_widget.roi_list[ roi_indices[i] ].sliders[param_slider].vmid
+                vmax = roi.sliders[param_slider].vmax
+                vmin = roi.sliders[param_slider].vmin
+                vmid = roi.sliders[param_slider].vmid
                 kwargs_lower[param] = vmin
                 kwargs_upper[param] = vmax
                 kwargs_sigma[param] = (vmax + vmin)/N_sigma

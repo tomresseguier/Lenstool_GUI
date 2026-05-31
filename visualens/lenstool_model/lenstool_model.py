@@ -1011,63 +1011,101 @@ class lenstool_model :
         self.lt.set_field([xr_left, xr_right, yr_bottom, yr_top])
         
     
-    def compute_uncertainties(self, nsamples=None) :
+    def compute_uncertainties(self, nsamples=None, recompute_samples=False) :
         self.samples_dir = os.path.join(self.model_dir, 'samples')
         if not os.path.exists(self.samples_dir) :
             self._vprint('Creating samples directory')
             os.makedirs(self.samples_dir)
-        if not os.path.exists(os.path.join(self.samples_dir, os.path.basename(self.mult_path))) :
-            self._vprint('Overwriting mult file in samples directory')
+        
+        lensing_columns = [ 'magnification', 
+                            'convergence', 
+                            'shear', 
+                            'gamma1', 
+                            'gamma2', 
+                            'time', 
+                            'tangential_magnification', 
+                            'radial_magnification', 
+                            'ra_source', 
+                            'dec_source',
+                            'z_opt' ]
+        
+        samples_dict_path = os.path.join(self.samples_dir, 'samples_dict.pkl')
+        if os.path.exists(samples_dict_path) and not recompute_samples :
+            self._vprint('Loading samples dictionary from ' + samples_dict_path)
+            with open(samples_dict_path, 'rb') as f :
+                self.samples_dict = pickle.load(f)
+
         else :
-            self._vprint('Copying mult file to samples directory')
-        shutil.copy2(self.mult_path, self.samples_dir)
-        
-        nsamples = len(self.samples_df.index) if nsamples is None else nsamples
-        
-        lensing_columns = ['magnification', 'convergence', 'shear', 'gamma1', 'gamma2', 'time', 'tangential_magnification', 'radial_magnification', 'ra_source', 'dec_source']
-        self.samples_dict = {}
-        for imID in self.mult.cat['id'] :
-            self.samples_dict[imID] = {col: np.full(nsamples, np.nan) for col in lensing_columns}
-            self.samples_dict[imID]['z_opt'] = np.full(nsamples, np.nan)
+            if os.path.exists(samples_dict_path) :
+                self._vprint('Renaming previous samples dictionary to ' + samples_dict_path.replace('.pkl', '_previous.pkl'))
+                shutil.move(samples_dict_path, samples_dict_path.replace('.pkl', '_previous.pkl'))
+
+            if os.path.exists(os.path.join(self.samples_dir, os.path.basename(self.mult_path))) :
+                self._vprint('Overwriting mult file in samples directory')
+            else :
+                self._vprint('Copying mult file to samples directory')
+            shutil.copy2(self.mult_path, self.samples_dir)
             
-        for i in tqdm(range(nsamples)) :
-            sample_file_path = write_single_sample_best_file(self, i)
-            sample_lt = import_lenstool(sample_file_path, self.fits_image, use_wrapper=True, compute_predictions=False, verbose=False)
-
-            """ Sample the redshift as well for those that were optimized """
-            for im in sample_lt.mult.cat :
-                #if not np.isnan(im['z_opt']) :
-                broad_family_members_mask = np.array([ member['broad_family']==im['broad_family'] for member in sample_lt.mult.cat ])
-                for member in sample_lt.mult.cat[broad_family_members_mask] :
-                    for col in self.samples_df.columns :
-                        if member['id'] == col[len('Redshift of '):] :
-                            #self._vprint('Sampling redshift of ' + im['id'] + ': ' + str(im['z']) + ' --> ' + str(self.samples_df[col][i]))
-                            im['z'] = self.samples_df[col][i]
-                            self.samples_dict[im['id']]['z_opt'][i] = self.samples_df[col][i]
-                            
-            """ Compute magnification etc. for the sample """
-            sample_lt.add_lensing_columns(cat=sample_lt.mult.cat)
-
-            for im in sample_lt.mult.cat :
-                for col in lensing_columns :
-                    self.samples_dict[im['id']][col][i] = im[col]
+            nsamples = len(self.samples_df.index) if nsamples is None else nsamples
+            
+            self.samples_dict = {}
+            for imID in self.mult.cat['id'] :
+                self.samples_dict[imID] = {col: np.full(nsamples, np.nan) for col in lensing_columns}
                 
-            del sample_lt
-            gc.collect()
-            os.remove(sample_file_path)
+            for i in tqdm(range(nsamples)) :
+                sample_file_path = write_single_sample_best_file(self, i)
+                sample_lt = import_lenstool(sample_file_path, self.fits_image, use_wrapper=True, compute_predictions=False, verbose=False)
 
-            if i % 10 == 0 :
-                pickle.dump(self.samples_dict, open(os.path.join(self.samples_dir, 'samples_dict.pkl'), 'wb'))
+                """ Sample the redshift as well for those that were optimized """
+                for im in sample_lt.mult.cat :
+                    #if not np.isnan(im['z_opt']) :
+                    broad_family_members_mask = np.array([ member['broad_family']==im['broad_family'] for member in sample_lt.mult.cat ])
+                    for member in sample_lt.mult.cat[broad_family_members_mask] :
+                        for col in self.samples_df.columns :
+                            if member['id'] == col[len('Redshift of '):] :
+                                self._vprint('Sampling redshift of ' + im['id'] + ': ' + str(im['z']) + ' --> ' + str(self.samples_df[col][i]))
+                                im['z'] = self.samples_df[col][i]
+                                self.samples_dict[im['id']]['z_opt'][i] = self.samples_df[col][i]
+                                
+                """ Compute magnification etc. for the sample """
+                sample_lt.add_lensing_columns(cat=sample_lt.mult.cat)
+
+                for im in sample_lt.mult.cat :
+                    for col in lensing_columns :
+                        if col != 'z_opt' :
+                            self.samples_dict[im['id']][col][i] = im[col]
+                    
+                del sample_lt
+                gc.collect()
+                os.remove(sample_file_path)
+
+                if i % 10 == 0 :
+                    pickle.dump(self.samples_dict, open(samples_dict_path, 'wb'))
+            
+            pickle.dump(self.samples_dict, open(samples_dict_path, 'wb'))
         
-        pickle.dump(self.samples_dict, open(os.path.join(self.samples_dir, 'samples_dict.pkl'), 'wb'))
-        
-        for col in lensing_columns + ['z_opt'] :
+        for col in lensing_columns :
             col_16_percentile = np.full(len(self.mult.cat), np.nan)
             col_84_percentile = np.full(len(self.mult.cat), np.nan)
             col_50_percentile = np.full(len(self.mult.cat), np.nan)
-            self.mult.cat.add_column(col_16_percentile, name=f'{col}_16_percentile')
-            self.mult.cat.add_column(col_84_percentile, name=f'{col}_84_percentile')
-            self.mult.cat.add_column(col_50_percentile, name=f'{col}_50_percentile')
+
+            name = f'{col}_16_percentile'
+            if name in self.mult.cat.colnames :
+                self.mult.cat.replace_column(name, col_16_percentile)
+            else :
+                self.mult.cat.add_column(col_16_percentile, name=name)
+
+            name = f'{col}_84_percentile'
+            if name in self.mult.cat.colnames :
+                self.mult.cat.replace_column(name, col_84_percentile)
+            else :
+                self.mult.cat.add_column(col_84_percentile, name=name)
+
+            name = f'{col}_50_percentile'
+            if name in self.mult.cat.colnames :
+                self.mult.cat.replace_column(name, col_50_percentile)
+            else :
+                self.mult.cat.add_column(col_50_percentile, name=name)
 
             for im in self.mult.cat :
                 im[f'{col}_16_percentile'] = np.percentile(self.samples_dict[im['id']][col], 16)
@@ -1138,7 +1176,7 @@ class lenstool_model :
         out_header = target_wcs.to_header()
         out_header['BUNIT'] = 'arcsec' if which_norm == 'dpl' else ''
         out_header['MAPTYPE'] = which_norm
-        
+                
         input_dir = os.path.dirname(fits_file_path)
         input_name = os.path.basename(fits_file_path)
         root_name, _ = os.path.splitext(input_name)
@@ -1150,6 +1188,25 @@ class lenstool_model :
         else :
             fits.PrimaryHDU(data=map_data, header=out_header).writeto(out_path, overwrite=True)
         self._vprint(f"Saved map to {out_path}")
+        
+        arcsec_per_pixel = target_wcs.wcs.cdelt[0] * 3600
+        def plot_source_plane_grid(dpl_maps) :
+            # Careful: this function only works when x, y match ra, dec axes
+            fig, ax = plt.subplots()
+            x, y = np.meshgrid(np.arange(0, dpl_maps[0].shape[1], 1), np.arange(0, dpl_maps[0].shape[0], 1))
+            x_im = x * arcsec_per_pixel
+            y_im = y * arcsec_per_pixel
+            x_src = x_im - dpl_maps[0]
+            y_src = y_im - dpl_maps[1]
+    
+            ax.scatter(x_src, y_src, marker = '.', sizes=[0.5], alpha=0.5)
+            ax.set_xlabel('x (arcsec)')
+            ax.set_ylabel('y (arcsec)')
+            ax.set_title('Data grid in the source plane')
+            plt.show()
+        
+        if which_norm == 'dpl' :
+            plot_source_plane_grid(map_data)
         
         return map_data, target_wcs
 
