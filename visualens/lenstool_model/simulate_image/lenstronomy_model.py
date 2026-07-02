@@ -200,7 +200,7 @@ class lenstronomy_model :
                 return True
         return False
     
-    def plot(self, source_resolution=1000, cmap='grey', with_cbar=True, axes=None, title=None, cutoff=None) :
+    def plot(self, pix_scale=0.001, size_arcsec=0.4, cmap='grey', with_cbar=True, axes=None, title=None, cutoff=None) :
         if axes is None :
             fig, axes = plt.subplots(4, 1, figsize=(4, 16), sharex=False, sharey=False)
         else :
@@ -229,7 +229,7 @@ class lenstronomy_model :
         im2 = axes[2].imshow(residuals, origin='lower', cmap='bwr', vmin=-res_abs_max, vmax=res_abs_max)
 
         """ Source plane """
-        source_array = self._make_source_array(source_resolution=source_resolution)
+        source_array = self._make_source_array(pix_scale=pix_scale, size_arcsec=size_arcsec)
         self.source_array = source_array
         #axes[3].imshow(source_array, origin='lower', cmap='inferno')
         #source_array_crop = source_array.copy()
@@ -805,7 +805,7 @@ class lenstronomy_model :
         self._kwargs_name_to_send = None
     
     
-    def _make_source_array(self, source_resolution=1000) :
+    def _make_source_array(self, pix_scale=0.001, size_arcsec=0.4) :
         LensModel_empty = LensModel(lens_model_list=[])
         LightModel_source = LightModel(light_model_list=self.local['models']['source_light_model_list'])
         PSModel_source = PointSource(point_source_type_list=self.local['models']['point_source_model_list'], fixed_magnification_list=[True for src in self.local['models']['point_source_model_list']])
@@ -818,34 +818,34 @@ class lenstronomy_model :
 
         x_list = [src['ra_source'] for src in self.local[kwargs_name]['kwargs_source_ps']] + [src['center_x'] for src in self.local[kwargs_name]['kwargs_source']]
         y_list = [src['dec_source'] for src in self.local[kwargs_name]['kwargs_source_ps']] + [src['center_y'] for src in self.local[kwargs_name]['kwargs_source']]
-        x_mean, y_mean = np.mean(x_list), np.mean(y_list)
+        #x_mean, y_mean = np.mean(x_list), np.mean(y_list)
+        x_center = (np.max(x_list) + np.min(x_list)) / 2.0
+        y_center = (np.max(y_list) + np.min(y_list)) / 2.0
         
         for i, src in enumerate(self.local[kwargs_name]['kwargs_source']) :
             offset_source.append({})
             for param in src :
                 if param=='center_x' :
-                    offset_source[i][param] = src[param] - x_mean
+                    offset_source[i][param] = src[param] - x_center
                 elif param=='center_y' :
-                    offset_source[i][param] = src[param] - y_mean
+                    offset_source[i][param] = src[param] - y_center
                 else :
                     offset_source[i][param] = src[param]
         for i, src in enumerate(self.local[kwargs_name]['kwargs_source_ps']) :
             offset_ps.append({})
             for param in src :
                 if param=='ra_source' :
-                    offset_ps[i]['ra_source'] = src[param] - x_mean
+                    offset_ps[i]['ra_source'] = src[param] - x_center
                 elif param=='dec_source' :
-                    offset_ps[i]['dec_source'] = src[param] - y_mean
+                    offset_ps[i]['dec_source'] = src[param] - y_center
                 else :
                     offset_ps[i][param] = src[param]
         
-        pix_scale = 0.001
-        extent = 0.5
         transform_pix2angle = np.array([[1, 0], [0, 1]]) * pix_scale
-        PixelGrid_kwargs = {'nx': round(extent / pix_scale),
-                            'ny': round(extent / pix_scale),
-                            'ra_at_xy_0': - extent/2,
-                            'dec_at_xy_0': - extent/2,
+        PixelGrid_kwargs = {'nx': round(size_arcsec / pix_scale),
+                            'ny': round(size_arcsec / pix_scale),
+                            'ra_at_xy_0': - size_arcsec/2,
+                            'dec_at_xy_0': - size_arcsec/2,
                             'transform_pix2angle': transform_pix2angle} 
         pixel_grid = PixelGrid(**PixelGrid_kwargs)
                     

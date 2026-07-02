@@ -85,7 +85,7 @@ def plot_image_mpl(image_data, wcs=None, deg_per_pix=None, wcs_projection=True, 
     return fig, ax
 
 
-def plot_scale_bar(ax, deg_per_pix=None, redshift=None, unit='arcmin', length=1 , color='white', linewidth=2, text_offset=0.01) :
+def plot_scale_bar(ax, deg_per_pix=None, redshift=None, unit='arcmin', length=1 , color='white', linewidth=2, text_offset=0.01, position=['bottom', 'left']) :
     """
     Plots a white bar scale indicating the length of an arcminute on a given image.
     
@@ -106,8 +106,8 @@ def plot_scale_bar(ax, deg_per_pix=None, redshift=None, unit='arcmin', length=1 
         length_deg = length / 60.
         unit = "\'"
         
-    if unit=='kpc' :
-        ang_diam_dist = cosmo.angular_diameter_distance(redshift).to('kpc').value
+    if unit in ['pc', 'kpc'] :
+        ang_diam_dist = cosmo.angular_diameter_distance(redshift).to(unit).value
         length_rad = length / ang_diam_dist
         length_deg = np.rad2deg(length_rad)
         length_arcmin = length_deg * 60.
@@ -117,9 +117,28 @@ def plot_scale_bar(ax, deg_per_pix=None, redshift=None, unit='arcmin', length=1 
     
     x_lim = ax.get_xlim()
     y_lim = ax.get_ylim()
+    
+    if position[0]=='bottom' :
+        start_y = y_lim[0] + 0.05 * np.abs(y_lim[1] - y_lim[0])
+    elif position[0]=='top' :
+        start_y = y_lim[1] - 0.05 * np.abs(y_lim[1] - y_lim[0])
+    elif type(position[0])==float :
+        start_y = y_lim[0] + position[0] * np.abs(y_lim[1] - y_lim[0])
+    else :
+        raise ValueError(f"Invalid position[0]: {position[0]}")
         
-    start_x = x_lim[0] + 0.05 * np.abs(x_lim[1] - x_lim[0])
-    start_y = y_lim[0] + 0.05 * np.abs(y_lim[1] - y_lim[0])
+    if position[1]=='left' :
+        start_x = x_lim[0] + 0.05 * np.abs(x_lim[1] - x_lim[0])
+    elif position[1]=='right' :
+        start_x = x_lim[1] - 0.05 * np.abs(x_lim[1] - x_lim[0]) - bar_length_pix
+    elif type(position[1])==float :
+        if position[1]<0.5 :
+            start_x = x_lim[0] + position[1] * np.abs(x_lim[1] - x_lim[0])
+        else :
+            start_x = x_lim[1] + position[1] * np.abs(x_lim[1] - x_lim[0]) - bar_length_pix
+    else :
+        raise ValueError(f"Invalid position[1]: {position[1]}")
+
     end_x = start_x + bar_length_pix
     
     ax.plot([start_x, end_x], [start_y, start_y], color=color, linewidth=linewidth)

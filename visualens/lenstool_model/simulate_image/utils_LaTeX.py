@@ -2,6 +2,8 @@ import numpy as np
 import math
 from astropy.table import Table
 
+from lenstronomy.LightModel.Profiles.sersic import SersicElliptic
+
 
 
 kwargs_name_to_model_name_dict = {
@@ -140,23 +142,60 @@ def make_lm_table(lm_instance, kwargs_name_list=['kwargs_source', 'kwargs_source
             id_col.append(model)
 
             param_kwargs_fixed = lm_instance.local['kwargs_fixed'][kwargs_name2][j]
-            for param in param_kwargs_fixed.keys() :
+
+            param_names = list(param_kwargs_fixed.keys())
+            for param in param_names :
                 standard_colname = _standard_colname(param)
                 if param in params_to_include :
-                    lm_table[standard_colname][i] = param_kwargs_fixed[param]
+                    # This is to handle Sérsic profiles where the amp parameter is NOT the flux, but instead the surface brightness at R_sersic
+                    if (model=='SERSIC_ELLIPSE_Q_PHI' or model=='SERSIC_ELLIPSE' or model=='SERSIC') and param=='amp' :
+                        # No need to specify ellipticity parameters as ellipticity transformation preserves area and therefore flux in lenstronomy convention
+                        profile = SersicElliptic()
+                        flux = profile.total_flux(param_kwargs_fixed['amp'], 
+                                                  param_kwargs_fixed['R_sersic'], 
+                                                  param_kwargs_fixed['n_sersic'])
+                        lm_table[standard_colname][i] = flux
+                        param_kwargs_fixed['flux'] = flux # Save the flux for later
+                    ###
+                    else :
+                        lm_table[standard_colname][i] = param_kwargs_fixed[param]
 
             param_kwargs_MCMC = lm_instance.local['kwargs_MCMC'][kwargs_name2][j]
-            for param in param_kwargs_MCMC.keys() :
+            param_names = list(param_kwargs_MCMC.keys())
+            for param in param_names :
                 standard_colname = _standard_colname(param)
                 if param in params_to_include :
-                    lm_table[standard_colname][i] = lm_instance.local['kwargs_opt'][kwargs_name2][j][param]
-                    p16, p50, p84 = np.percentile(param_kwargs_MCMC[param], [16, 50, 84])
-                    lm_table[f'{standard_colname}_16_percentile'][i] = p16
-                    lm_table[f'{standard_colname}_50_percentile'][i] = p50
-                    lm_table[f'{standard_colname}_84_percentile'][i] = p84
-                    hpd_low, hpd_high = _hpd(param_kwargs_MCMC[param])
-                    lm_table[f'{standard_colname}_hpd_low'][i] = hpd_low
-                    lm_table[f'{standard_colname}_hpd_high'][i] = hpd_high
+                    # This is to handle Sérsic profiles where the amp parameter is NOT the flux, but instead the surface brightness at R_sersic
+                    if (model=='SERSIC_ELLIPSE_Q_PHI' or model=='SERSIC_ELLIPSE' or model=='SERSIC') and param=='amp' :
+                        # No need to specify ellipticity parameters as ellipticity transformation preserves area and therefore flux in lenstronomy convention
+                        profile = SersicElliptic()
+                        flux = profile.total_flux(lm_instance.local['kwargs_opt'][kwargs_name2][j]['amp'], 
+                                                  lm_instance.local['kwargs_opt'][kwargs_name2][j]['R_sersic'], 
+                                                  lm_instance.local['kwargs_opt'][kwargs_name2][j]['n_sersic'])
+                        lm_table[standard_colname][i] = flux
+                        lm_instance.local['kwargs_opt'][kwargs_name2][j]['flux'] = flux # Save the flux for later
+
+                        flux_array = profile.total_flux(param_kwargs_MCMC['amp'], 
+                                                        param_kwargs_MCMC['R_sersic'], 
+                                                        param_kwargs_MCMC['n_sersic'])
+                        param_kwargs_MCMC['flux'] = flux_array # Save the flux for later
+                        p16, p50, p84 = np.percentile(flux_array, [16, 50, 84])
+                        lm_table[f'{standard_colname}_16_percentile'][i] = p16
+                        lm_table[f'{standard_colname}_50_percentile'][i] = p50
+                        lm_table[f'{standard_colname}_84_percentile'][i] = p84
+                        hpd_low, hpd_high = _hpd(flux_array)
+                        lm_table[f'{standard_colname}_hpd_low'][i] = hpd_low
+                        lm_table[f'{standard_colname}_hpd_high'][i] = hpd_high
+                    ###
+                    else :
+                        lm_table[standard_colname][i] = lm_instance.local['kwargs_opt'][kwargs_name2][j][param]
+                        p16, p50, p84 = np.percentile(param_kwargs_MCMC[param], [16, 50, 84])
+                        lm_table[f'{standard_colname}_16_percentile'][i] = p16
+                        lm_table[f'{standard_colname}_50_percentile'][i] = p50
+                        lm_table[f'{standard_colname}_84_percentile'][i] = p84
+                        hpd_low, hpd_high = _hpd(param_kwargs_MCMC[param])
+                        lm_table[f'{standard_colname}_hpd_low'][i] = hpd_low
+                        lm_table[f'{standard_colname}_hpd_high'][i] = hpd_high
             
             i += 1
     lm_table.add_column(id_col, name='id', index=0)

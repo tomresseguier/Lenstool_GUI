@@ -31,7 +31,9 @@ def _update_curves(imsim):
         center_y=0.0,
     )
     xr_crit_fused, yr_crit_fused = _fuse_curve_segments(xr_crit, yr_crit)
+    imsim.critical_curve_coords = (xr_crit_fused, yr_crit_fused)
     xr_caustic_fused, yr_caustic_fused = _fuse_curve_segments(xr_caustic, yr_caustic)
+    imsim.caustic_curve_coords = (xr_caustic_fused, yr_caustic_fused)
 
     #imsim.source_center_coordinates = imsim.LensModel.ray_shooting(0.0, 0.0, imsim.LensModel_kwargs)
     x_caustic = xr_caustic_fused - imsim.source_center_coordinates[0]

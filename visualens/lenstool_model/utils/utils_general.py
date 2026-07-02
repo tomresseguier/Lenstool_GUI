@@ -254,7 +254,7 @@ def import_multiple_images(lenstool_model, mult_file_path_or_cat, fits_image, un
                 plt_framework(full_tick_framework=True, ticks='out', image=True, width='full', drawscaler=0.8, tickscaler=0.5, minor_ticks=False)
     
     
-    def plot_multiple_images_column(self, text_column, which='all', color=None) :
+    def plot_multiple_images_column(self, text_column, which='all', color=None, bbox=0.2) :
         if text_column not in self.cat.colnames:
             lenstool_model._vprint(f"Column '{text_column}' not found in catalog")
             return
@@ -275,6 +275,8 @@ def import_multiple_images(lenstool_model, mult_file_path_or_cat, fits_image, un
         else :
             colors_dict = lenstool_model.mult_colors(filled_markers=False, saturation=self.saturation)
         
+        colors_dict_background = lenstool_model.mult_colors(filled_markers=False, saturation=self.saturation)
+
         for name, mask in self.masks().items() :
             #broad_family = name #self.cat['broad_family'][ np.where(self.cat['family']==name)[0][0] ]
             
@@ -288,7 +290,18 @@ def import_multiple_images(lenstool_model, mult_file_path_or_cat, fits_image, un
             for multiple_image in self.cat[mask] :
                 
                 text = str(multiple_image[text_column])
-                text_item = pg.TextItem( text, color=list( np.array(colors_dict[broad_family])*255 )[:3] )
+
+                background_color = None
+                if len(text) > 0 : # To avoid background for empty text
+                    if type(bbox) is list or type(bbox) is tuple or type(bbox) is np.ndarray :
+                        background_color = np.array(bbox)*255
+                    elif type(bbox) is float :
+                        background_color = list( np.array(colors_dict_background[broad_family])*255 )[:3] + [bbox*255]
+                
+                if background_color is not None :
+                    text_item = pg.TextItem( text, color=list( np.array(colors_dict[broad_family])*255 )[:3], fill=pg.mkBrush(background_color) )
+                else :
+                    text_item = pg.TextItem( text, color=list( np.array(colors_dict[broad_family])*255 )[:3] )
                 
                 x = multiple_image['x']
                 y = self.fits_image.image_data.shape[0] - multiple_image['y']  # Flip y to match PyQtGraph convention

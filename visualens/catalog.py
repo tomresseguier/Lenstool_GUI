@@ -6,6 +6,7 @@ from tqdm import tqdm
 
 import PyQt5
 import pyqtgraph as pg
+from astropy.io import fits
 from astropy.table import Table
 import pandas as pd
 
@@ -24,8 +25,14 @@ from .utils.utils_LaTeX.catalog_to_latex import catalog_to_latex
 
 
 def open_cat(cat_path) :
+    header = None
     if '.fits' in cat_path :
         cat = Table.read(cat_path, format='fits')
+        with fits.open(cat_path) as hdul :
+            if len(hdul) > 1 :
+                header = [ hdul[i].header for i in range(len(hdul)) ]
+            else :
+                header = hdul[0].header
     else :
         with open(cat_path, 'r') as raw_cat :
             first_line, second_line = raw_cat.readlines()[0:2]
@@ -36,7 +43,7 @@ def open_cat(cat_path) :
         else :
             cat_df = pd.read_csv(cat_path, skip_blank_lines=True, comment='#')[start_line:].apply(pd.to_numeric, errors='coerce')
         cat = Table.from_pandas(cat_df)
-    return cat
+    return cat, header
 
     
 def make_uniform_names_cat(cat, self) :
@@ -87,9 +94,10 @@ def make_uniform_names_cat(cat, self) :
 def initialize_catalog(cat, self) :
     ##### Combine or just open the catalog #####
     path = None
+    header = None
     if isinstance(cat, str) :
         path = cat
-        cat = open_cat(cat)
+        cat, header = open_cat(cat)
     elif isinstance(cat, list) :
         path = os.path.dirname(cat[0])
         run_match(cat[0], cat[1])
@@ -101,7 +109,7 @@ def initialize_catalog(cat, self) :
     
     ##### Standardize the column names #####
     uniform_names_cat = make_uniform_names_cat(cat, self)
-    return uniform_names_cat, path
+    return uniform_names_cat, path, header
     
 
 
@@ -119,7 +127,7 @@ class catalog :
         self.units = units
         self.verbose = verbose
         
-        self.cat, self.path = initialize_catalog(cat, self)
+        self.cat, self.path, self.header = initialize_catalog(cat, self)
         self.qtItems = [] #np.empty(len(self.cat), dtype=PyQt5.QtWidgets.QGraphicsEllipseItem)
         #self.qtItems = [PyQt5.QtWidgets.QGraphicsEllipseItem() for _ in range(len(self.cat))]
         self.qtItems_column = [] #np.empty(len(self.cat), dtype=pg.TextItem)
@@ -518,14 +526,14 @@ class catalog :
                         col_to_transfer = col_to_transfer + '_CAT2'
                 self.cat[col_to_transfer] = temp_cat[col_to_transfer]
                 self._vprint(f'###############\nColumn {col_to_transfer} added.\n###############')
+                return match_idx
             else:
                 self._vprint(f'{col_to_transfer} not found in {which_cat}')
         else :
             self._vprint(f'No {which_cat}')
-        return match_idx
     
-    def export_to_LaTeX(self, columns=[], file_path=None, use_best_fit_value=False, deluxetable=True) :
-        return catalog_to_latex(self, columns=columns, file_path=file_path, use_best_fit_value=use_best_fit_value, deluxetable=deluxetable)
+    def export_to_LaTeX(self, columns=[], file_path=None, use_best_fit_value=False, deluxetable=True, blank_str='...') :
+        return catalog_to_latex(self, columns=columns, file_path=file_path, use_best_fit_value=use_best_fit_value, deluxetable=deluxetable, blank_str=blank_str)
     
     #def export_thumbnails(self, mask=None, group_images=True) :
     #    if mask is None :

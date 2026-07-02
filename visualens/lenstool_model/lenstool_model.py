@@ -62,6 +62,7 @@ class lenstool_model :
         self._safe_mode = False
         self._compute_predictions = compute_predictions
         self.verbose = verbose
+        self.has_run = False
         
         # Get model directory
         self.model_dir = model_path if os.path.isdir(model_path) else os.path.dirname(model_path)
@@ -623,11 +624,11 @@ class lenstool_model :
                     cat.add_column(columns_to_add[i], name=name)
             self.lt.set_field(initial_field)
     
-    def compute_lt_curve(self, z=None) :
+    def compute_lt_curve(self, z=None, limitHigh=0.5, limitLow=0.1) :
         if z==None :
             z = self.lt_z
         self._vprint('Computing critical curve (can take a little while)...')
-        self.lt_curve = self.lt.criticnew(zs=z, limitHigh=1, limitLow=0.05) #limitHigh=0.5, limitLow=0.1
+        self.lt_curve = self.lt.criticnew(zs=z, limitHigh=limitHigh, limitLow=limitLow) #limitHigh=1., limitLow=0.05
         
         ni = len(self.lt_curve[0])
         ne = len(self.lt_curve[1])
@@ -725,20 +726,22 @@ class lenstool_model :
         self.ax_cov.set_xticklabels(corr_matrix.columns, rotation=45, ha='right')
         self.ax_cov.set_yticklabels(corr_matrix.index)
     
-    def filter_image(self, threshold_arcsec=1.) :
+    def filter_image(self, threshold_arcsec=0.1) :
         if self.mult is not None :
+            threshold_pix = threshold_arcsec / 3600 / self.fits_image.pix_deg_scale
             to_remove = []
             for i, image in enumerate(self.image_filtered.cat) :
                 ref_mask = self.mult.cat['id']==image['id']
-                if len(np.unique(ref_mask))==1 and not np.unique(ref_mask)[0] :
-                    d = 0
-                else :
-                    ref = self.mult.cat[ np.where(ref_mask)[0][0] ]
-                    d = ( (ref['x'] - image['x'])**2 + (ref['y'] - image['y'])**2 )**0.5
-                if d==0 :
+                #if not ref_mask.any() :
+                #    d = 0
+                #else :
+                ref = self.mult.cat[ np.where(ref_mask)[0][0] ]
+                d = ( (ref['x'] - image['x'])**2 + (ref['y'] - image['y'])**2 )**0.5
+                if d<threshold_pix :
                     to_remove.append(i)
             self.image_filtered.cat.remove_rows(to_remove)
         
+        ### Grouping of images with similar positions, not used anymore ###
         if False :
             threshold_pix = threshold_arcsec / 3600 / self.fits_image.pix_deg_scale
             

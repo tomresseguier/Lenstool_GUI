@@ -391,7 +391,111 @@ class fits_image :
                 raise ValueError('No filter directory found in image directory.')
         else :
             self.filters = load_filters(filter_dir)
-        
+    
+    def add_scale_bar(self, z=None, unit='arcmin', length=1, color='white', linewidth=4, text_offset=0.01, position=['bottom', 'right']):
+        """Add a floating scale bar that stays anchored in the chosen viewport corner.
+
+        The bar is a UIGraphicsItem (pg.ScaleBar) so it lives in screen/viewport
+        coordinates: it never pans with the image and its on-screen pixel width
+        automatically updates as the user zooms in or out, always representing the
+        same angular or physical scale.
+
+        Parameters
+        ----------
+        z : float, optional
+            Source redshift, required when *unit* is a physical length ('pc', 'kpc', 'Mpc').
+        unit : str
+            One of 'arcsec', 'arcmin', 'pc', 'kpc', 'Mpc'.
+        length : float
+            Desired scale-bar length in *unit*.
+        color : str or tuple
+            Bar and label colour accepted by pyqtgraph (e.g. 'white', (255,255,255)).
+        linewidth : int
+            Thickness of the bar rectangle in screen pixels.
+        text_offset : float
+            Unused legacy parameter (kept for API compatibility).
+        position : list of str
+            Two-element list with vertical ('top'/'bottom') and horizontal
+            ('left'/'right') placement of the bar, e.g. ['bottom', 'left'].
+        """
+        print(self.cosmo)
+
+        if unit == 'arcsec':
+            length_deg = length / 3600.
+            label = f'{length}"'
+        elif unit == 'arcmin':
+            length_deg = length / 60.
+            label = f"{length}'"
+        elif unit in ['pc', 'kpc', 'Mpc']:
+            if z is None:
+                raise ValueError("Redshift z must be provided for physical units.")
+            ang_diam_dist = self.cosmo.angular_diameter_distance(z).to(unit).value
+            length_rad = length / ang_diam_dist
+            length_deg = np.rad2deg(length_rad)
+            # Angular equivalent shown as a subtitle under the physical label.
+            # Pick arcsec when the value is below 60, arcmin otherwise.
+            length_arcsec = length_deg * 3600.
+            if length_arcsec < 60.:
+                ang_fmt = f'{length_arcsec:.1f}"' if length_arcsec < 10. else f'{length_arcsec:.0f}"'
+            else:
+                length_arcmin = length_deg * 60.
+                ang_fmt = f"{length_arcmin:.1f}'" if length_arcmin < 10. else f"{length_arcmin:.0f}'"
+            label = f'{length} {unit}\n{ang_fmt}'
+        else:
+            raise ValueError(f"Unknown unit: {unit}")
+
+        # Bar length expressed in image pixels (the data coordinate unit of the ViewBox)
+        bar_length_pix = length_deg / self.pix_deg_scale
+
+        # Compute anchor parameters before any item manipulation
+        # UIGraphicsItem.anchor(itemPos, parentPos, offset):
+        #   itemPos  – which point of the bar item to pin (0=top/left, 1=bottom/right)
+        #   parentPos – which point of the ViewBox to pin to (same convention)
+        #   offset    – additional screen-pixel nudge (positive x → right, positive y → down)
+        margin = 20  # screen pixels from the viewport edge
+        vertical   = 'bottom' if 'bottom' in position else 'top'
+        horizontal = 'left'   if 'left'   in position else 'right'
+        vy = 1 if vertical   == 'bottom' else 0
+        vx = 0 if horizontal == 'left'   else 1
+        ox = margin  if horizontal == 'left'   else -margin
+        oy = -margin if vertical   == 'bottom' else  margin
+
+        # If a bar already exists, update it in-place rather than destroying it.
+        # Destroying via setParentItem(None) leaves the bar's viewRangeChanged slot
+        # still connected to the ViewBox; when the view later updates it fires on the
+        # now-parentless item and raises "Cannot anchor; parent is not set."
+        if hasattr(self, '_scale_bar') and self._scale_bar is not None:
+            self._scale_bar.size   = bar_length_pix
+            self._scale_bar._width = linewidth
+            self._scale_bar.brush  = pg.mkBrush(color)
+            self._scale_bar.pen    = pg.mkPen(None)
+            self._scale_bar.text.setText(label)
+            self._scale_bar.text.setColor(color)
+            self._scale_bar.anchor((vx, vy), (vx, vy), offset=(ox, oy))
+            self._scale_bar.update()
+            return self._scale_bar
+
+        view = self.qt_image.getView()
+
+        # pg.ScaleBar is a UIGraphicsItem: it renders at a fixed screen position and
+        # redraws its pixel width automatically whenever the ViewBox zoom changes so
+        # that it always represents bar_length_pix data-space units.
+        bar = pg.ScaleBar(
+            size=bar_length_pix,
+            width=linewidth,
+            brush=pg.mkBrush(color),
+            pen=pg.mkPen(None),   # no outline around the filled rectangle
+            suffix='',
+        )
+        bar.text.setText(label)
+        bar.text.setColor(color)
+        bar.setParentItem(view)
+        bar.anchor((vx, vy), (vx, vy), offset=(ox, oy))
+
+        self._scale_bar = bar
+        return bar
+
+
 
 
 

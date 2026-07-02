@@ -6,6 +6,7 @@ from PyQt5.QtWidgets import QMainWindow, QSplitter, QWidget, QVBoxLayout, QHBoxL
 from PyQt5.QtCore import Qt
 from pyqtgraph.Qt import QtWidgets
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 
 from lenstronomy.Data.pixel_grid import PixelGrid     
 from lenstronomy.LensModel.lens_model import LensModel
@@ -89,12 +90,12 @@ class image_simulator :
         self.center_world = fits_image.image_to_world(x_center_pix, y_center_pix)
 
         xr_center, yr_center = fits_image.lt.world_to_relative(self.center_world[0], self.center_world[1])
-        square_size_arcsec = square_size_pix * fits_image.pix_deg_scale*3600
-        self._SquareOfInterest_side_arcsec = square_size_arcsec
-        self._SquareOfInterest_xr_bottomleft = xr_center - square_size_arcsec / 2
-        self._SquareOfInterest_yr_bottomleft = yr_center - square_size_arcsec / 2
-        new_field = [self._SquareOfInterest_xr_bottomleft, self._SquareOfInterest_xr_bottomleft + square_size_arcsec, 
-                     self._SquareOfInterest_yr_bottomleft, self._SquareOfInterest_yr_bottomleft + square_size_arcsec]
+        self._square_size_arcsec = square_size_pix * fits_image.pix_deg_scale*3600
+        self._SquareOfInterest_side_arcsec = self._square_size_arcsec
+        self._SquareOfInterest_xr_bottomleft = xr_center - self._square_size_arcsec / 2
+        self._SquareOfInterest_yr_bottomleft = yr_center - self._square_size_arcsec / 2
+        new_field = [self._SquareOfInterest_xr_bottomleft, self._SquareOfInterest_xr_bottomleft + self._square_size_arcsec, 
+                     self._SquareOfInterest_yr_bottomleft, self._SquareOfInterest_yr_bottomleft + self._square_size_arcsec]
         
         ######### Set Lenstool field corresponding to ROI's position and calculate the local displacement map #########
         if fits_image.lt.lt is not None :
@@ -188,8 +189,8 @@ class image_simulator :
         npix = self._crop_npix
         self.PixelGrid_kwargs = {'nx': npix,
                                     'ny': npix,  # number of pixels per axis
-                                    'ra_at_xy_0': - square_size_arcsec / 2,
-                                    'dec_at_xy_0': - square_size_arcsec / 2,
+                                    'ra_at_xy_0': - self._square_size_arcsec / 2,
+                                    'dec_at_xy_0': - self._square_size_arcsec / 2,
                                     'transform_pix2angle': transform_pix2angle} 
         self.PixelGrid = PixelGrid(**self.PixelGrid_kwargs)
         
@@ -260,8 +261,8 @@ class image_simulator :
                                 'background_rms': self.rms, #self.individual_filter.rms
                                 'exposure_time': exptime,
                                 'transform_pix2angle': transform_pix2angle,
-                                'ra_at_xy_0': - square_size_arcsec / 2,
-                                'dec_at_xy_0': - square_size_arcsec / 2}
+                                'ra_at_xy_0': - self._square_size_arcsec / 2,
+                                'dec_at_xy_0': - self._square_size_arcsec / 2}
         self.ImageData = ImageData(**self.ImageData_kwargs)
         
         #-------------- PSF --------------#
@@ -654,6 +655,16 @@ class image_simulator :
                 im[f'{col}_16_percentile'] = np.percentile(self.samples_dict[im['id']][col], 16)
                 im[f'{col}_84_percentile'] = np.percentile(self.samples_dict[im['id']][col], 84)
                 im[f'{col}_50_percentile'] = np.percentile(self.samples_dict[im['id']][col], 50)
+
+    def compute_magnification_map(self, numPix=1000, plot=True) :
+        self.simulate(verbose=False)
+        deltapix = self._square_size_arcsec / numPix
+        x_grid, y_grid = util.make_grid(numPix, deltapix)
+        self.magnification_map = util.array2image(self.LensModel.magnification(x_grid, y_grid, self.LensModel_kwargs))
+        if plot :
+            fig, ax = plt.subplots()
+            ax.imshow(self.magnification_map, origin='lower')
+        return self.magnification_map
 
 
 

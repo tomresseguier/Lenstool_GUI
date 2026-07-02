@@ -3,7 +3,7 @@ import numpy as np
 
 
 
-def catalog_to_latex(cat_instance, columns=[], file_path=None, use_best_fit_value=False, deluxetable=True) :
+def catalog_to_latex(cat_instance, columns=[], file_path=None, use_best_fit_value=False, deluxetable=True, blank_str='...') :
     if len(columns)==0 :
         columns = list(cat_instance.cat.colnames)
     
@@ -145,6 +145,8 @@ def catalog_to_latex(cat_instance, columns=[], file_path=None, use_best_fit_valu
                     to_parse = f"{src[col]:#.8g}"
                 else :
                     to_parse = f"{src[col]:.3g}"
+                if 'np.nan' in to_parse :
+                    to_parse = blank_str
                 rows += to_parse + " &\n"
             rows = rows[:-3] + "\\\\\n"
         return rows
@@ -198,3 +200,100 @@ def catalog_to_latex(cat_instance, columns=[], file_path=None, use_best_fit_valu
         cat_instance._vprint('LaTeX table saved at ' + file_path)
     return table_str
     
+
+
+
+
+
+import re
+import math
+from decimal import Decimal, ROUND_HALF_UP
+
+
+def _round_unc_1sig(unc_str: str):
+    """Round a positive uncertainty string to 1 significant figure.
+    Returns (Decimal rounded_value, int n_decimal_places)."""
+    x = float(unc_str)
+    if x == 0:
+        return Decimal('0'), 0
+
+    magnitude = math.floor(math.log10(x))
+    n_dec = max(0, -magnitude)
+    quant = Decimal('1') if n_dec == 0 else Decimal('0.' + '0' * n_dec)
+    rounded = Decimal(unc_str).quantize(quant, rounding=ROUND_HALF_UP)
+
+    # Re-derive n_dec from the rounded value: handles cases like 0.097 → 0.10 → 0.1
+    if rounded > 0:
+        new_magnitude = math.floor(math.log10(float(rounded)))
+        n_dec = max(0, -new_magnitude)
+
+    return rounded, n_dec
+
+
+def _fmt_decimal(value_str: str, n_dec: int) -> str:
+    """Round value_str to n_dec decimal places and return as string."""
+    quant = Decimal('1') if n_dec == 0 else Decimal('0.' + '0' * n_dec)
+    rounded = Decimal(value_str).quantize(quant, rounding=ROUND_HALF_UP)
+    if rounded == 0:
+        rounded = abs(rounded)  # avoid "-0"
+    return str(rounded)
+
+
+def reformat_latex_uncertainties(table_str: str) -> str:
+    """
+    Reformat a LaTeX string so that values with uncertainties use the minimal
+    number of digits:
+      - Uncertainties are rounded to 1 significant figure.
+      - Central values are rounded to match that decimal place.
+      - Asymmetric $v^{+u}_{-l}$ is collapsed to $v \\pm u$ when u == l after rounding.
+      - Already-symmetric $v \\pm u$ entries are also reformatted.
+    """
+
+    def _replace_asym(match):
+        val_str = match.group(1)
+        up_str  = match.group(2).lstrip('+')
+        lo_str  = match.group(3).lstrip('-')
+        try:
+            up_rounded, up_dec = _round_unc_1sig(up_str)
+            lo_rounded, lo_dec = _round_unc_1sig(lo_str)
+        except Exception:
+            return match.group(0)  # leave unchanged on error
+
+        n_dec = max(up_dec, lo_dec)
+        quant = Decimal('1') if n_dec == 0 else Decimal('0.' + '0' * n_dec)
+
+        val_fmt = _fmt_decimal(val_str, n_dec)
+        up_fmt  = str(up_rounded.quantize(quant))
+        lo_fmt  = str(lo_rounded.quantize(quant))
+
+        if up_fmt == lo_fmt:
+            return f'${val_fmt} \\pm {up_fmt}$'
+        return f'${val_fmt}^{{+{up_fmt}}}_{{-{lo_fmt}}}$'
+
+    def _replace_sym(match):
+        val_str = match.group(1)
+        unc_str = match.group(2)
+        try:
+            unc_rounded, n_dec = _round_unc_1sig(unc_str)
+        except Exception:
+            return match.group(0)
+
+        quant = Decimal('1') if n_dec == 0 else Decimal('0.' + '0' * n_dec)
+        val_fmt = _fmt_decimal(val_str, n_dec)
+        unc_fmt = str(unc_rounded.quantize(quant))
+        return f'${val_fmt} \\pm {unc_fmt}$'
+
+    # Pass 1: asymmetric  $value^{+upper}_{-lower}$
+    result = re.sub(
+        r'\$(-?[0-9.]+)\^\{(\+[0-9.]+)\}_\{(-[0-9.]+)\}\$',
+        _replace_asym,
+        table_str,
+    )
+    # Pass 2: symmetric  $value \pm uncertainty$
+    result = re.sub(
+        r'\$(-?[0-9.]+)\s*\\pm\s*([0-9.]+)\$',
+        _replace_sym,
+        result,
+    )
+    return result
+
