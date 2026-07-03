@@ -69,8 +69,8 @@ class fits_image :
         else :
             self.boosted_image = None
         self.boosted = False
-        self.extra_qt_images = []
-        self.extra_windows = []
+        self.qt_image_list = []
+        self.qt_window_list = []
         if self.orientation==None :
             self.orientation = 0.
         self.cosmo = get_cosmo()
@@ -112,24 +112,37 @@ class fits_image :
 
         return qt_image, qt_layout, image_widget, window
     
+    def _flush_closed_windows(self) :
+        if self.qt_image is not None :
+            if not self.qt_image.isVisible() :
+                self.window.close()
+                self.qt_image, self.qt_layout, self.image_widget, self.window = None, None, None, None
+        for window in self.qt_window_list :
+            if not window.isVisible() :
+                window.close()
+        self.qt_image_list = [ image for window, image in zip(self.qt_window_list, self.qt_image_list) if window.isVisible() ]
+        self.qt_window_list = [ window for window in self.qt_window_list if window.isVisible() ]
+        return
+
     def plot_image(self) :
         #to_plot = self.image_data
         #to_plot = np.transpose(self.image_data, axes=[1,0,2])
-        if self.qt_image is None or not self.qt_image.isVisible() :
+        self._flush_closed_windows()
+        if self.qt_image is None :
             print('Creating main window...')
             self.qt_image, self.qt_layout, self.image_widget, self.window = self.create_qt_image()
+            self.qt_window_list = [self.window] + self.qt_window_list
+            self.qt_image_list = [self.qt_image] + self.qt_image_list
             print('Done')
-            to_return = self.qt_image
         else :
             print('Creating secondary window...')
             extra_qt_image, _, _, extra_window = self.create_qt_image()
-            extra_window.setWindowTitle(os.path.basename(self.image_path) + ' (' + str(len(self.extra_qt_images)+2) + ')')
+            extra_window.setWindowTitle(os.path.basename(self.image_path) + ' (' + str(len(self.qt_image_list)+1) + ')')
             extra_window.show()
-            self.extra_qt_images.append(extra_qt_image)
-            self.extra_windows.append(extra_window)
+            self.qt_image_list.append(extra_qt_image)
+            self.qt_window_list.append(extra_window)
             print('Done')
-            to_return = extra_qt_image
-        return to_return
+        return
     
     def boost(self, boost=[2,1.5,1]) :
         if self.boosted_image is None :
@@ -145,7 +158,7 @@ class fits_image :
             self.qt_image.setImage(np.flip(self.boosted_image, axis=0))
             #self.qt_image.autoLevels()
             self.boosted = True
-            for extra_qt_image in self.extra_qt_images :
+            for extra_qt_image in self.qt_image_list :
                 extra_qt_image.setImage(np.flip(self.boosted_image, axis=0))
             print('Done')
     
@@ -155,7 +168,7 @@ class fits_image :
             self.qt_image.setImage(np.flip(self.image_data, axis=0))
             #self.qt_image.autoLevels()
             self.boosted = False
-            for extra_qt_image in self.extra_qt_images :
+            for extra_qt_image in self.qt_image_list :
                 extra_qt_image.setImage(np.flip(self.image_data, axis=0))
             print('Done')
     

@@ -716,8 +716,8 @@ class lenstool_model :
         self.fits_image.qt_image.addItem(self.curve_plot)
         
     def plot_bayes(self) :
-        plot_corner(self.samples_df_param_only)
-        corr_matrix = self.samples_df_param_only.corr()
+        plot_corner(self.samples_df)
+        corr_matrix = self.samples_df.corr()
         self.fig_cov, self.ax_cov = plt.subplots()
         cax = self.ax_cov.imshow(corr_matrix, cmap='PuOr')
         cbar = self.fig_cov.colorbar(cax, ax=self.ax_cov)
