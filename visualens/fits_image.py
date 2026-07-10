@@ -124,6 +124,34 @@ class fits_image :
         self.qt_window_list = [ window for window in self.qt_window_list if window.isVisible() ]
         return
 
+    def link_zoom(self) :
+        self._view_range_sync_state()['zoom'] = True
+        self._connect_view_range_sync()
+
+    def unlink_zoom(self) :
+        self._view_range_sync_state()['zoom'] = False
+        self._disconnect_view_range_sync_if_idle()
+
+    def link_pan(self) :
+        self._view_range_sync_state()['pan'] = True
+        self._connect_view_range_sync()
+
+    def unlink_pan(self) :
+        self._view_range_sync_state()['pan'] = False
+        self._disconnect_view_range_sync_if_idle()
+
+    def link_zoom_and_pan(self) :
+        sync = self._view_range_sync_state()
+        sync['zoom'] = True
+        sync['pan'] = True
+        self._connect_view_range_sync()
+
+    def unlink_zoom_and_pan(self) :
+        sync = self._view_range_sync_state()
+        sync['zoom'] = False
+        sync['pan'] = False
+        self._disconnect_view_range_sync_if_idle()
+
     def plot_image(self) :
         #to_plot = self.image_data
         #to_plot = np.transpose(self.image_data, axes=[1,0,2])
@@ -142,6 +170,8 @@ class fits_image :
             self.qt_image_list.append(extra_qt_image)
             self.qt_window_list.append(extra_window)
             print('Done')
+        if hasattr(self, '_view_range_sync') and (self._view_range_sync['zoom'] or self._view_range_sync['pan']) :
+            self._connect_view_range_sync()
         return
     
     def boost(self, boost=[2,1.5,1]) :
@@ -507,6 +537,82 @@ class fits_image :
 
         self._scale_bar = bar
         return bar
+    
+
+
+
+
+    ########## View range synchronization functions##########
+    def _all_viewboxes(self) :
+        self._flush_closed_windows()
+        return [iv.getView() for iv in self.qt_image_list]
+
+    def _view_range_sync_state(self) :
+        if not hasattr(self, '_view_range_sync') :
+            self._view_range_sync = {'zoom': False, 'pan': False, 'connections': {}, 'guard': False}
+        return self._view_range_sync
+
+    def _connect_view_range_sync(self) :
+        sync = self._view_range_sync_state()
+        vbs = self._all_viewboxes()
+        for vb in list(sync['connections'].keys()) :
+            if vb not in vbs :
+                try :
+                    vb.sigRangeChanged.disconnect(sync['connections'][vb])
+                except (TypeError, RuntimeError) :
+                    pass
+                del sync['connections'][vb]
+        for vb in vbs :
+            if vb not in sync['connections'] :
+                sync['connections'][vb] = vb.sigRangeChanged.connect(
+                    lambda _vb=vb: self._sync_linked_view_range(_vb)
+                )
+
+    def _sync_linked_view_range(self, source_vb) :
+        sync = self._view_range_sync_state()
+        if sync['guard'] or (not sync['zoom'] and not sync['pan']) :
+            return
+        vbs = self._all_viewboxes()
+        if len(vbs) < 2 :
+            return
+        sync['guard'] = True
+        try :
+            xrange, yrange = source_vb.viewRange()
+            cx = 0.5 * (xrange[0] + xrange[1])
+            cy = 0.5 * (yrange[0] + yrange[1])
+            wx = xrange[1] - xrange[0]
+            wy = yrange[1] - yrange[0]
+            for vb in vbs :
+                if vb is source_vb :
+                    continue
+                ox0, ox1 = vb.viewRange()[0]
+                oy0, oy1 = vb.viewRange()[1]
+                if sync['zoom'] and sync['pan'] :
+                    new_x, new_y = xrange, yrange
+                elif sync['zoom'] :
+                    occx = 0.5 * (ox0 + ox1)
+                    occy = 0.5 * (oy0 + oy1)
+                    new_x = (occx - 0.5 * wx, occx + 0.5 * wx)
+                    new_y = (occy - 0.5 * wy, occy + 0.5 * wy)
+                else :
+                    owx = ox1 - ox0
+                    owy = oy1 - oy0
+                    new_x = (cx - 0.5 * owx, cx + 0.5 * owx)
+                    new_y = (cy - 0.5 * owy, cy + 0.5 * owy)
+                vb.setRange(xRange=new_x, yRange=new_y, padding=0)
+        finally :
+            sync['guard'] = False
+
+    def _disconnect_view_range_sync_if_idle(self) :
+        sync = self._view_range_sync_state()
+        if sync['zoom'] or sync['pan'] :
+            return
+        for vb, conn in list(sync['connections'].items()) :
+            try :
+                vb.sigRangeChanged.disconnect(conn)
+            except (TypeError, RuntimeError) :
+                pass
+        sync['connections'].clear()
 
 
 
