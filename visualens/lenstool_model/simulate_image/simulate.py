@@ -100,12 +100,12 @@ def simulate(imsim, verbose=True) :
                                     #lens_light_model_class=,
                                     kwargs_numerics=imsim.kwargs_numerics )
     
-    imsim.ImageLinearFit = ImageLinearFit( data_class=imsim.ImageData, psf_class=imsim.PSF,
-                                            lens_model_class=imsim.LensModel,
-                                            source_model_class=LightModel_source,
-                                            point_source_class=PSModel_source,
-                                            #lens_light_model_class=,
-                                            kwargs_numerics=imsim.kwargs_numerics )
+    #imsim.ImageLinearFit = ImageLinearFit( data_class=imsim.ImageData, psf_class=imsim.PSF,
+    #                                        lens_model_class=imsim.LensModel,
+    #                                        source_model_class=LightModel_source,
+    #                                        point_source_class=PSModel_source,
+    #                                        #lens_light_model_class=,
+    #                                        kwargs_numerics=imsim.kwargs_numerics )
     
     print('Start simulating image') if verbose else None
     imsim.simulated_image = imsim.ImageModel.image(kwargs_source=lm_dict_opt['kwargs']['kwargs_source'],

@@ -6,6 +6,7 @@ from matplotlib import pyplot as plt
 from matplotlib.patches import Ellipse, Polygon, Circle, Rectangle
 from astropy.io import fits
 from astropy.wcs import WCS
+from astropy.wcs.utils import skycoord_to_pixel
 import astropy.units as u
 import astropy.constants as c
 from reproject import reproject_interp
@@ -28,6 +29,7 @@ from .utils.utils_Qt.selectable_classes import *
 from .utils.utils_Qt.drag_widgets import DragWidget
 from .utils.utils_Qt.utils_general import *
 from .utils.utils_astro.get_cosmology import get_cosmo
+from .utils.utils_Qt.ImageView_custom_selector import ImageView_custom_selector
 
 
 
@@ -47,6 +49,7 @@ class fits_image :
             self.weight_path = self.image_path[:-8] + 'wht.fits'
         else :
             self.weight_path = None
+        
         self.image_data, self.pix_deg_scale, self.orientation, self.wcs, self.header = open_image(self.image_path)
         self.sources = None
         self.fig = None
@@ -87,7 +90,8 @@ class fits_image :
         to_plot = np.flip(self.image_data, axis=0) if not self.boosted else np.flip(self.boosted_image, axis=0)
         
         #qt_image = pg.image(to_plot)
-        qt_image = pg.ImageView()
+        qt_image = ImageView_custom_selector(self.wcs)
+        self.hand_selected_catalog = qt_image.catalog
         qt_image.setImage(to_plot)
         #qt_image.autoLevels()
         
@@ -273,12 +277,144 @@ class fits_image :
             print('Previous reprojected image found.')
         else :
             with fits.open(ref_image_path) as hdu :
-                reference_header = hdu[0].header
+                reference_header = hdu['SCI'].header
             with fits.open(image_path) as hdu :
                 print('Reprojecting image ' + image_path + ' onto reference ' + ref_image_path)
-                reprojected_data, footprint = reproject_interp(hdu[0], reference_header)
+                reprojected_data, footprint = reproject_interp(hdu['SCI'], reference_header)
                 fits.writeto(reprojected_image_path, reprojected_data, reference_header)
         return reprojected_image_path
+
+    def rotate(self, angle=None) :
+        """Reproject the image onto a new rotated pixel grid.
+
+        The output is the smallest image that still contains all finite pixels
+        of the input (``np.nan`` padding is dropped). Extra space required by
+        the rotation is filled with ``np.nan``. Pixel scale is conserved and
+        the WCS is updated so sky positions are unchanged.
+
+        Parameters
+        ----------
+        angle : float or None
+            Rotation angle in degrees. If ``None``, uses ``self.orientation``
+            so the new x/y axes align with RA/Dec (North up, East left).
+            The output orientation is ``self.orientation - angle``.
+        """
+        if angle is None :
+            angle = self.orientation
+
+        wcs_in = self.wcs.celestial
+        data = np.asarray(self.image_data, dtype=float)
+        is_rgb = data.ndim == 3
+
+        if is_rgb :
+            valid = np.any(np.isfinite(data), axis=2)
+        else :
+            valid = np.isfinite(data)
+        if not np.any(valid) :
+            raise ValueError('No finite pixels found to rotate.')
+
+        ys, xs = np.where(valid)
+        xmin, xmax = int(xs.min()), int(xs.max())
+        ymin, ymax = int(ys.min()), int(ys.max())
+
+        # Corners of the finite-content bounding box (pixel edges).
+        xc = np.array([xmin - 0.5, xmax + 0.5, xmax + 0.5, xmin - 0.5])
+        yc = np.array([ymin - 0.5, ymin - 0.5, ymax + 0.5, ymax + 0.5])
+        corners = wcs_in.pixel_to_world(xc, yc)
+        center = wcs_in.pixel_to_world(0.5 * (xmin + xmax), 0.5 * (ymin + ymax))
+
+        scale = float(self.pix_deg_scale)
+        theta = np.deg2rad(self.orientation - angle)
+
+        # North-up / East-left CD, then rotated so ORIENTAT = orientation - angle.
+        wcs_out = WCS(naxis=2)
+        wcs_out.wcs.ctype = list(wcs_in.wcs.ctype)
+        wcs_out.wcs.cunit = ['deg', 'deg']
+        wcs_out.wcs.crval = [center.ra.deg, center.dec.deg]
+        wcs_out.wcs.crpix = [1.0, 1.0]
+        wcs_out.wcs.cd = np.array([
+            [-scale * np.cos(theta), scale * np.sin(theta)],
+            [ scale * np.sin(theta), scale * np.cos(theta)],
+        ])
+
+        xp, yp = skycoord_to_pixel(corners, wcs_out, origin=1)
+        xmin_o, xmax_o = float(xp.min()), float(xp.max())
+        ymin_o, ymax_o = float(yp.min()), float(yp.max())
+        wcs_out.wcs.crpix = [(1.0 - xmin_o) + 0.5, (1.0 - ymin_o) + 0.5]
+        shape_out = (int(round(ymax_o - ymin_o)), int(round(xmax_o - xmin_o)))
+
+        print(f'Rotating image by {angle:.4g} deg (output orientation {self.orientation - angle:.4g} deg)...')
+
+        def _reproject_plane(plane) :
+            arr, footprint = reproject_interp((plane, wcs_in), wcs_out, shape_out=shape_out)
+            arr = np.asarray(arr, dtype=float)
+            arr[footprint == 0] = np.nan
+            return arr
+
+        if is_rgb :
+            rotated = np.stack([_reproject_plane(data[:, :, i]) for i in range(data.shape[2])], axis=2)
+            valid_out = np.any(np.isfinite(rotated), axis=2)
+        else :
+            rotated = _reproject_plane(data)
+            valid_out = np.isfinite(rotated)
+
+        # Trim residual all-NaN borders left by interpolation.
+        ys_o, xs_o = np.where(valid_out)
+        x0, x1 = int(xs_o.min()), int(xs_o.max()) + 1
+        y0, y1 = int(ys_o.min()), int(ys_o.max()) + 1
+        if is_rgb :
+            rotated = rotated[y0:y1, x0:x1, :]
+        else :
+            rotated = rotated[y0:y1, x0:x1]
+        wcs_out.wcs.crpix[0] -= x0
+        wcs_out.wcs.crpix[1] -= y0
+
+        header_out = wcs_out.to_header()
+        for key in self.header.keys() :
+            if key in header_out or key in ('SIMPLE', 'BITPIX', 'NAXIS', 'NAXIS1', 'NAXIS2',
+                                            'EXTEND', 'COMMENT', 'HISTORY', 'BZERO', 'BSCALE') :
+                continue
+            if key.startswith(('CD', 'PC', 'CRPIX', 'CRVAL', 'CDELT', 'CTYPE', 'CUNIT',
+                               'CROTA', 'PV', 'A_', 'B_', 'AP_', 'BP_')) :
+                continue
+            try :
+                header_out[key] = self.header[key]
+            except ValueError :
+                pass
+
+        out_path = self.image_path[:-5] + '_rotated.fits'
+        if is_rgb :
+            hdul = fits.HDUList(
+                [fits.PrimaryHDU()] +
+                [fits.ImageHDU(data=rotated[:, :, i], header=header_out, name=name)
+                 for i, name in enumerate(['RED', 'GREEN', 'BLUE'])]
+            )
+            hdul.writeto(out_path, overwrite=True)
+        else :
+            fits.writeto(out_path, rotated, header_out, overwrite=True)
+        print('Rotated image saved to ' + out_path)
+
+        new_orientation = self.orientation - angle
+        self.image_path = out_path
+        self.image_data = rotated
+        self.wcs = wcs_out
+        self.header = header_out
+        self.orientation = new_orientation
+        self.pix_deg_scale = float(np.sqrt(wcs_out.pixel_scale_matrix[0, 0]**2 +
+                                           wcs_out.pixel_scale_matrix[0, 1]**2))
+        self.boosted_image = None
+        self.boosted = False
+        self.boosted_image_path = self.image_path[:-5] + '_boosted.fits'
+
+        to_plot = np.flip(self.image_data, axis=0)
+        if self.qt_image is not None :
+            self.qt_image.setImage(to_plot)
+            for qt_image in self.qt_image_list :
+                qt_image.setImage(to_plot)
+            if getattr(self, 'window', None) is not None :
+                self.window.setWindowTitle(os.path.basename(self.image_path))
+        print('Done')
+        return out_path
     
     def make_photometry(self, cat) :
         print("################")
@@ -336,7 +472,21 @@ class fits_image :
                 for i in tqdm( range(len(self.qtItems_dict[key])) ) :
                     self.qt_image.removeItem(self.qtItems_dict[key][i])
     
-    
+
+    def export_hand_selection_as_mult_file(self, path=None) :
+        if path is None :
+            path = os.path.join(os.path.dirname(self.image_path), 'hand_selected_catalog.lenstool')
+        header = "#REFERENCE 0\n## id   RA      Dec        a         b         theta     z         mag\n"
+        with open(path, 'w') as f :
+            f.write(header)
+            for row in self.hand_selected_catalog :
+                f.write(f"{row['id']:<3}  {row['ra']:10.6f}  {row['dec']:10.6f}  0.25  0.25  0.0  0.0  0.0\n")
+        print('Hand selected catalog exported to ' + path)
+
+    def clear_hand_selection(self) :
+        self.qt_image.clear_selection()
+        self.hand_selected_catalog = self.qt_image.catalog
+
         
     def import_lenstool(self, model_dir, use_wrapper=None, compute_predictions=True, verbose=True) :
         #self.lt_dir = model_dir
