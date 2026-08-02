@@ -270,7 +270,7 @@ class LensToolMainWindow(QMainWindow):
             QMessageBox.critical(self, "Plot Bayes failed", str(exc))
 
     def _start_im2source(self) -> None:
-        """Run SafeMode → set_lt_z → start_im2source sequence."""
+        """Run set_lt_z → start_im2source sequence."""
         lt_obj = getattr(self.image, "lt", None)
         if lt_obj is None:
             QMessageBox.warning(self, "No model", "Please import a Lenstool model first.")
@@ -284,7 +284,6 @@ class LensToolMainWindow(QMainWindow):
             return
 
         try:
-            lt_obj.SafeMode()
             lt_obj.set_lt_z(z_val)
             lt_obj.start_im2source()
         except Exception as exc:  # noqa: BLE001

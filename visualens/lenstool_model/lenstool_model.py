@@ -35,7 +35,7 @@ from .simulate_image.simulate_image import image_simulator
 from .im2source import start_im2source, stop_im2source
 from .utils.operations import MakeFunctionFromMap
 from .utils.utils_general import import_multiple_images, export_thumbnails, get_lenstool_file_path, import_lenstool_files
-from .utils.param_extractors import read_potfile, make_best_file_from_bayes, make_param_latex_table, read_bayes_file, parse_lenstool_parameter_file, write_single_sample_best_file
+from .utils.param_extractors import read_potfile, make_param_latex_table, read_bayes_file, parse_lenstool_parameter_file, write_single_sample_best_file
 from ..utils.utils_Qt.utils_general import transform_rectangle
 
 from .utils.file_makers import best_files_maker, make_magnifications_and_curves                  # This import is problematic. The two functions run Lenstool
@@ -45,7 +45,7 @@ from .utils.file_makers import best_files_maker, make_magnifications_and_curves 
 
 
 class lenstool_model :
-    def __init__(self, model_path, fits_image, use_wrapper=None, compute_predictions=True, verbose=True) :
+    def __init__(self, model_path, fits_image, compute_predictions=True, verbose=True) :
         self.fits_image = fits_image
         self.reference = None
         self.saturation = 1.
@@ -59,7 +59,6 @@ class lenstool_model :
         self.potfile = None
         self.curve_plot = None
         self.curves = None
-        self._safe_mode = False
         self._compute_predictions = compute_predictions
         self.verbose = verbose
         self.has_run = False
@@ -80,6 +79,7 @@ class lenstool_model :
         
         all_par_file_paths = glob.glob(os.path.join(self.model_dir, "*.par"))
         all_par_file_names = [ os.path.basename(file_path) for file_path in all_par_file_paths ]
+        # Get the parameter file path if it is not already set
         if self.param_file_path is None :
             for file_path in all_par_file_paths :
                 if not os.path.basename(file_path).startswith('best') :
@@ -92,12 +92,13 @@ class lenstool_model :
                                     
         self.param = parse_lenstool_parameter_file(self.param_file_path) if self.param_file_path is not None else None
         
-        # Get best and bayes file paths if they exist
+        # Get best file path if it is not already set
         if self.best_file_path is None :
             if 'best.par' in all_par_file_names :
                 self.best_file_path = os.path.join(self.model_dir, 'best.par')
                 self.has_run = True
             else :
+                # Check if a best file exist with a different name extension
                 l = [ file_name.startswith('best') and file_name.endswith('.par') for file_name in all_par_file_names ]
                 if True in l :
                     i = np.where(l)[0][0]
@@ -105,6 +106,8 @@ class lenstool_model :
                     self.best_file_path = all_par_file_paths[i]
         
         self.param_best = parse_lenstool_parameter_file(self.best_file_path) if self.best_file_path is not None else None
+
+        # Get bayes file path if it exists
         self.bayes_file_path = os.path.join(self.model_dir, 'bayes.dat') if 'bayes.dat' in os.listdir(self.model_dir) else None
                 
         if self.param is not None :
@@ -144,43 +147,31 @@ class lenstool_model :
                 self.z_lens = np.max(redshifts)
                 self._vprint("Setting lenstool_model.z_lens to the furthest lens' redshift: " + str(self.z_lens))
         
-        # Checks if Lenstool files were found and if so ask user if they want to use Lenstool's wrapper and its capabilities
-        # If so, moves to the model's directory (required by the Lenstool wrapper)
-        # Check which file to use: best.par, best_TEMP.par from bayes.dat, or parameter file  
+        # Checks if Lenstool files were found and if so use Lenstool's wrapper
+        # Moves to the model's directory (required by the Lenstool wrapper)
+        # Check which file to use: best.par or parameter file
         self._FileToUse = None
-        if self.has_run :
-            # Use best file
+        if self.param_file_path is not None :
+            self._FileToUse = os.path.basename(self.param_file_path)
+        elif self.best_file_path is not None :
+            self._vprint("Parameter file not found, using best.par file instead. Limited statistics capabilities available.")
             self._FileToUse = os.path.basename(self.best_file_path)
-            
-            if self.bayes_file_path is not None :
-                self.samples_df_full = read_bayes_file(self.bayes_file_path, z=self.z_lens) if self.bayes_file_path is not None else None
-                # Extract the numeric columns (skip non-numeric, zero-range etc.)
-                self.samples_df = self.samples_df_full.copy()
-                for col in self.samples_df.columns :
-                    if col=='Chi2' or col=='Nsample' or col=='ln(Lhood)':
-                        del self.samples_df[col]
-                    
-        elif self.param_file_path is not None :
-            if 'bayes.dat' in os.listdir(self.model_dir) :
-                # Option to create temporary best file from bayes if optimization hasn't finished
-                yesno = input('bayes.dat file found, create best_TEMP.par from bayes file to be used in Lenstool wrapper? ([Y]/n)')
-                if yesno.lower() in ['y', ''] :
-                    make_best_file_from_bayes(self.param_file_path)
-                    self.best_file_path = os.path.join(self.model_dir, 'best_TEMP.par')
-                    self._FileToUse = os.path.basename(self.best_file_path)
-                else :
-                    self._vprint("Loading parameter file only. Limited capabilities available.")
-                    self._FileToUse = os.path.basename(self.param_file_path)
-            else :
-                self._vprint("Only parameter file was found (looks like lenstool optimization hasn't run yet). Limited capabilities available.")
-                self._FileToUse = os.path.basename(self.param_file_path)
         else :
             self._vprint("No best file or parameter file found."
-                         "Make sure best file has name 'best.par' and parameter file has extension '.par'")
+                         "Make sure parameter file has extension '.par' or best file has name 'best.par'")
             import_lenstool_files(self)
         
+        # Load the bayes samples if the bayes file exists
+        if self.bayes_file_path is not None :
+            self.samples_df_full = read_bayes_file(self.bayes_file_path, z=self.z_lens) if self.bayes_file_path is not None else None
+            # Extract the numeric columns (skip non-numeric, zero-range etc.)
+            self.samples_df = self.samples_df_full.copy()
+            for col in self.samples_df.columns :
+                if col=='Chi2' or col=='Nsample' or col=='ln(Lhood)':
+                    del self.samples_df[col]
         
-        # Check if user wants to use Lenstool wrapper or not
+        
+        # Automatically use Lenstool's wrapper if a valid lenstool file was found
         if self._FileToUse is not None :
             if not _HAS_LENSTOOL :
                 self._vprint("\n------\n"
@@ -188,21 +179,6 @@ class lenstool_model :
                              "You can install Lenstool with conda:\n\n"
                              "    conda install conda-forge::lenstool\n"
                              "------\n")
-                yesno = 'n'
-            elif not self.model_dir.endswith('_safe/') :
-                self._vprint(f"\nA valid lenstool file was found: {self._FileToUse}")
-                if use_wrapper is None :
-                    self._vprint("Lens modeling tools rely on Lenstool and may modify some of the output files present in your model's directory (image.all, source.dat for example).\n")
-                    yesno = input(f"Continue? Or make a copy of your model's current directory? ({os.path.basename(self.model_dir[:-1])+'_safe'})\n\nYes/copy/no [Y]/c/n\n-- to skip this message use .import_lenstool(dir, use_wrapper=True) --\n")
-                elif use_wrapper :
-                    yesno = 'y'
-                else :
-                    yesno = 'n'
-            else :
-                yesno = 'c'
-            
-            # Load files according to files found and user input
-            if yesno.lower()=='n' or yesno.lower()=='no' :
                 self._vprint("Lens model loaded with limited capabilities.")
                 self.lt = None
                 #Functionalities without Lenstool's wrapper
@@ -210,17 +186,13 @@ class lenstool_model :
                     self.reference = tuple(param_dict['runmode']['reference'][1:]) if 'runmode' in param_dict else None
                 import_lenstool_files(self)
             else :
-                if yesno.lower()=='c' or yesno.lower()=='copy' :
-                    self.SafeMode()
-                    self._vprint(f"Loading {self._FileToUse}")
-                    self.lt = lenstool.Lenstool( self._FileToUse )
-                else :
-                    self._vprint('--------------------')
-                    self._vprint("Moving to " + self.model_dir)
-                    self._vprint('--------------------')
-                    os.chdir(self.model_dir)
-                    self._vprint(f"Loading {self._FileToUse}")
-                    self.lt = lenstool.Lenstool( self._FileToUse )
+                self._vprint(f"\nA valid lenstool file was found: {self._FileToUse}")
+                self._vprint('--------------------')
+                self._vprint("Moving to " + self.model_dir)
+                self._vprint('--------------------')
+                os.chdir(self.model_dir)
+                self._vprint(f"Loading {self._FileToUse}")
+                self.lt = lenstool.Lenstool( self._FileToUse )
                 self.reference = (self.lt.M.ref_ra, self.lt.M.ref_dec)
         
         
@@ -316,34 +288,6 @@ class lenstool_model :
     
     def relative_to_world(self, xr, yr) :
         return relative_to_world(xr, yr, self.reference)
-    
-    def SafeMode(self) :
-        if self._safe_mode :
-            self._vprint("Already in safe directory")
-        elif self.model_dir.endswith('_safe/') :
-            self._vprint("Safe directory already selected, moving to it")
-            os.chdir(self.model_dir)
-            self._safe_mode = True
-        else :
-            safe_dir = self.model_dir.rstrip('/') + '_safe/'
-            if os.path.exists(safe_dir) :
-                self._vprint("Safe directory already exists, moving to it")
-                self.__init__(safe_dir, self.fits_image)
-                os.chdir(safe_dir)
-                self._safe_mode = True
-            else :
-                os.makedirs(safe_dir, exist_ok=False)
-                for item in os.listdir(self.model_dir):
-                    s = os.path.join(self.model_dir, item)
-                    d = os.path.join(safe_dir, item)
-                    if os.path.isdir(s):
-                        shutil.copytree(s, d, dirs_exist_ok=True)
-                    else:
-                        shutil.copy2(s, d)
-                self.__init__(safe_dir, self.fits_image)
-                os.chdir(safe_dir)
-                self._safe_mode = True
-        self._vprint("Now in " + os.getcwd())
     
     def load_potfile(self, path) :
         if self.potfile is not None :
@@ -1057,7 +1001,7 @@ class lenstool_model :
                 
             for i in tqdm(range(nsamples)) :
                 sample_file_path = write_single_sample_best_file(self, i)
-                sample_lt = import_lenstool(sample_file_path, self.fits_image, use_wrapper=True, compute_predictions=False, verbose=False)
+                sample_lt = import_lenstool(sample_file_path, self.fits_image, compute_predictions=False, verbose=False)
 
                 """ Sample the redshift as well for those that were optimized """
                 for im in sample_lt.mult.cat :
@@ -1214,8 +1158,8 @@ class lenstool_model :
         return map_data, target_wcs
 
 
-def import_lenstool(model_dir, fits_image, use_wrapper=None, compute_predictions=False, verbose=True) :
-    return lenstool_model(model_dir, fits_image, use_wrapper=use_wrapper, compute_predictions=compute_predictions, verbose=verbose)
+def import_lenstool(model_dir, fits_image, compute_predictions=False, verbose=True) :
+    return lenstool_model(model_dir, fits_image, compute_predictions=compute_predictions, verbose=verbose)
 
 
 

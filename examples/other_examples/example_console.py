@@ -15,7 +15,7 @@ im.boost()
 im.load_filters()
 
 model_path = DATA_dir + "/lens_model/"
-im.import_lenstool(model_path, use_wrapper=True)
+im.import_lenstool(model_path)
 im.lt.set_lt_z(6.2)
 
 

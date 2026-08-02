@@ -488,11 +488,11 @@ class fits_image :
         self.hand_selected_catalog = self.qt_image.catalog
 
         
-    def import_lenstool(self, model_dir, use_wrapper=None, compute_predictions=True, verbose=True) :
+    def import_lenstool(self, model_dir, compute_predictions=True, verbose=True) :
         #self.lt_dir = model_dir
         #if hasattr(self, 'lt'):
         #    del self.lt
-        self.lt = lenstool_model(model_dir, self, use_wrapper=use_wrapper, compute_predictions=compute_predictions, verbose=verbose)
+        self.lt = lenstool_model(model_dir, self, compute_predictions=compute_predictions, verbose=verbose)
     
     
     
