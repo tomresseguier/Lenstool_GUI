@@ -155,7 +155,11 @@ def import_multiple_images(lenstool_model, mult_file_path_or_cat, fits_image, un
         cat_contains_ellipse_params = len(np.unique(self.cat['a']))!=1
         count = 0
         for name, mask in self.masks().items() :
-            broad_family = name#self.cat['broad_family'][ np.where(self.cat['family']==name)[0][0] ]
+            # name might be id, family, or broad_family, so we need to look at the correct column
+            for colname in ['id', 'family', 'broad_family'] :
+                if name in self.cat[colname] :
+                    colname_to_use = colname
+            broad_family = self.cat['broad_family'][ np.where(self.cat[colname_to_use]==name)[0][0] ]
             for multiple_image in self.cat[mask] :
                 # Remove the *1000
                 if not cat_contains_ellipse_params :

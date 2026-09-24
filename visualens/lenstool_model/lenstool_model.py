@@ -6,6 +6,7 @@ from matplotlib import pyplot as plt
 from astropy.io import fits
 from astropy.wcs import WCS
 from astropy.coordinates import SkyCoord
+from astropy.table import Table
 from tqdm import tqdm
 import warnings
 import gc
@@ -45,7 +46,7 @@ from .utils.file_makers import best_files_maker, make_magnifications_and_curves 
 
 
 class lenstool_model :
-    def __init__(self, model_path, fits_image, compute_predictions=True, verbose=True) :
+    def __init__(self, model_path, fits_image, compute_predictions=True, verbose=True, use_best=False) :
         self.fits_image = fits_image
         self.reference = None
         self.saturation = 1.
@@ -64,6 +65,8 @@ class lenstool_model :
         self.has_run = False
         
         # Get model directory
+        if not os.path.exists(model_path) :
+            raise FileNotFoundError(f"Model directory/file {model_path} does not exist")
         self.model_dir = model_path if os.path.isdir(model_path) else os.path.dirname(model_path)
         
         # Get parameter file
@@ -151,7 +154,7 @@ class lenstool_model :
         # Moves to the model's directory (required by the Lenstool wrapper)
         # Check which file to use: best.par or parameter file
         self._FileToUse = None
-        if self.param_file_path is not None :
+        if self.param_file_path is not None and not (use_best and self.best_file_path is not None) :
             self._FileToUse = os.path.basename(self.param_file_path)
         elif self.best_file_path is not None :
             self._vprint("Parameter file not found, using best.par file instead. Limited statistics capabilities available.")
@@ -163,14 +166,16 @@ class lenstool_model :
         
         # Load the bayes samples if the bayes file exists
         if self.bayes_file_path is not None :
-            self.samples_df_full = read_bayes_file(self.bayes_file_path, z=self.z_lens) if self.bayes_file_path is not None else None
+            self.samples_df_full = read_bayes_file(self.bayes_file_path, z=self.z_lens)
+            self.bayes_table = Table.from_pandas(self.samples_df_full)
+
             # Extract the numeric columns (skip non-numeric, zero-range etc.)
             self.samples_df = self.samples_df_full.copy()
             for col in self.samples_df.columns :
                 if col=='Chi2' or col=='Nsample' or col=='ln(Lhood)':
                     del self.samples_df[col]
         
-        
+
         # Automatically use Lenstool's wrapper if a valid lenstool file was found
         if self._FileToUse is not None :
             if not _HAS_LENSTOOL :
@@ -181,7 +186,7 @@ class lenstool_model :
                              "------\n")
                 self._vprint("Lens model loaded with limited capabilities.")
                 self.lt = None
-                #Functionalities without Lenstool's wrapper
+                # Functionalities without Lenstool's wrapper
                 if param_dict is not None :
                     self.reference = tuple(param_dict['runmode']['reference'][1:]) if 'runmode' in param_dict else None
                 import_lenstool_files(self)
@@ -193,6 +198,17 @@ class lenstool_model :
                 os.chdir(self.model_dir)
                 self._vprint(f"Loading {self._FileToUse}")
                 self.lt = lenstool.Lenstool( self._FileToUse )
+                if self.param_file_path is not None and self.bayes_file_path is not None :
+                    try :
+                        self.lt.readBayesModels()
+                        self.lt.readConstraints()
+                        chains, colnames = self.lt.get_chains()
+                        self.samples_table = Table(chains, names=colnames)
+                        # the get_chains() function flips the log likelihood for some reason, so we flip it back
+                        self.samples_table['ln(Lhood)'] = -self.samples_table['ln(Lhood)']
+                        self.lt.setBayesModel(method=-4)
+                    except RuntimeError :
+                        self._vprint("Error reading Bayes models. Try restarting your kernel before importing new lens model.")
                 self.reference = (self.lt.M.ref_ra, self.lt.M.ref_dec)
         
         
@@ -210,6 +226,10 @@ class lenstool_model :
         if self.mult is not None and self.lt is not None and compute_predictions :
             self.add_lensing_columns(cat=self.mult.cat)
             self.compute_sources_and_images()
+
+        # read burnin and chires files
+        self.read_burnin()
+        self.read_chires()
             
             
     def compute_sources_and_images(self, ngrid=256, restrict_to_mult_field=False) :
@@ -397,6 +417,447 @@ class lenstool_model :
     def make_latex(self) :
         latex_str = make_param_latex_table(self.param_file_path, convert_to_kpc=True, z=self.z_lens)
         return latex_str
+    
+    def read_burnin(self) :
+        """
+        Reads the burnin.dat file created by Lenstool and saves the data as an
+        astropy Table (lenstool_model.burnin_table), similar to samples_table.
+        
+        burnin.dat has no header, but its columns are identical to those of
+        bayes.dat (['Nsample', 'ln(Lhood)', <one column per free parameter>, 'Chi2']).
+        The 'Nsample' column is skipped. Other column names are taken from the
+        bayes.dat header when available, or from Lenstool's bayesHeader() otherwise.
+        
+        Args:
+            burnin_file_path: path to the burnin.dat file. Defaults to
+                              'burnin.dat' in the model directory.
+        Returns:
+            burnin_table: astropy Table with one row per burn-in sample
+        """
+        burnin_file_path = os.path.join(self.model_dir, 'burnin.dat')
+        if not os.path.isfile(burnin_file_path) :
+            self._vprint("No burnin file found at " + burnin_file_path)
+            self.burnin_table = None
+            return None
+        
+        burnin = np.loadtxt(burnin_file_path)
+        if burnin.ndim == 1 :
+            burnin = burnin[None, :]
+        
+        # Get the column names from the bayes.dat header (or from Lenstool's wrapper)
+        colnames = None
+        if self.bayes_file_path is not None :
+            colnames = []
+            with open(self.bayes_file_path, 'r') as file :
+                for line in file :
+                    if line.startswith('#') :
+                        colnames.append(line[1:].strip())
+                    else :
+                        break
+        elif self.lt is not None :
+            colnames = self.lt.bayesHeader()
+            colnames[-1] = 'Evidence' # Evidence is the last column in the burnin.dat file, instead of the chi2
+        
+        if colnames is None or len(colnames) != burnin.shape[1] :
+            self._vprint("Could not match burnin columns to bayes.dat header, using generic column names.")
+            colnames = ['col' + str(i) for i in range(burnin.shape[1])]
+        
+        burnin = burnin[:, 1:]
+        colnames = colnames[1:]
+        
+        self.burnin_table = Table(burnin, names=colnames)
+        self._vprint(f"Loaded {len(self.burnin_table)} burn-in samples from {burnin_file_path}")
+        return self.burnin_table
+    
+    def plot_chi2(self) :
+        cst = -2 * self.bayes_table['ln(Lhood)'][0] - self.bayes_table['Chi2'][0]
+        chi2_burnin = -2 * self.burnin_table['ln(Lhood)'] - cst
+        x_burnin = np.arange(len(chi2_burnin))
+        chi2_sampling = self.bayes_table['Chi2']
+        x_sampling = np.arange(len(x_burnin), len(x_burnin) + len(chi2_sampling))
+
+        fig, ax = plt.subplots()
+        ax.plot(x_burnin, chi2_burnin, label='Burn-in')
+        ax.plot(x_sampling, chi2_sampling, label='Sampling')
+        ax.legend()
+        ax.set_xlabel('Iteration')
+        ax.set_ylabel('Chi2')
+        ax.grid(True)
+        fig.show()
+        return fig, ax
+
+    def read_chires(self) :
+        """
+        Reads the chires.dat file created by Lenstool and saves the data as an
+        astropy Table (lenstool_model.chires_table).
+        
+        Only the per-image rows matching the header columns
+        (N, ID, z, Narcs, chip, ...) are stored in the table; 'N/A' entries
+        (e.g. dx/dy on family summary rows) are converted to NaN. The summary
+        lines at the end of the file are not stored, except for the chitot and
+        log(Likelihood) values, which are saved as lenstool_model.chitot and
+        lenstool_model.log_likelihood and printed.
+        
+        Args:
+            chires_file_path: path to the chires.dat file. Defaults to
+                              'chires.dat' in the model directory.
+        Returns:
+            chires_table: astropy Table with one row per (image, Narcs) entry
+        """
+        chires_file_path = os.path.join(self.model_dir, 'chires.dat')
+        if not os.path.isfile(chires_file_path) :
+            self._vprint("No chires file found at " + chires_file_path)
+            self.chires_table = None
+            return None
+        
+        colnames = None
+        rows = []
+        self.chitot = None
+        self.log_likelihood = None
+        with open(chires_file_path, 'r') as file :
+            for line in file :
+                tokens = line.split()
+                if len(tokens) == 0 :
+                    continue
+                if colnames is None :
+                    # The header is the first line containing the 'ID' column
+                    if 'ID' in tokens :
+                        colnames = tokens
+                    continue
+                if len(tokens) == len(colnames) and tokens[0].isdigit() :
+                    rows.append(tokens)
+                elif tokens[0] == 'chitot' :
+                    self.chitot = float(tokens[1])
+                elif tokens[0] == 'log(Likelihood)' :
+                    self.log_likelihood = float(tokens[1])
+        
+        if colnames is None or len(rows) == 0 :
+            self._vprint("Could not parse any data rows from " + chires_file_path)
+            self.chires_table = None
+            return None
+        
+        self.chires_table = Table()
+        for name, column in zip(colnames, zip(*rows)) :
+            try :
+                self.chires_table[name] = np.array(column, dtype=int)
+            except ValueError :
+                try :
+                    self.chires_table[name] = np.array([np.nan if value == 'N/A' else float(value) \
+                                                        for value in column])
+                except ValueError :
+                    self.chires_table[name] = np.array(column)
+        
+        self._vprint(f"Loaded {len(self.chires_table)} rows from {chires_file_path}")
+        print(f"chitot          : {self.chitot}")
+        print(f"log(Likelihood) : {self.log_likelihood}")
+
+        mask = self.chires_table['Narcs']==1
+        N = len(self.chires_table[mask])
+        self.RMS = np.sqrt( np.sum( self.chires_table[mask]['rmsi']**2 ) / N)
+        print('\n--------------------------------')
+        print(f"RMS : {self.RMS}")
+        print('--------------------------------\n')
+
+        return self.chires_table
+
+    def write_optimized_param_file(self, output_path=None, prior_mode=None, nsigma=None, z_prior_mode=None) :
+        """
+        Creates a new Lenstool input parameter file identical to the one at
+        self.param_file_path, but with the initial values of the potentials
+        replaced by the optimized values from self.param_best.
+        Comments, formatting and all other sections (potfile, cosmology, etc.) are preserved.
+        Gaussian priors in the limit sections can either be kept unchanged
+        (they are then centered on the new, optimized initial values) or replaced
+        with uniform priors (flag 1) spanning the optimized value +/- nsigma*sigma.
+        Optimized image redshifts (z_m_limit lines in the image section, with the
+        optimized values taken from the 'z_opt' column of lenstool_model.mult.cat)
+        receive a similar treatment: gaussian redshift priors ('z_m_limit 1 <ids> 3
+        mean sigma precision') are either re-centered on the optimized redshift
+        (same sigma), replaced with uniform priors around it, or copied unchanged.
+        Optimized potfile parameters (e.g. 'sigma 3 mean stddev', 'cut 3 mean stddev'),
+        whose best values are not written in the best file, are taken from the maximum
+        likelihood sample of the bayes chains (lenstool_model.samples_table); their
+        gaussian priors follow prior_mode like the limit sections.
+        Args:
+            output_path: path of the new parameter file. Defaults to the original
+                         file name with an '_optimized' suffix.
+            prior_mode: what to do with gaussian priors in the limit sections:
+                        'gaussian' to keep them (same sigma, now centered on the
+                        optimized value), 'uniform' to replace them with uniform
+                        priors. If None and gaussian priors are present, the
+                        initial and optimized values are printed and the user is
+                        asked which option to use.
+            nsigma: half-width of the replacement uniform priors, in units of the
+                    gaussian sigma. Only used with the 'uniform' option.
+                    If None, the user is asked.
+            z_prior_mode: what to do with gaussian redshift priors (z_m_limit):
+                          'gaussian' to re-center them on the optimized redshifts,
+                          'uniform' to replace them with uniform priors, 'keep' to
+                          copy the lines unchanged. If None, defaults to prior_mode
+                          when the latter was specified; otherwise the user is asked.
+        Returns:
+            output_path: path of the written parameter file
+        """
+        if self.param_file_path is None :
+            raise ValueError("No parameter file found (lenstool_model.param_file_path is None).")
+        if self.param_best is None :
+            raise ValueError("No best file found (lenstool_model.param_best is None). Run the optimization first.")
+        if prior_mode not in (None, 'gaussian', 'uniform') :
+            raise ValueError("prior_mode must be 'gaussian' or 'uniform'")
+        if z_prior_mode not in (None, 'gaussian', 'uniform', 'keep') :
+            raise ValueError("z_prior_mode must be 'gaussian', 'uniform' or 'keep'")
+        prior_mode_specified = prior_mode is not None
+        
+        if output_path is None :
+            root, ext = os.path.splitext(self.param_file_path)
+            output_path = root + '_optimized' + ext
+        
+        def normalize_key(key) :
+            return 'ellipticity' if key=='ellipticite' else key
+        
+        def format_value(value) :
+            if isinstance(value, list) :
+                return ' '.join(str(v) for v in value)
+            return str(value)
+        
+        # Ordered potential sections from the parameter file and the best file
+        param_pot_names = [ name for name in self.param if name.startswith('potential') ]
+        best_pot_items = [ (name, self.param_best[name]) for name in self.param_best if name.startswith('potential') ]
+        
+        def find_best_pot(param_pot_name) :
+            # Match by position
+            order_index = param_pot_names.index(param_pot_name)
+            if order_index < len(best_pot_items) :
+                return best_pot_items[order_index][1]
+            return None
+        
+        def find_pot_for_limit(limit_section_name) :
+            # Match 'limit <name>' to 'potential <name>'
+            for pot_name in param_pot_names :
+                if pot_name.split()[1:]==limit_section_name.split()[1:] :
+                    return pot_name
+            return None
+        
+        def split_z_m_limit(values) :
+            # values: tokens following the 'z_m_limit' keyword (enable flag, image ids, prior type, prior params)
+            # Returns the image ids and the index of the prior type token (the first integer after the enable flag)
+            for i, tok in enumerate(values[1:], start=1) :
+                if str(tok).lstrip('+-').isdigit() :
+                    return [str(v) for v in values[1:i]], i
+            return None, None
+        
+        def z_opt_for_ids(image_ids) :
+            # Optimized redshift of a system from the multiple image catalog
+            if self.mult is None or 'z_opt' not in self.mult.cat.colnames :
+                return None
+            for image_id in image_ids :
+                for row in self.mult.cat :
+                    if str(row['id'])==image_id and not np.isnan(row['z_opt']) :
+                        return float(row['z_opt'])
+            return None
+        
+        def potfile_best_value(keyword) :
+            # Optimized potfile values are not written in the best file:
+            # take them from the maximum likelihood sample of the bayes chains
+            samples_table = getattr(self, 'samples_table', None)
+            if samples_table is None :
+                return None
+            # Potfile keywords vs parameter names in the chains columns ('Pot0 rcut (arcsec)' etc.)
+            name_map = {'sigma': 'sigma', 'cut': 'rcut', 'rcut': 'rcut', 'core': 'rcore',
+                        'slope': 'slope', 'vdslope': 'vdslope'}
+            if keyword not in name_map :
+                return None
+            lhood_col = None
+            for col in samples_table.colnames :
+                if 'lhood' in col.lower() :
+                    lhood_col = col
+                    break
+            if lhood_col is None :
+                return None
+            best_index = np.argmax(samples_table[lhood_col])
+            for col in samples_table.colnames :
+                if col.split()[:2]==['Pot0', name_map[keyword]] :
+                    return float(samples_table[col][best_index])
+            return None
+        
+        def print_priors(priors) :
+            for prior in priors :
+                print(f"    {prior['section']}  {prior['key']}: initial = {prior['initial']}, "
+                      f"optimized = {prior['optimized']}, sigma = {prior['sigma']}")
+        
+        # Collect the gaussian priors (flag 3) from the limit sections
+        pot_gaussian_priors = []
+        for section in self.param :
+            if section.startswith('limit') :
+                pot_name = find_pot_for_limit(section)
+                if pot_name is None :
+                    continue
+                best_pot = find_best_pot(pot_name)
+                for key, values in self.param[section].items() :
+                    if isinstance(values, list) and values[0]==3 :
+                        pot_gaussian_priors.append({ 'section': section,
+                                                     'key': key,
+                                                     'sigma': values[1],
+                                                     'initial': self.param[pot_name].get(key),
+                                                     'optimized': best_pot.get(key) if best_pot is not None else None })
+        
+        # Collect the gaussian priors (flag 3, 'keyword 3 mean stddev') from the potfile section(s)
+        for section in self.param :
+            if section.startswith('potfile') :
+                for key, values in self.param[section].items() :
+                    if isinstance(values, list) and values[0]==3 and key != 'filein':
+                        pot_gaussian_priors.append({ 'section': section,
+                                                     'key': key,
+                                                     'sigma': values[2],
+                                                     'initial': values[1],
+                                                     'optimized': potfile_best_value(key) })
+        
+        # Collect the gaussian redshift priors (flag 3) from the z_m_limit lines of the image section
+        z_gaussian_priors = []
+        if 'image' in self.param and 'z_m_limit' in self.param['image'] :
+            z_m_limit_entries = self.param['image']['z_m_limit']
+            if not isinstance(z_m_limit_entries[0], list) :
+                z_m_limit_entries = [z_m_limit_entries]
+            for values in z_m_limit_entries :
+                image_ids, i = split_z_m_limit(values)
+                if image_ids is not None and values[i]==3 :
+                    z_gaussian_priors.append({ 'section': 'image',
+                                               'key': 'z_m_limit ' + ' '.join(image_ids),
+                                               'sigma': values[i+2],
+                                               'initial': values[i+1],
+                                               'optimized': z_opt_for_ids(image_ids) })
+        
+        if pot_gaussian_priors and prior_mode is None :
+            print("Gaussian priors (flag 3) found in the limit/potfile sections:")
+            print_priors(pot_gaussian_priors)
+            answer = ''
+            while answer not in ['g', 'u'] :
+                answer = input("Keep gaussian priors, now centered on the optimized values [g], "
+                               "or replace them with uniform priors of half-width n*sigma [u]? ").strip().lower()
+            prior_mode = 'gaussian' if answer=='g' else 'uniform'
+        
+        if z_gaussian_priors and z_prior_mode in (None, 'uniform') :
+            print("Gaussian redshift priors (z_m_limit, flag 3) found in the image section:")
+            print_priors(z_gaussian_priors)
+            if prior_mode_specified :
+                z_prior_mode = prior_mode
+            else :
+                answer = ''
+                while answer not in ['g', 'u', 'k'] :
+                    answer = input("Re-center gaussian priors on the optimized redshifts [g], "
+                                   "replace them with uniform priors of half-width n*sigma [u], "
+                                   "or keep the lines unchanged [k]? ").strip().lower()
+                z_prior_mode = {'g': 'gaussian', 'u': 'uniform', 'k': 'keep'}[answer]
+        
+        if nsigma is None and ((pot_gaussian_priors and prior_mode=='uniform')
+                               or (z_gaussian_priors and z_prior_mode=='uniform')) :
+            nsigma = float(input("Half-width of the uniform priors in units of sigma (n): "))
+        
+        with open(self.param_file_path, 'r') as f :
+            lines = f.readlines()
+        
+        new_lines = []
+        current_section = None
+        current_best_pot = None
+        current_limit_best_pot = None
+        for line in lines :
+            stripped = line.split('#')[0].strip()
+            tokens = stripped.split()
+            
+            if not tokens :
+                new_lines.append(line)
+                continue
+            
+            if current_section is None :
+                if tokens[0].lower() in ('fini', 'finish') :
+                    new_lines.append(line)
+                    continue
+                # New section begins
+                current_section = stripped.replace('potentiel', 'potential', 1)
+                current_best_pot = None
+                current_limit_best_pot = None
+                if current_section.startswith('potential') :
+                    current_best_pot = find_best_pot(current_section)
+                    if current_best_pot is None :
+                        self._vprint(f"No optimized values found for '{stripped}', keeping initial values.")
+                elif current_section.startswith('limit') and prior_mode=='uniform' :
+                    pot_name = find_pot_for_limit(current_section)
+                    if pot_name is not None :
+                        current_limit_best_pot = find_best_pot(pot_name)
+                new_lines.append(line)
+                continue
+            
+            if tokens[0].lower()=='end' :
+                current_section = None
+                current_best_pot = None
+                current_limit_best_pot = None
+                new_lines.append(line)
+                continue
+            
+            if current_best_pot is not None :
+                key = normalize_key(tokens[0])
+                if key not in ('identity', 'profile', 'z_lens') :
+                    best_value = current_best_pot.get(key)
+                    if best_value is not None :
+                        indent = line[:len(line) - len(line.lstrip())]
+                        comment = '  ' + line[line.index('#'):].rstrip('\n') if '#' in line else ''
+                        new_lines.append(indent + tokens[0] + '  ' + format_value(best_value) + comment + '\n')
+                        continue
+            
+            # Replace gaussian priors (flag 3) with uniform priors around the optimized value
+            if current_limit_best_pot is not None and len(tokens)>=3 and tokens[1]=='3' :
+                best_value = current_limit_best_pot.get(normalize_key(tokens[0]))
+                if isinstance(best_value, (int, float)) :
+                    sigma = float(tokens[2])
+                    indent = line[:len(line) - len(line.lstrip())]
+                    comment = '  ' + line[line.index('#'):].rstrip('\n') if '#' in line else ''
+                    new_lines.append(indent + tokens[0] + f'  1 {best_value - nsigma*sigma} {best_value + nsigma*sigma}' + comment + '\n')
+                    continue
+            
+            # Update gaussian redshift priors (z_m_limit, flag 3) with the optimized redshifts
+            # ('keep' or None leaves the lines unchanged)
+            if current_section=='image' and tokens[0]=='z_m_limit' and z_prior_mode in ('gaussian', 'uniform') :
+                image_ids, i = split_z_m_limit(tokens[1:])
+                if image_ids is not None and tokens[1+i]=='3' :
+                    z_opt = z_opt_for_ids(image_ids)
+                    if z_opt is None :
+                        self._vprint(f"No optimized redshift found for {image_ids}, keeping line unchanged.")
+                    else :
+                        k = 1 + i  # index of the prior type in `tokens`
+                        sigma = float(tokens[k+2])
+                        indent = line[:len(line) - len(line.lstrip())]
+                        comment = '  ' + line[line.index('#'):].rstrip('\n') if '#' in line else ''
+                        if z_prior_mode=='gaussian' :
+                            # Same sigma (and precision), re-centered on the optimized redshift
+                            new_tokens = tokens[:k+1] + [str(z_opt)] + tokens[k+2:]
+                        else :
+                            new_tokens = tokens[:k] + ['1', str(z_opt - nsigma*sigma), str(z_opt + nsigma*sigma)] + tokens[k+3:]
+                        new_lines.append(indent + ' '.join(new_tokens) + comment + '\n')
+                        continue
+            
+            # Update gaussian potfile priors (flag 3) with the maximum likelihood values from the bayes chains
+            if current_section.startswith('potfile') and len(tokens)>=4 and tokens[1]=='3' and prior_mode in ('gaussian', 'uniform') :
+                best_value = potfile_best_value(tokens[0])
+                if best_value is None :
+                    self._vprint(f"No optimized value found for potfile parameter '{tokens[0]}', keeping line unchanged.")
+                else :
+                    sigma = float(tokens[3])
+                    indent = line[:len(line) - len(line.lstrip())]
+                    comment = '  ' + line[line.index('#'):].rstrip('\n') if '#' in line else ''
+                    if prior_mode=='gaussian' :
+                        # Same sigma, re-centered on the maximum likelihood value
+                        new_tokens = tokens[:2] + [str(best_value)] + tokens[3:]
+                    else :
+                        new_tokens = [tokens[0], '1', str(best_value - nsigma*sigma), str(best_value + nsigma*sigma)] + tokens[4:]
+                    new_lines.append(indent + ' '.join(new_tokens) + comment + '\n')
+                    continue
+            
+            new_lines.append(line)
+        
+        with open(output_path, 'w') as f :
+            f.writelines(new_lines)
+        self._vprint(f"Optimized parameter file written to {output_path}")
+        return output_path
     
     
     def set_lt_z(self, z, color=[255,100,255], recompute=False) :
@@ -984,47 +1445,51 @@ class lenstool_model :
 
         else :
             if os.path.exists(samples_dict_path) :
+                # Computation of lensing properties for all samples takes time so we save previous dictionary just in case
                 self._vprint('Renaming previous samples dictionary to ' + samples_dict_path.replace('.pkl', '_previous.pkl'))
                 shutil.move(samples_dict_path, samples_dict_path.replace('.pkl', '_previous.pkl'))
 
-            if os.path.exists(os.path.join(self.samples_dir, os.path.basename(self.mult_path))) :
-                self._vprint('Overwriting mult file in samples directory')
-            else :
-                self._vprint('Copying mult file to samples directory')
-            shutil.copy2(self.mult_path, self.samples_dir)
+            # if os.path.exists(os.path.join(self.samples_dir, os.path.basename(self.mult_path))) :
+            #     self._vprint('Overwriting mult file in samples directory')
+            # else :
+            #     self._vprint('Copying mult file to samples directory')
+            # shutil.copy2(self.mult_path, self.samples_dir)
             
-            nsamples = len(self.samples_df.index) if nsamples is None else nsamples
+            nsamples = self.lt._nvals # len(self.samples_df.index) if nsamples is None else nsamples
             
             self.samples_dict = {}
             for imID in self.mult.cat['id'] :
                 self.samples_dict[imID] = {col: np.full(nsamples, np.nan) for col in lensing_columns}
                 
             for i in tqdm(range(nsamples)) :
-                sample_file_path = write_single_sample_best_file(self, i)
-                sample_lt = import_lenstool(sample_file_path, self.fits_image, compute_predictions=False, verbose=False)
+                self.lt.setBayesModel(i)
+
+
+                # sample_file_path = write_single_sample_best_file(self, i)
+                # sample_lt = import_lenstool(sample_file_path, self.fits_image, compute_predictions=False, verbose=False)
 
                 """ Sample the redshift as well for those that were optimized """
-                for im in sample_lt.mult.cat :
+                for im in self.mult.cat :
                     #if not np.isnan(im['z_opt']) :
-                    broad_family_members_mask = np.array([ member['broad_family']==im['broad_family'] for member in sample_lt.mult.cat ])
-                    for member in sample_lt.mult.cat[broad_family_members_mask] :
-                        for col in self.samples_df.columns :
+                    broad_family_members_mask = np.array([ member['broad_family']==im['broad_family'] for member in self.mult.cat ])
+                    for member in self.mult.cat[broad_family_members_mask] :
+                        for col in self.samples_table.colnames :
                             if member['id'] == col[len('Redshift of '):] :
-                                self._vprint('Sampling redshift of ' + im['id'] + ': ' + str(im['z']) + ' --> ' + str(self.samples_df[col][i]))
-                                im['z'] = self.samples_df[col][i]
-                                self.samples_dict[im['id']]['z_opt'][i] = self.samples_df[col][i]
+                                self._vprint('Sampling redshift of ' + im['id'] + ': ' + str(im['z']) + ' --> ' + str(self.samples_table[col][i]))
+                                im['z'] = self.samples_table[col][i]
+                                self.samples_dict[im['id']]['z_opt'][i] = self.samples_table[col][i]
                                 
                 """ Compute magnification etc. for the sample """
-                sample_lt.add_lensing_columns(cat=sample_lt.mult.cat)
+                self.lt.add_lensing_columns(cat=self.mult.cat)
 
-                for im in sample_lt.mult.cat :
+                for im in self.mult.cat :
                     for col in lensing_columns :
                         if col != 'z_opt' :
                             self.samples_dict[im['id']][col][i] = im[col]
                     
-                del sample_lt
-                gc.collect()
-                os.remove(sample_file_path)
+                # del sample_lt
+                # gc.collect()
+                # os.remove(sample_file_path)
 
                 if i % 10 == 0 :
                     pickle.dump(self.samples_dict, open(samples_dict_path, 'wb'))
@@ -1058,6 +1523,8 @@ class lenstool_model :
                 im[f'{col}_16_percentile'] = np.percentile(self.samples_dict[im['id']][col], 16)
                 im[f'{col}_84_percentile'] = np.percentile(self.samples_dict[im['id']][col], 84)
                 im[f'{col}_50_percentile'] = np.percentile(self.samples_dict[im['id']][col], 50)
+
+        self.lt.setBayesModel(method=-4)
         
 
     def compute_map_as(self, fits_file_path, which='dpl') :

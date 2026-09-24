@@ -46,7 +46,7 @@ def open_cat(cat_path) :
     return cat, header
 
     
-def make_uniform_names_cat(cat, self) :
+def make_uniform_names_cat(cat, self) : #TO DO: add semimajor_axis and semiminor_axis as standard names for ellipticity parameters
     uniform_names_cat = cat.copy()
     colnames_dict = make_colnames_dict(cat, use_default_names=self.use_default_names)
     
@@ -273,7 +273,7 @@ class catalog :
             xy_axes.append( input('select y axis among: ' + str(self.cat.colnames)) )
         else :
             x_axis = self.cat[xy_axes[0]]
-            y_axis = self.cat[xy_axes[0]]
+            y_axis = self.cat[xy_axes[1]]
         self.xy_axes = xy_axes
         
         self.make_mask_naninf(xy_axes)
@@ -454,7 +454,7 @@ class catalog :
         self._vprint('Selected sources exported at ' + file_path)
                 
     
-    def export_to_potfile(self, file_path=None, units='pixel') :
+    def export_to_potfile(self, file_path=None, units='pixel', mag_col=None) :
         cat = self.cat[self.selection_mask] if True in self.selection_mask else self.cat
         cat = cat.copy()
         
@@ -470,7 +470,17 @@ class catalog :
             if units!='arcsec' :
                 self._vprint("Units not recognized, exporting as is")
         
-        mag_col = self.xy_axes[0] if self.xy_axes is not None else input('select magnitude column to be used in Lenstool potfile (press return directly to just populate with zeros): ' + str(self.cat.colnames))
+        if mag_col is None :
+            yesno = 'no'
+            if self.xy_axes is not None and self.xy_axes[0] is not None :
+                yesno = input(f"Use '{self.xy_axes[0]}' as mag column? (y/n)")
+            mag_col = self.xy_axes[0] if yesno in['y', 'yes', 'Y', 'Yes'] else None
+        while mag_col is None :
+            mag_col = input('Select magnitude column to be used in Lenstool potfile (press return directly to skip and populate magnitude column with zeros): ' + str(self.cat.colnames))
+            if mag_col not in self.cat.colnames + ['']:
+                print("Column name not found in catalog. Please enter a valid column name (or press return to skip and populate magnitude column with zeros).")
+                mag_col = None
+        
         if mag_col in self.cat.colnames :
             self._vprint(f"Using '{mag_col}' as mag column")
             sort_array = np.argsort(cat[mag_col])

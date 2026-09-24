@@ -343,7 +343,7 @@ class fits_image :
         wcs_out.wcs.crpix = [(1.0 - xmin_o) + 0.5, (1.0 - ymin_o) + 0.5]
         shape_out = (int(round(ymax_o - ymin_o)), int(round(xmax_o - xmin_o)))
 
-        print(f'Rotating image by {angle:.4g} deg (output orientation {self.orientation - angle:.4g} deg)...')
+        print(f'Rotating image by {angle} deg (output orientation {self.orientation - angle} deg)...')
 
         def _reproject_plane(plane) :
             arr, footprint = reproject_interp((plane, wcs_in), wcs_out, shape_out=shape_out)
@@ -480,7 +480,7 @@ class fits_image :
         with open(path, 'w') as f :
             f.write(header)
             for row in self.hand_selected_catalog :
-                f.write(f"{row['id']:<3}  {row['ra']:10.6f}  {row['dec']:10.6f}  0.25  0.25  0.0  0.0  0.0\n")
+                f.write(f"{row['id']:<3}  {row['ra']:11.7f}  {row['dec']:11.7f}  0.25  0.25  0.0  0.0  0.0\n")
         print('Hand selected catalog exported to ' + path)
 
     def clear_hand_selection(self) :
@@ -488,11 +488,11 @@ class fits_image :
         self.hand_selected_catalog = self.qt_image.catalog
 
         
-    def import_lenstool(self, model_dir, compute_predictions=True, verbose=True) :
+    def import_lenstool(self, model_dir, compute_predictions=True, verbose=True, use_best=False) :
         #self.lt_dir = model_dir
         #if hasattr(self, 'lt'):
         #    del self.lt
-        self.lt = lenstool_model(model_dir, self, compute_predictions=compute_predictions, verbose=verbose)
+        self.lt = lenstool_model(model_dir, self, compute_predictions=compute_predictions, verbose=verbose, use_best=use_best)
     
     
     

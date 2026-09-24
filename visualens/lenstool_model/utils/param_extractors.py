@@ -84,6 +84,10 @@ def parse_lenstool_parameter_file(path) :
                 # First time seeing this key: store values as a single entry
                 # If values has only 1 item, we store that item; otherwise the whole list
                 target[key] = values if len(values) > 1 else values[0]
+    
+    # Remove the last item ('fini' keyword)
+    if 'fini' in data :
+        del data['fini']
     return data
 
 
