@@ -184,6 +184,7 @@ class Visualens :
         self.lens_model = LensModel(model_dir, self.image, workspace=self, compute_predictions=compute_predictions, verbose=verbose, use_best=use_best)
         self.image = self.lens_model.image   # adopt the auto-created empty Image if there wasn't one
         self._attach_side_panel()
+        self.lens_model.clear()
         return self.lens_model
 
     def open_image_dialog(self) :
@@ -260,6 +261,8 @@ class Visualens :
             img.QSplitter.setStretchFactor(1, 3)
 
         self.side_panel.sync_link_button_states()
+        self.side_panel.refresh_catalog_tabs()
+        self.side_panel.refresh_lens_model_tab()
 
         if self.toggle_panel_btn is not None :
             parent = self.toggle_panel_btn.parent()

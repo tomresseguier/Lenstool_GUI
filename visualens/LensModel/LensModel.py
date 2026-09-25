@@ -60,7 +60,8 @@ class LensModel :
         self.images_filtered = None
         self.arclets = None
         self.potfile = None
-        self.curve_plot = None
+        self.critical_curve_plot = None
+        self.caustic_curve_plot = None
         self.curves = None
         self._compute_predictions = compute_predictions
         self.verbose = verbose
@@ -150,7 +151,7 @@ class LensModel :
             self.families = []
             self.broad_families = []
             self.which = []
-            import_multiple_images(self, self.mult_path, self.image, units='pixel', filled_markers=True)
+            import_multiple_images(self, self.mult_path, self.image, units='pixel', marker='o', filled_markers=False)
         
         # Get the lens redshift if unique
         if self.param is not None  or self.param_best is not None :
@@ -230,7 +231,8 @@ class LensModel :
         
         
         # some useful initializations
-        self.curve_plot = None
+        self.critical_curve_plot = None
+        self.caustic_curve_plot = None
         self.magnification_res = 1000
         self.magnification_line_ax = None
         self.previous_state_current_ROI = None
@@ -262,7 +264,7 @@ class LensModel :
         source.rename_column('ra_source', 'ra')
         source.rename_column('dec_source', 'dec')
         
-        import_multiple_images(self, source, self.image, AttrName='source', units='pixel', filled_markers=True)
+        import_multiple_images(self, source, self.image, AttrName='source', units='pixel', marker='x', filled_markers=True)
         
         # Format source catalog in the Lenstool format
         source.rename_column('id', 'n')
@@ -307,8 +309,8 @@ class LensModel :
         for j, colname in enumerate(['family','broad_family', 'confidence']) :
             image.add_column(cols_to_add[j], name=colname)
         
-        import_multiple_images(self, image, self.image, AttrName='images', units='pixel', filled_markers=True)
-        import_multiple_images(self, image, self.image, AttrName='images_filtered', units='pixel', filled_markers=True)
+        import_multiple_images(self, image, self.image, AttrName='images', units='pixel')
+        import_multiple_images(self, image, self.image, AttrName='images_filtered', units='pixel')
         self.filter_image()
         
         self.lt.set_grid(_initial_ngrid_value, 0)
@@ -406,8 +408,12 @@ class LensModel :
             self.arclets.clear()
         if self.curves is not None :
             self.curves.clear()
-        if self.curve_plot is not None :
-            self.image.ImageView.removeItem(self.curve_plot)
+        if self.critical_curve_plot is not None :
+            self.image.ImageView.removeItem(self.critical_curve_plot)
+            self.critical_curve_plot = None
+        if self.caustic_curve_plot is not None :
+            self.image.ImageView.removeItem(self.caustic_curve_plot)
+            self.caustic_curve_plot = None
             
     def set_which(self, *names) :
         if names[0]=='all' :
@@ -878,9 +884,7 @@ class LensModel :
         return output_path
     
     
-    def set_lt_z(self, z, color=[255,100,255], recompute=False) :
-        #if self.curve_plot is not None :
-        #    self.image.ImageView.removeItem(self.curve_plot)
+    def set_lt_z(self, z, color=[255,100,255], recompute=False, plot_critical=True, plot_caustic=False) :
         self.lt_z = z
         self._vprint(self.best_file_path)
         self._vprint(os.getcwd())
@@ -892,7 +896,10 @@ class LensModel :
         self.lt_curve_coords_relative = self.lt_curves[z]
         self.lt_caustic_coords_relative = self.lt_caustics[z]
         self._curves_add_all_coords()
-        self.plot_lt_curve(color=color)
+        if plot_critical :
+            self.plot_lt_curve(color=color, which='critical')
+        if plot_caustic :
+            self.plot_lt_curve(color=[0, 255, 255], which='caustic')
         
         ######## Magnification ########
         if z not in self.lt_magnification_maps.keys() or recompute :
@@ -1125,26 +1132,34 @@ class LensModel :
         self.lt_caustic_coords_image = [lt_caustic_x, self.image.image_data.shape[0] - lt_caustic_y]
     
     def plot_lt_curve(self, color=[255, 0, 255], which='critical') :
-        if self.curve_plot is not None :
-            self.image.ImageView.removeItem(self.curve_plot)
-            #del self.curve_plot
+        attr_name = 'critical_curve_plot' if which=='critical' else 'caustic_curve_plot'
+        existing_plot = getattr(self, attr_name)
+        if existing_plot is not None :
+            self.image.ImageView.removeItem(existing_plot)
         
         if which=='critical' :
             coords = self.lt_curve_coords_image
         elif which=='caustic' :
             coords = self.lt_caustic_coords_image
         
-        self.lt_curve_coords_image_sorted = break_curves(coords)
-        #self.lt_curve_coords_image_sorted = sort_points(coords, distance_threshold=1.0/(self.image.pix_deg_scale*3600), angle_threshold=np.pi)
+        curve_coords_image_sorted = break_curves(coords)
+        #curve_coords_image_sorted = sort_points(coords, distance_threshold=1.0/(self.image.pix_deg_scale*3600), angle_threshold=np.pi)
+        if which=='critical' :
+            self.lt_curve_coords_image_sorted = curve_coords_image_sorted
         
-        self.curve_plot = pg.PlotDataItem()
-        #self.curve_plot = pg.ScatterPlotItem()
-        self.curve_plot.setPen( color=color+[255], width=4.0001 )
-        #self.curve_plot.setBrush( color=color+[255], width=3 )
-        self.curve_plot.setData(self.lt_curve_coords_image_sorted[0], self.lt_curve_coords_image_sorted[1])
-        #self.curve_scatter = pg.ScatterPlotItem(size=1, brush='g')
-        #self.curve_scatter.setData(coords[0], coords[1])
-        self.image.ImageView.addItem(self.curve_plot)
+        new_plot = pg.PlotDataItem()
+        new_plot.setPen( color=color+[255], width=4.0001 )
+        new_plot.setData(curve_coords_image_sorted[0], curve_coords_image_sorted[1])
+        self.image.ImageView.addItem(new_plot)
+        setattr(self, attr_name, new_plot)
+
+    def clear_lt_curve(self, which='critical') :
+        """Remove the currently plotted critical or caustic curve, without recomputing anything."""
+        attr_name = 'critical_curve_plot' if which=='critical' else 'caustic_curve_plot'
+        existing_plot = getattr(self, attr_name)
+        if existing_plot is not None :
+            self.image.ImageView.removeItem(existing_plot)
+            setattr(self, attr_name, None)
         
     def plot_bayes(self) :
         plot_corner(self.samples_df)

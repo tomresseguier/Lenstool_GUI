@@ -2,6 +2,7 @@ import matplotlib
 from PyQt5.QtWidgets import QApplication
 import sys
 import os
+import numpy as np
 
 
 #from visualens import Visualens
@@ -9,36 +10,46 @@ sys.path.append( os.path.join(os.path.expanduser("~"), 'Library/Mobile Documents
 from Lenstool_GUI.visualens import Visualens
 
 #DATA_dir = #os.path.join( os.getcwd(), 'DATA' )
-DATA_dir = '/Users/tomresseguier/Library/Mobile Documents/com~apple~CloudDocs/RESEARCH/PROCESS/Lenstool_GUI/examples/DATA'
+DATA_dir = os.path.join( os.path.expanduser("~"), 'RESEARCH_DATA/MACS0308/DATA/' )
+Lenstool_dir = os.path.join(os.path.expanduser("~"), 'Library/Mobile Documents/com~apple~CloudDocs/RESEARCH/PROCESS/Lenstool_runs/')
 
 vl = Visualens()
 vl.import_image(DATA_dir + "/RGB_cropped.fits")
 
+vl.image.load_filters()
+
 vl.import_catalog(DATA_dir + '/phot-eazy_magRS.fits')
 
-vl.catalog.cat
-
-vl.catalog.plot(scale=1., color=[0,1,1], text_column=None, linewidth=3, marker=None)
-
-mask = vl.catalog.selection_mask
-print(vl.catalog.cat[mask])
-
-vl.catalog.plot_column('z_phot')
-
-vl.catalog.clear()
-
-vl.catalog.export_to_mult_file()
-
-# Create a new column for a specific quantity we want to look at. Here, color.
-vl.catalog.cat['f115w_mag-f200w_mag'] = vl.catalog.cat['f115w_mag'] - vl.catalog.cat['f200w_mag']
-
-# Create the selection panel
-vl.catalog.make_selection_panel(xy_axes=['f200w_mag', 'f115w_mag-f200w_mag'])
-
-vl.catalog.export_to_potfile()
-
-vl.catalog.remove_selection_panel()
-vl.catalog.clear()
+Lenstool_dir = os.path.join(os.path.expanduser("~"), 'Library/Mobile Documents/com~apple~CloudDocs/RESEARCH/PROCESS/Lenstool_runs/')
+vl.import_lens_model(Lenstool_dir + "/MACS0308/v2/" + "r06_1H4G_shear")
 
 
-vl.toggle_split4()
+
+
+
+vl.import_image(DATA_dir + 'macs0308_rgb.fits')
+vl.image.load_filters()
+
+vl.import_catalog(os.path.join(os.path.expanduser("~"), 'Library/Mobile Documents/com~apple~CloudDocs/RESEARCH/PROCESS/Lenstool_GUI/examples/DATA/' + 'phot-eazy_magRS.fits'))
+vl.import_lens_model(Lenstool_dir + "/MACS0308/v1/" + "RUN_031_MCMC_without_perturber")
+
+
+
+vl.lens_model.start_simulate_image(which_filter="F200W")
+
+vl.lens_model.imsim.load()
+vl.lens_model.imsim.lm_imported.send_to_imsim()
+
+
+
+vl.lens_model.plot_bayes()
+vl.lens_model.plot_burnin()
+
+
+
+
+
+for z in np.arange(1, 10, 0.5) :
+    vl.lens_model.set_lt_z(z)
+
+

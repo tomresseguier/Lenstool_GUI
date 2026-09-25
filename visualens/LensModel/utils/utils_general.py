@@ -3,7 +3,6 @@ import os
 import glob
 import pyqtgraph as pg
 from astropy.table import Table
-from collections import defaultdict
 from PyQt5.QtCore import QRectF
 
 from .utils_multiple_images import import_multiple_images
@@ -113,30 +112,6 @@ def export_thumbnails(self, group_images=True, square_thumbnails=True, square_si
     ##############################
 
 
-def add_optimized_redshifts(mult, param_best) :
-    if not 'z_opt' in mult.colnames :
-        mult.add_column(np.full(len(mult), np.nan), name='z_opt')
-    if param_best is not None :
-        if 'image' in param_best :
-            if 'z_m_limit' in param_best['image'] :
-                for l in param_best['image']['z_m_limit'] :
-                    if type(l[1]) is str :
-                        names = []
-                        i = 1
-                        while type(l[i]) is str :
-                            names.append(l[i])
-                            i+=1
-                    else :
-                        names = [str(l[1])]
-                        i=2
-                    
-                    z = l[i+1]
-                    for name in names :
-                        if name in mult['id'] :
-                            fam = mult[mult['id']==name][0]['family']
-                            mult['z_opt'][mult['family']==fam] = z
-
-
 class curves :
     def __init__(self, curves_dir, LensModel, image, which_critcaus='critical', join=False, size=2) :
         self.dir = curves_dir
@@ -211,117 +186,6 @@ class curves :
             if qtItem is not None :
                 self.image.ImageView.removeItem(qtItem)
                 self.qtItems[name] = None
-                
-    
-
-
-
-
-
-
-
-
-def find_families(image_ids):
-    family_ids = image_ids.copy()
-    confidence = np.full(len(family_ids), 2)
-    for i, name in enumerate(family_ids) :
-        if name.startswith('cc') :
-            family_ids[i] = name[2:]
-            confidence[i] = 0
-        elif name.startswith('c') :
-            family_ids[i] = name[1:]
-            confidence[i] = 1
-    
-    families = find_families_part2(family_ids)
-    
-    combined_families = families.copy()
-    for i, family in enumerate(families) :
-        prefix1 = family.split('.')[0]
-        for fam in families :
-            prefix2 = fam.split('.')[0]
-            if prefix1==prefix2 and family!=fam :
-                combined_families[i] = prefix1 + '.'
-    #combined_families = np.unique(combined_families)
-    
-    broad_families = combined_families.copy()
-    letter_id = []
-    for i, family in enumerate(combined_families) :
-        if family[0].isalpha() :
-            letter_id.append(i)
-            for fam in combined_families :
-                if fam[0]==family[0] :
-                    broad_families[i] = family[0]
-    
-    
-    
-    families_int = families.copy()
-    for i in letter_id :
-        families_int[i] = str( ord( families[i][0].lower() )-96 )
-    
-    families_sorted, indices = np.unique(families, return_index=True)
-    families_sorted_int = np.array(families_int)[indices]
-    
-    families_sorted_int = [int(family.split('.')[0]) for family in families_sorted_int]
-    families_sorted = families_sorted[np.argsort(families_sorted_int)]
-    
-    
-    
-    broad_families_int = broad_families.copy()
-    for i in letter_id :
-        broad_families_int[i] = str( ord( broad_families[i][0].lower() )-96 )
-    
-    broad_families_sorted, indices = np.unique(broad_families, return_index=True)
-    broad_families_sorted_int = np.array(broad_families_int)[indices]
-    
-    broad_families_sorted_int = [int(family.split('.')[0]) for family in broad_families_sorted_int]
-    broad_families_sorted = broad_families_sorted[np.argsort(broad_families_sorted_int)]
-    
-    return families, broad_families, families_sorted.tolist(), broad_families_sorted.tolist(), confidence
-
-
-def find_families_part2(image_ids) :
-    # Step 1: Initial guess by chopping last character
-    id_to_family = {img_id: img_id[:-1] for img_id in image_ids}
-    
-    # Step 2: Group by these tentative families
-    family_groups = defaultdict(list)
-    for img_id, fam in id_to_family.items():
-        family_groups[fam].append(img_id)
-
-    # Step 3: Merge singleton families if their name starts with another family name
-    updated = True
-    while updated:
-        updated = False
-        singletons = {fam for fam, ids in family_groups.items() if len(ids) == 1}
-        for fam in list(singletons):
-            for target in family_groups:
-                if fam != target and fam.startswith(target):
-                    family_groups[target].extend(family_groups[fam])
-                    del family_groups[fam]
-                    updated = True
-                    break
-            if updated:
-                break
-
-    # Step 4: Merge families with 'alt' in original IDs if the ID starts with another family name
-    for fam in list(family_groups):
-        for img_id in family_groups[fam]:
-            if 'alt' in img_id:
-                for target in family_groups:
-                    if fam != target and img_id.startswith(target):
-                        family_groups[target].extend(family_groups[fam])
-                        del family_groups[fam]
-                        break
-                break  # Only need to check one 'alt' image to trigger a merge
-
-    # Step 5: Build final output mapping
-    final_map = {}
-    for fam, ids in family_groups.items():
-        for img_id in ids:
-            final_map[img_id] = fam
-
-    return [final_map[img_id] for img_id in image_ids]
-
 
 
 

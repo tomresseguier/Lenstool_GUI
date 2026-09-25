@@ -220,14 +220,16 @@ class Catalog :
             self.qtItems_column.append(text_item)
     
     def clear(self) :
+        self.clear_ellipses()
+        self.clear_column()
+    
+    def clear_ellipses(self) :
         #qtItems_list = self.image.ImageView.getView().allChildItems()
         self._vprint('Clearing galaxies...')
         for qtItem in self.qtItems :
             self.image.ImageView.removeItem(qtItem)
             del qtItem
         self.qtItems.clear()
-        
-        self.clear_column()
     
     def clear_column(self) :
         self._vprint('Clearing column labels...')
