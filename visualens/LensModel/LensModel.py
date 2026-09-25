@@ -35,7 +35,8 @@ from ..utils.utils_general.sort_points import break_curves
 from .simulate_image.simulate_image import image_simulator
 from .im2source import start_im2source, stop_im2source
 from .utils.operations import MakeFunctionFromMap
-from .utils.utils_general import import_multiple_images, export_thumbnails, get_lenstool_file_path, import_lenstool_files
+from .utils.utils_general import export_thumbnails, get_lenstool_file_path, import_lenstool_files
+from .utils.utils_multiple_images import import_multiple_images
 from .utils.param_extractors import read_potfile, make_param_latex_table, read_bayes_file, parse_lenstool_parameter_file, write_single_sample_best_file
 from ..utils.utils_Qt.utils_general import transform_rectangle
 
@@ -45,17 +46,18 @@ from .utils.file_makers import best_files_maker, make_magnifications_and_curves 
 
 
 
-class lenstool_model :
-    def __init__(self, model_path, fits_image, compute_predictions=True, verbose=True, use_best=False) :
-        self.fits_image = fits_image
+class LensModel :
+    def __init__(self, model_path, image=None, workspace=None, compute_predictions=True, verbose=True, use_best=False) :
+        self.image = image
+        self.workspace = workspace
         self.reference = None
         self.saturation = 1.
         self.lt = None
         self.z_lens = None
         self.mult = None
         self.source = None
-        self.image = None
-        self.image_filtered = None
+        self.images = None
+        self.images_filtered = None
         self.arclets = None
         self.potfile = None
         self.curve_plot = None
@@ -110,6 +112,21 @@ class lenstool_model :
         
         self.param_best = parse_lenstool_parameter_file(self.best_file_path) if self.best_file_path is not None else None
 
+        # If no Image was provided, build an empty placeholder one centered on the
+        # model's reference coordinates (read from the parameter/best file), before any
+        # of the catalog-loading code below needs a valid self.image.
+        if self.image is None :
+            from ..image import Image   # local import to avoid a circular import with image.py
+            ref = None
+            for param_dict in (self.param, self.param_best) :
+                if param_dict is not None and 'runmode' in param_dict and 'reference' in param_dict['runmode'] :
+                    ref = tuple(param_dict['runmode']['reference'][1:])
+                    break
+            if ref is None :
+                self._vprint("No reference coordinates found in parameter file; centering the auto-created Image on (0, 0).")
+                ref = (0., 0.)
+            self.image = Image(wcs=ref, workspace=self.workspace)
+
         # Get bayes file path if it exists
         self.bayes_file_path = os.path.join(self.model_dir, 'bayes.dat') if 'bayes.dat' in os.listdir(self.model_dir) else None
                 
@@ -133,7 +150,7 @@ class lenstool_model :
             self.families = []
             self.broad_families = []
             self.which = []
-            import_multiple_images(self, self.mult_path, self.fits_image, units='pixel', filled_markers=True)
+            import_multiple_images(self, self.mult_path, self.image, units='pixel', filled_markers=True)
         
         # Get the lens redshift if unique
         if self.param is not None  or self.param_best is not None :
@@ -148,7 +165,7 @@ class lenstool_model :
             else :
                 self._vprint("Several different redshift values found: " + str(np.unique(redshifts)))
                 self.z_lens = np.max(redshifts)
-                self._vprint("Setting lenstool_model.z_lens to the furthest lens' redshift: " + str(self.z_lens))
+                self._vprint("Setting LensModel.z_lens to the furthest lens' redshift: " + str(self.z_lens))
         
         # Checks if Lenstool files were found and if so use Lenstool's wrapper
         # Moves to the model's directory (required by the Lenstool wrapper)
@@ -235,8 +252,8 @@ class lenstool_model :
     def compute_sources_and_images(self, ngrid=256, restrict_to_mult_field=False) :
         if self.source is not None :
             self.source.clear()
-        if self.image is not None :
-            self.image.clear()
+        if self.images is not None :
+            self.images.clear()
         
         self._vprint("Computing sources")
         source = self.mult.cat.copy()
@@ -245,7 +262,7 @@ class lenstool_model :
         source.rename_column('ra_source', 'ra')
         source.rename_column('dec_source', 'dec')
         
-        import_multiple_images(self, source, self.fits_image, AttrName='source', units='pixel', filled_markers=True)
+        import_multiple_images(self, source, self.image, AttrName='source', units='pixel', filled_markers=True)
         
         # Format source catalog in the Lenstool format
         source.rename_column('id', 'n')
@@ -277,7 +294,7 @@ class lenstool_model :
         image = self.lt.get_images()
         
         image['ra'], image['dec'] = self.relative_to_world(image['x'], image['y'])
-        image['x'], image['y'] = self.fits_image.world_to_image(image['ra'], image['dec'])
+        image['x'], image['y'] = self.image.world_to_image(image['ra'], image['dec'])
         
         image.rename_column('n', 'id')
         
@@ -290,8 +307,8 @@ class lenstool_model :
         for j, colname in enumerate(['family','broad_family', 'confidence']) :
             image.add_column(cols_to_add[j], name=colname)
         
-        import_multiple_images(self, image, self.fits_image, AttrName='image', units='pixel', filled_markers=True)
-        import_multiple_images(self, image, self.fits_image, AttrName='image_filtered', units='pixel', filled_markers=True)
+        import_multiple_images(self, image, self.image, AttrName='images', units='pixel', filled_markers=True)
+        import_multiple_images(self, image, self.image, AttrName='images_filtered', units='pixel', filled_markers=True)
         self.filter_image()
         
         self.lt.set_grid(_initial_ngrid_value, 0)
@@ -314,7 +331,8 @@ class lenstool_model :
             self.potfile.clear()
         if path is not None :        
             potfile_Table = read_potfile(path)
-            self.potfile = self.fits_image.make_catalog(potfile_Table, color=[1.,0.,0.], units='arcsec', verbose=self.verbose)
+            self.potfile = self.image.make_catalog(potfile_Table, color=[1.,0.,0.], units='arcsec', verbose=self.verbose)
+            self.potfile.workspace = self.workspace
     
     def load_saved_maps(self) :
         self.convergence_maps_path = os.path.join(self.model_dir, 'convergence_maps.pkl')
@@ -366,30 +384,30 @@ class lenstool_model :
         if self.mult is not None :
             self.mult.plot(marker='o', filled_markers=False, scale=1.25)#size=1.5, linewidth=2, filled_markers=False)
             self.mult.plot_column('id')
-        if self.image is not None :
-            #self.image.plot(marker='x', filled_markers=True, scale=1)
-            self.image.saturation = 1.
-            #self.image.plot_column('id')
-        if self.image_filtered is not None :
-            self.image_filtered.plot(marker='x', filled_markers=True, scale=0.5)
-            #self.image_filtered.saturation = 1.
-            self.image.plot_column('id')
+        if self.images is not None :
+            #self.images.plot(marker='x', filled_markers=True, scale=1)
+            self.images.saturation = 1.
+            #self.images.plot_column('id')
+        if self.images_filtered is not None :
+            self.images_filtered.plot(marker='x', filled_markers=True, scale=0.5)
+            #self.images_filtered.saturation = 1.
+            self.images.plot_column('id')
         if self.curves is not None :
             self.curves.plot()
     
     def clear(self) :
         if self.mult is not None :
             self.mult.clear()
-        if self.image is not None :
-            self.image.clear()
-        if self.image_filtered is not None :
-            self.image_filtered.clear()
+        if self.images is not None :
+            self.images.clear()
+        if self.images_filtered is not None :
+            self.images_filtered.clear()
         if self.arclets is not None :
             self.arclets.clear()
         if self.curves is not None :
             self.curves.clear()
         if self.curve_plot is not None :
-            self.fits_image.qt_image.removeItem(self.curve_plot)
+            self.image.ImageView.removeItem(self.curve_plot)
             
     def set_which(self, *names) :
         if names[0]=='all' :
@@ -421,7 +439,7 @@ class lenstool_model :
     def read_burnin(self) :
         """
         Reads the burnin.dat file created by Lenstool and saves the data as an
-        astropy Table (lenstool_model.burnin_table), similar to samples_table.
+        astropy Table (LensModel.burnin_table), similar to samples_table.
         
         burnin.dat has no header, but its columns are identical to those of
         bayes.dat (['Nsample', 'ln(Lhood)', <one column per free parameter>, 'Chi2']).
@@ -489,14 +507,14 @@ class lenstool_model :
     def read_chires(self) :
         """
         Reads the chires.dat file created by Lenstool and saves the data as an
-        astropy Table (lenstool_model.chires_table).
+        astropy Table (LensModel.chires_table).
         
         Only the per-image rows matching the header columns
         (N, ID, z, Narcs, chip, ...) are stored in the table; 'N/A' entries
         (e.g. dx/dy on family summary rows) are converted to NaN. The summary
         lines at the end of the file are not stored, except for the chitot and
-        log(Likelihood) values, which are saved as lenstool_model.chitot and
-        lenstool_model.log_likelihood and printed.
+        log(Likelihood) values, which are saved as LensModel.chitot and
+        LensModel.log_likelihood and printed.
         
         Args:
             chires_file_path: path to the chires.dat file. Defaults to
@@ -570,13 +588,13 @@ class lenstool_model :
         (they are then centered on the new, optimized initial values) or replaced
         with uniform priors (flag 1) spanning the optimized value +/- nsigma*sigma.
         Optimized image redshifts (z_m_limit lines in the image section, with the
-        optimized values taken from the 'z_opt' column of lenstool_model.mult.cat)
+        optimized values taken from the 'z_opt' column of LensModel.mult.cat)
         receive a similar treatment: gaussian redshift priors ('z_m_limit 1 <ids> 3
         mean sigma precision') are either re-centered on the optimized redshift
         (same sigma), replaced with uniform priors around it, or copied unchanged.
         Optimized potfile parameters (e.g. 'sigma 3 mean stddev', 'cut 3 mean stddev'),
         whose best values are not written in the best file, are taken from the maximum
-        likelihood sample of the bayes chains (lenstool_model.samples_table); their
+        likelihood sample of the bayes chains (LensModel.samples_table); their
         gaussian priors follow prior_mode like the limit sections.
         Args:
             output_path: path of the new parameter file. Defaults to the original
@@ -599,9 +617,9 @@ class lenstool_model :
             output_path: path of the written parameter file
         """
         if self.param_file_path is None :
-            raise ValueError("No parameter file found (lenstool_model.param_file_path is None).")
+            raise ValueError("No parameter file found (LensModel.param_file_path is None).")
         if self.param_best is None :
-            raise ValueError("No best file found (lenstool_model.param_best is None). Run the optimization first.")
+            raise ValueError("No best file found (LensModel.param_best is None). Run the optimization first.")
         if prior_mode not in (None, 'gaussian', 'uniform') :
             raise ValueError("prior_mode must be 'gaussian' or 'uniform'")
         if z_prior_mode not in (None, 'gaussian', 'uniform', 'keep') :
@@ -862,7 +880,7 @@ class lenstool_model :
     
     def set_lt_z(self, z, color=[255,100,255], recompute=False) :
         #if self.curve_plot is not None :
-        #    self.fits_image.qt_image.removeItem(self.curve_plot)
+        #    self.image.ImageView.removeItem(self.curve_plot)
         self.lt_z = z
         self._vprint(self.best_file_path)
         self._vprint(os.getcwd())
@@ -931,9 +949,17 @@ class lenstool_model :
     def add_lensing_columns(self, cat=None, which_cat='imported_cat', index=None, z_source=None, overwrite=None) :
         if cat is None :
             if index is not None :
-                cat = self.fits_image.imported_cat_list[index].cat
+                if self.workspace is not None :
+                    cat = self.workspace.catalogs[index].cat
+                else :
+                    cat = None
+            elif which_cat == 'imported_cat' :
+                if self.workspace is not None :
+                    cat = self.workspace.catalog.cat
+                else :
+                    cat = None
             else :
-                cat = getattr(self.fits_image, which_cat, None).cat
+                cat = getattr(self.image, which_cat, None).cat
         
         lensing_columns = ['magnification', 'convergence', 'shear', 'gamma1', 'gamma2', 'time', 'tangential_magnification', 'radial_magnification', 'ra_source', 'dec_source']
         check = False
@@ -978,7 +1004,7 @@ class lenstool_model :
                     world_coord = SkyCoord(ra, dec, unit='deg')
                     xr, yr = self.world_to_relative(ra, dec)
                     #delta = 1.
-                    delta = self.fits_image.pix_deg_scale * 3600 / 2
+                    delta = self.image.pix_deg_scale * 3600 / 2
                     self.lt.set_field([xr-delta, xr+delta, yr-delta, yr+delta])
                     
                     #npix = 11
@@ -1047,8 +1073,8 @@ class lenstool_model :
             lt_curve_yr[ni+i] = self.lt_curve[1][i].I.y
             
         lt_curve_ra, lt_curve_dec = self.relative_to_world(lt_curve_xr, lt_curve_yr)
-        lt_curve_x, lt_curve_y = self.fits_image.world_to_image(lt_curve_ra, lt_curve_dec)
-        self.lt_curve_coords_image = [lt_curve_x, self.fits_image.image_data.shape[0] - lt_curve_y]
+        lt_curve_x, lt_curve_y = self.image.world_to_image(lt_curve_ra, lt_curve_dec)
+        self.lt_curve_coords_image = [lt_curve_x, self.image.image_data.shape[0] - lt_curve_y]
         self.lt_curve_coords_world = [lt_curve_ra, lt_curve_dec]
         self.lt_curve_coords_relative = [lt_curve_xr, lt_curve_yr]
         self._vprint('done')
@@ -1071,8 +1097,8 @@ class lenstool_model :
             lt_caustic_yr[ni+i] = self.lt_curve[1][i].S.y
             
         lt_caustic_ra, lt_caustic_dec = self.relative_to_world(lt_caustic_xr, lt_caustic_yr)
-        lt_caustic_x, lt_caustic_y = self.fits_image.world_to_image(lt_caustic_ra, lt_caustic_dec)
-        self.lt_caustic_coords_image = [lt_caustic_x, self.fits_image.image_data.shape[0] - lt_caustic_y]
+        lt_caustic_x, lt_caustic_y = self.image.world_to_image(lt_caustic_ra, lt_caustic_dec)
+        self.lt_caustic_coords_image = [lt_caustic_x, self.image.image_data.shape[0] - lt_caustic_y]
         self.lt_caustic_coords_world = [lt_caustic_ra, lt_caustic_dec]
         self.lt_caustic_coords_relative = [lt_caustic_xr, lt_caustic_yr]
         self._vprint('done')
@@ -1086,21 +1112,21 @@ class lenstool_model :
     def _curves_add_all_coords(self) :
         lt_curve_xr, lt_curve_yr = self.lt_curve_coords_relative
         lt_curve_ra, lt_curve_dec = self.relative_to_world(lt_curve_xr, lt_curve_yr)
-        lt_curve_x, lt_curve_y = self.fits_image.world_to_image(lt_curve_ra, lt_curve_dec)
+        lt_curve_x, lt_curve_y = self.image.world_to_image(lt_curve_ra, lt_curve_dec)
         
         self.lt_curve_coords_world = [lt_curve_ra, lt_curve_dec]
-        self.lt_curve_coords_image = [lt_curve_x, self.fits_image.image_data.shape[0] - lt_curve_y]
+        self.lt_curve_coords_image = [lt_curve_x, self.image.image_data.shape[0] - lt_curve_y]
         
         lt_caustic_xr, lt_caustic_yr = self.lt_caustic_coords_relative
         lt_caustic_ra, lt_caustic_dec = self.relative_to_world(lt_caustic_xr, lt_caustic_yr)
-        lt_caustic_x, lt_caustic_y = self.fits_image.world_to_image(lt_caustic_ra, lt_caustic_dec)
+        lt_caustic_x, lt_caustic_y = self.image.world_to_image(lt_caustic_ra, lt_caustic_dec)
         
         self.lt_caustic_coords_world = [lt_caustic_ra, lt_caustic_dec]
-        self.lt_caustic_coords_image = [lt_caustic_x, self.fits_image.image_data.shape[0] - lt_caustic_y]
+        self.lt_caustic_coords_image = [lt_caustic_x, self.image.image_data.shape[0] - lt_caustic_y]
     
     def plot_lt_curve(self, color=[255, 0, 255], which='critical') :
         if self.curve_plot is not None :
-            self.fits_image.qt_image.removeItem(self.curve_plot)
+            self.image.ImageView.removeItem(self.curve_plot)
             #del self.curve_plot
         
         if which=='critical' :
@@ -1109,7 +1135,7 @@ class lenstool_model :
             coords = self.lt_caustic_coords_image
         
         self.lt_curve_coords_image_sorted = break_curves(coords)
-        #self.lt_curve_coords_image_sorted = sort_points(coords, distance_threshold=1.0/(self.fits_image.pix_deg_scale*3600), angle_threshold=np.pi)
+        #self.lt_curve_coords_image_sorted = sort_points(coords, distance_threshold=1.0/(self.image.pix_deg_scale*3600), angle_threshold=np.pi)
         
         self.curve_plot = pg.PlotDataItem()
         #self.curve_plot = pg.ScatterPlotItem()
@@ -1118,7 +1144,7 @@ class lenstool_model :
         self.curve_plot.setData(self.lt_curve_coords_image_sorted[0], self.lt_curve_coords_image_sorted[1])
         #self.curve_scatter = pg.ScatterPlotItem(size=1, brush='g')
         #self.curve_scatter.setData(coords[0], coords[1])
-        self.fits_image.qt_image.addItem(self.curve_plot)
+        self.image.ImageView.addItem(self.curve_plot)
         
     def plot_bayes(self) :
         plot_corner(self.samples_df)
@@ -1133,9 +1159,9 @@ class lenstool_model :
     
     def filter_image(self, threshold_arcsec=0.1) :
         if self.mult is not None :
-            threshold_pix = threshold_arcsec / 3600 / self.fits_image.pix_deg_scale
+            threshold_pix = threshold_arcsec / 3600 / self.image.pix_deg_scale
             to_remove = []
-            for i, image in enumerate(self.image_filtered.cat) :
+            for i, image in enumerate(self.images_filtered.cat) :
                 ref_mask = self.mult.cat['id']==image['id']
                 #if not ref_mask.any() :
                 #    d = 0
@@ -1144,18 +1170,18 @@ class lenstool_model :
                 d = ( (ref['x'] - image['x'])**2 + (ref['y'] - image['y'])**2 )**0.5
                 if d<threshold_pix :
                     to_remove.append(i)
-            self.image_filtered.cat.remove_rows(to_remove)
+            self.images_filtered.cat.remove_rows(to_remove)
         
         ### Grouping of images with similar positions, not used anymore ###
         if False :
-            threshold_pix = threshold_arcsec / 3600 / self.fits_image.pix_deg_scale
+            threshold_pix = threshold_arcsec / 3600 / self.image.pix_deg_scale
             
-            N = len(self.image_filtered.cat)
+            N = len(self.images_filtered.cat)
             distance_matrix = np.zeros((N, N))
             for i in range(N) :
                 for j in range(N) :
-                    im_i = self.image_filtered.cat[i]
-                    im_j = self.image_filtered.cat[j]
+                    im_i = self.images_filtered.cat[i]
+                    im_j = self.images_filtered.cat[j]
                     distance_matrix[i, j] = ( (im_i['x'] - im_j['x'])**2 + (im_i['y'] - im_j['y'])**2 )**0.5
                     #if i==j :
                     #    distance_matrix[i, j] = np.nan
@@ -1183,19 +1209,19 @@ class lenstool_model :
             
             to_remove = []
             for i, group in enumerate(groups) :
-                x_mean = np.mean(self.image_filtered.cat['x'][group])
-                y_mean = np.mean(self.image_filtered.cat['y'][group])
-                self.image_filtered.cat[group[0]]['x'] = x_mean
-                self.image_filtered.cat[group[0]]['y'] = y_mean
+                x_mean = np.mean(self.images_filtered.cat['x'][group])
+                y_mean = np.mean(self.images_filtered.cat['y'][group])
+                self.images_filtered.cat[group[0]]['x'] = x_mean
+                self.images_filtered.cat[group[0]]['y'] = y_mean
                 to_remove += list(np.array(group)[1:])
-            self.image_filtered.cat.remove_rows(to_remove)
+            self.images_filtered.cat.remove_rows(to_remove)
     
     
     def start_extract_magnification_line(self) :
         self.doubleclick_magnification_marker = pg.ScatterPlotItem(size=12, symbol='x', brush='b', pen='b')
         self.source_magnification_marker = pg.ScatterPlotItem(size=8, symbol='o', brush='y', pen='y')
-        self.fits_image.qt_image.addItem(self.doubleclick_magnification_marker)
-        self.fits_image.qt_image.addItem(self.source_magnification_marker)
+        self.image.ImageView.addItem(self.doubleclick_magnification_marker)
+        self.image.ImageView.addItem(self.source_magnification_marker)
         self.magnification_markers_x = []
         self.magnification_markers_y = []
         self.magnification_source_markers_x = []
@@ -1205,7 +1231,7 @@ class lenstool_model :
         def mouse_clicked(evt):
             if evt.double():
                 pos = evt.scenePos()
-                if self.fits_image.qt_image.getView().sceneBoundingRect().contains(pos):
+                if self.image.ImageView.getView().sceneBoundingRect().contains(pos):
                     if len(self.magnification_temp_SkyCoords)==2 :
                         self.magnification_markers_x = []
                         self.magnification_markers_y = []
@@ -1215,13 +1241,13 @@ class lenstool_model :
                         self.doubleclick_magnification_marker.setData([], [])
                         self.source_magnification_marker.setData([], [])
                     
-                    mouse_point = self.fits_image.qt_image.getView().mapSceneToView(pos)
+                    mouse_point = self.image.ImageView.getView().mapSceneToView(pos)
                     x, y_flipped = mouse_point.x(), mouse_point.y()
-                    x, y = x, self.fits_image.image_data.shape[0] - y_flipped
-                    ra, dec = self.fits_image.image_to_world(x, y)
+                    x, y = x, self.image.image_data.shape[0] - y_flipped
+                    ra, dec = self.image.image_to_world(x, y)
                     
                     self.magnification_markers_x.append(x)
-                    self.magnification_markers_y.append(self.fits_image.image_data.shape[0] - y)
+                    self.magnification_markers_y.append(self.image.image_data.shape[0] - y)
                     self.magnification_temp_SkyCoords.append(SkyCoord(ra, dec, unit='deg'))
                     self.doubleclick_magnification_marker.setData(self.magnification_markers_x, self.magnification_markers_y)
                     
@@ -1252,14 +1278,14 @@ class lenstool_model :
             elif evt.button()==PyQt5.QtCore.Qt.MiddleButton :
                 pos = evt.scenePos()
                 self._vprint(pos)
-                mouse_point = self.fits_image.qt_image.getView().mapSceneToView(pos)
+                mouse_point = self.image.ImageView.getView().mapSceneToView(pos)
                 x, y_flipped = mouse_point.x(), mouse_point.y()
-                x, y = x, self.fits_image.image_data.shape[0] - y_flipped
+                x, y = x, self.image.image_data.shape[0] - y_flipped
                 self.magnification_source_markers_x.append(x)
-                self.magnification_source_markers_y.append(self.fits_image.image_data.shape[0] - y)
+                self.magnification_source_markers_y.append(self.image.image_data.shape[0] - y)
                 self.source_magnification_marker.setData(self.magnification_source_markers_x, self.magnification_source_markers_y)
                 
-                distance = ( (self.magnification_markers_x[0] - x)**2 + (self.magnification_markers_y[0] - y_flipped)**2 )**0.5 * self.fits_image.pix_deg_scale*3600 #in arcsec
+                distance = ( (self.magnification_markers_x[0] - x)**2 + (self.magnification_markers_y[0] - y_flipped)**2 )**0.5 * self.image.pix_deg_scale*3600 #in arcsec
                 self.magnification_line_distances.append(distance)
                 
                 if True : # remove this when plot update available
@@ -1279,36 +1305,38 @@ class lenstool_model :
                 
                 
         
-        self._doubleclick_connection = self.fits_image.qt_image.scene.sigMouseClicked.connect(mouse_clicked)
+        self._doubleclick_connection = self.image.ImageView.scene.sigMouseClicked.connect(mouse_clicked)
         
         def keyPressEvent(event):
             #print('Hand selection stopped.')
             if event.key() == Qt.Key_Escape :
                 if hasattr(self, 'doubleclick_magnification_marker'):
-                    self.fits_image.qt_image.removeItem(self.doubleclick_magnification_marker)
+                    self.image.ImageView.removeItem(self.doubleclick_magnification_marker)
                     del self.doubleclick_magnification_marker
                 if hasattr(self, 'source_magnification_marker'):
-                    self.fits_image.qt_image.removeItem(self.source_magnification_marker)
+                    self.image.ImageView.removeItem(self.source_magnification_marker)
                     del self.source_magnification_marker
                 if hasattr(self, '_doubleclick_connection'):
-                    self.fits_image.qt_image.scene.sigMouseClicked.disconnect(self._doubleclick_connection)
+                    self.image.ImageView.scene.sigMouseClicked.disconnect(self._doubleclick_connection)
                     del self._doubleclick_connection
                 self.magnification_temp_SkyCoords = []
-                self.fits_image.qt_image.keyPressEvent = self._original_keyPressEvent
+                self.image.ImageView.keyPressEvent = self._original_keyPressEvent
                 self._vprint('Magnification line extraction stopped.')
         
-        self._original_keyPressEvent = self.fits_image.qt_image.keyPressEvent
-        self.fits_image.qt_image.keyPressEvent = keyPressEvent
+        self._original_keyPressEvent = self.image.ImageView.keyPressEvent
+        self.image.ImageView.keyPressEvent = keyPressEvent
     
     
     def send_to_source_plane(self) :
-        for row in self.fits_image.imported_cat.cat :
+        if self.workspace is None or self.workspace.catalog is None :
+            return
+        for row in self.workspace.catalog.cat :
             row['ra'], row['dec'] = self.transform_coords_radec(row['ra'], row['dec'])
-            row['x'], row['y'] = self.fits_image.world_to_image(row['ra'], row['dec'])
+            row['x'], row['y'] = self.image.world_to_image(row['ra'], row['dec'])
     
     
     def start_simulate_image(self, which_filter=None, throttle_mode=0) :
-        self.imsim = image_simulator(self.fits_image, which_filter=which_filter, throttle_mode=throttle_mode)
+        self.imsim = image_simulator(self.image, lens_model=self, which_filter=which_filter, throttle_mode=throttle_mode)
         
     
     def compute_mass_map(self, z=None, npix=1000) :
@@ -1398,7 +1426,7 @@ class lenstool_model :
     def set_field(self) :
         # Careful, this function only works when the ROI is flat and image in world frame
         
-        self.ROI = self.fits_image.image_widget.current_ROI
+        self.ROI = self.image.QWidget.current_ROI
         x0 = self.ROI.getState()['pos'][0]
         y0 = self.ROI.getState()['pos'][1]
         a = self.ROI.getState()['size'][0]
@@ -1406,11 +1434,11 @@ class lenstool_model :
         angle = self.ROI.getState()['angle'] *np.pi/180
         
         x0, y0, a, b, angle = transform_rectangle(x0, y0, a, b, angle) #x0, y0 at the top left
-        size_y = self.fits_image.image_data.shape[0]
+        size_y = self.image.image_data.shape[0]
         y0 = size_y-y0 #Counting pixels from bottom instead of top
         
-        ra_left, dec_top = self.fits_image.image_to_world(x0, y0)
-        ra_right, dec_bottom = self.fits_image.image_to_world(x0 + a, y0 - b)
+        ra_left, dec_top = self.image.image_to_world(x0, y0)
+        ra_right, dec_bottom = self.image.image_to_world(x0 + a, y0 - b)
         
         xr_left, yr_top = self.world_to_relative(ra_left, dec_top)
         xr_right, yr_bottom = self.world_to_relative(ra_right, dec_bottom)
@@ -1466,7 +1494,7 @@ class lenstool_model :
 
 
                 # sample_file_path = write_single_sample_best_file(self, i)
-                # sample_lt = import_lenstool(sample_file_path, self.fits_image, compute_predictions=False, verbose=False)
+                # sample_lt = import_lenstool(sample_file_path, self.image, compute_predictions=False, verbose=False)
 
                 """ Sample the redshift as well for those that were optimized """
                 for im in self.mult.cat :
@@ -1625,8 +1653,8 @@ class lenstool_model :
         return map_data, target_wcs
 
 
-def import_lenstool(model_dir, fits_image, compute_predictions=False, verbose=True) :
-    return lenstool_model(model_dir, fits_image, compute_predictions=compute_predictions, verbose=verbose)
+def import_lenstool(model_dir, image=None, compute_predictions=False, verbose=True) :
+    return LensModel(model_dir, image, compute_predictions=compute_predictions, verbose=verbose)
 
 
 

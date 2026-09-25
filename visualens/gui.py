@@ -13,7 +13,7 @@ from PyQt5.QtWidgets import (
 
 from PyQt5.QtCore import Qt
 
-from .fits_image import fits_image
+from .visualens import Visualens
 
 
 class LensToolMainWindow(QMainWindow):
@@ -21,9 +21,10 @@ class LensToolMainWindow(QMainWindow):
 
     The window currently provides a minimal File ▸ Open action that lets the
     user select a FITS file from disk. The selected file is used to create a
-    :class:`.fits_image.fits_image` instance, which is stored in
-    :pyattr:`~LensToolMainWindow.image`.  Future menu actions and widgets can
-    operate on this attribute to expose more of the *fits_image* API.
+    :class:`.image.Image` instance via the :class:`.workspace.Visualens`
+    workspace, which is stored in :pyattr:`~LensToolMainWindow.workspace`.
+    Future menu actions and widgets can operate on this attribute to expose
+    more of the *Visualens* API.
     """
 
     def __init__(self) -> None:
@@ -31,14 +32,22 @@ class LensToolMainWindow(QMainWindow):
         self.setWindowTitle("Lenstool GUI")
         self.resize(800, 600)
 
-        # The currently loaded fits_image object (None until a file is opened)
-        self.image: fits_image | None = None
+        # The workspace holding the currently loaded Image, Catalog(s) and
+        # LensModel (all None until a file is opened / imported). The empty
+        # placeholder image is embedded directly into this window instead of
+        # spawning a separate one.
+        self.workspace = Visualens(main_window=self)
 
         # Build menus / actions
         self._create_menus()
 
         # Placeholder central widget — replace with actual visualisation later
         # For now we just keep the default empty central widget created by Qt.
+
+    @property
+    def image(self):
+        """The currently loaded Image (None until a file is opened)."""
+        return self.workspace.image
 
     # ---------------------------------------------------------------------
     # UI creation helpers
@@ -117,7 +126,7 @@ class LensToolMainWindow(QMainWindow):
     # Slots / callbacks
     # ------------------------------------------------------------------
     def _open_fits(self) -> None:
-        """Open a FITS image and create a :class:`fits_image` instance."""
+        """Open a FITS image and create an :class:`Image` instance."""
 
         path_str, _ = QFileDialog.getOpenFileName(
             self,
@@ -133,7 +142,7 @@ class LensToolMainWindow(QMainWindow):
         path = Path(path_str)
 
         try:
-            self.image = fits_image(str(path), main_window=self)
+            self.workspace.import_image(str(path), main_window=self)
         except Exception as exc:  # noqa: BLE001  (broad but user-facing)
             QMessageBox.critical(
                 self,
@@ -176,23 +185,23 @@ class LensToolMainWindow(QMainWindow):
             from .catalog import open_cat  # local import to avoid cost on startup
 
             cat = open_cat(path_str)
-            self.image.import_catalog(cat)
+            self.workspace.import_catalog(cat)
             self._plot_catalog()
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Failed to import catalog", str(exc))
 
     def _plot_catalog(self) -> None:
         """Plot the currently imported catalog."""
-        if getattr(self.image, "imported_cat", None) is not None:
-            self.image.imported_cat.plot()
+        if getattr(self.workspace, "catalog", None) is not None:
+            self.workspace.catalog.plot()
 
     def _plot_catalog_column(self) -> None:
         """Plot a specific column from the currently imported catalog."""
-        if getattr(self.image, "imported_cat", None) is None:
+        if getattr(self.workspace, "catalog", None) is None:
             QMessageBox.warning(self, "No catalog", "Please import a catalog first.")
             return
 
-        cat = self.image.imported_cat
+        cat = self.workspace.catalog
         colnames = [str(c) for c in cat.cat.colnames]
 
         from PyQt5.QtWidgets import QInputDialog
@@ -203,11 +212,11 @@ class LensToolMainWindow(QMainWindow):
 
     def _plot_selection_panel(self) -> None:
         """Open selection panel after choosing x and y columns."""
-        if getattr(self.image, "imported_cat", None) is None:
+        if getattr(self.workspace, "catalog", None) is None:
             QMessageBox.warning(self, "No catalog", "Please import a catalog first.")
             return
 
-        cat_obj = self.image.imported_cat
+        cat_obj = self.workspace.catalog
         colnames = [str(c) for c in cat_obj.cat.colnames]
 
         from PyQt5.QtWidgets import QInputDialog
@@ -224,15 +233,15 @@ class LensToolMainWindow(QMainWindow):
 
         # Re-import catalog with chosen columns as mag_colnames
         # Need original table; assume stored in cat_obj.cat
-        self.image.import_catalog(cat_obj.cat, mag_colnames=[x_col, y_col])
-        new_cat = self.image.imported_cat
+        self.workspace.import_catalog(cat_obj.cat, mag_colnames=[x_col, y_col])
+        new_cat = self.workspace.catalog
         if new_cat is not None:
             new_cat.plot_selection_panel(xy_axes=[x_col, y_col])
 
     def _clear_catalog(self) -> None:
         """Clear the currently imported catalog."""
-        if getattr(self.image, "imported_cat", None) is not None:
-            self.image.imported_cat.clear()
+        if getattr(self.workspace, "catalog", None) is not None:
+            self.workspace.catalog.clear()
 
     def _open_lenstool(self) -> None:
         """Open a Lenstool model directory and import it."""
@@ -244,23 +253,23 @@ class LensToolMainWindow(QMainWindow):
         if not dir_path:
             return
         try:
-            self.image.import_lenstool(dir_path)
+            self.workspace.import_lenstool(dir_path)
             self._plot_lenstool()
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Failed to import model", str(exc))
 
     def _plot_lenstool(self) -> None:
         """Plot the currently imported Lenstool model."""
-        if getattr(self.image, "lt", None) is not None:
-            self.image.lt.plot()
+        if getattr(self.workspace, "lens_model", None) is not None:
+            self.workspace.lens_model.plot()
 
     def _clear_lenstool(self) -> None:
         """Clear the currently imported Lenstool model."""
-        if getattr(self.image, "lt", None) is not None:
-            self.image.lt.clear()
+        if getattr(self.workspace, "lens_model", None) is not None:
+            self.workspace.lens_model.clear()
 
     def _plot_bayes(self) -> None:
-        lt_obj = getattr(self.image, "lt", None)
+        lt_obj = getattr(self.workspace, "lens_model", None)
         if lt_obj is None:
             QMessageBox.warning(self, "No model", "Please import a Lenstool model first.")
             return
@@ -271,7 +280,7 @@ class LensToolMainWindow(QMainWindow):
 
     def _start_im2source(self) -> None:
         """Run set_lt_z → start_im2source sequence."""
-        lt_obj = getattr(self.image, "lt", None)
+        lt_obj = getattr(self.workspace, "lens_model", None)
         if lt_obj is None:
             QMessageBox.warning(self, "No model", "Please import a Lenstool model first.")
             return

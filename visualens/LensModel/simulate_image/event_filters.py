@@ -69,7 +69,7 @@ class ImageFilter(QObject) :
         x_im_full = self.imsim._crop_x0 + x
         y_im_full = self.imsim._crop_y0 + y - self.imsim._crop_npix
 
-        ra, dec = self.imsim.fits_image.image_to_world(x_im_full, y_im_full)
+        ra, dec = self.imsim.image.image_to_world(x_im_full, y_im_full)
         xr, yr = world_to_relative(ra, dec, self.imsim.center_world)
         src_xr, src_yr = self.imsim.LensModel.ray_shooting(xr, yr, self.imsim.LensModel_kwargs)
         src_xr = src_xr - self.imsim.source_center_coordinates[0]

@@ -1,5 +1,5 @@
 import argparse
-from .fits_image import fits_image
+from .image import Image
 
 def main():
     parser = argparse.ArgumentParser(description='Create a FITS image object from a file path.')
@@ -7,13 +7,13 @@ def main():
     args = parser.parse_args()
 
     try:
-        image = fits_image(args.fits_file_path)
-        print(f"Successfully created a fits_image instance from: {args.fits_file_path}")
+        image = Image(args.fits_file_path)
+        print(f"Successfully created an Image instance from: {args.fits_file_path}")
         # You can now work with the 'image' object.
         # For example, you can access its attributes:
         # print(image.image_data)
     except Exception as e:
-        print(f"Error creating fits_image instance: {e}")
+        print(f"Error creating Image instance: {e}")
 
 if __name__ == '__main__':
     main()

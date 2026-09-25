@@ -20,7 +20,7 @@ def make_lm_dict(imsim) :
             x_center, y_center, semi_major, semi_minor, angle = transform_ROI_params(roi)
             # This time, the intrinsic units of the rgb panel are pixels, so we need to convert the ROI's parameters to arcsec
             npix = imsim._crop_npix
-            pix_scale = imsim.fits_image.pix_deg_scale * 3600.0
+            pix_scale = imsim.image.pix_deg_scale * 3600.0
             center_x = (x_center - npix / 2.0) * pix_scale
             center_y = (y_center - npix / 2.0) * pix_scale
             q = semi_minor / semi_major
@@ -35,7 +35,7 @@ def make_lm_dict(imsim) :
             }
             imsim.LensModel_kwargs.append(to_add)
 
-    imsim.LensModel = LensModel(lens_model_list=imsim.LensModel_list, z_lens=imsim.fits_image.lt.z_lens, z_source=imsim.z_source)
+    imsim.LensModel = LensModel(lens_model_list=imsim.LensModel_list, z_lens=imsim.lensmodel.z_lens, z_source=imsim.z_source)
     # Might be useful at some point to shift the source plane widget by the new source center coordinates for the curent lens model
     imsim.source_center_coordinates_new = imsim.LensModel.ray_shooting(0.0, 0.0, imsim.LensModel_kwargs)
 
@@ -151,8 +151,8 @@ def make_lm_dict_opt(imsim, N_sigma=6.) :
                     _, sbox = _roi_link_box_slider(roi)
                     dpos = sbox.vmid
                     v = kwargs[param]
-                    kwargs_lower[param] = v - dpos # * imsim.fits_image.pix_deg_scale*3600
-                    kwargs_upper[param] = v + dpos # * imsim.fits_image.pix_deg_scale*3600
+                    kwargs_lower[param] = v - dpos # * imsim.image.pix_deg_scale*3600
+                    kwargs_upper[param] = v + dpos # * imsim.image.pix_deg_scale*3600
                     kwargs_sigma[param] = 2*dpos/N_sigma
                     kwargs_init[param] = v
                 #elif param in ['e1', 'e2'] :

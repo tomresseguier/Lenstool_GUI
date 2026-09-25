@@ -45,12 +45,13 @@ _DEFAULT_LENSING_COLUMNS = [
 
 
 class image_simulator :
-    def __init__(self, fits_image, which_filter=None, throttle_mode=0, use_linear_solver=False, dpl_resolution=200) :
-        self.fits_image = fits_image
+    def __init__(self, image, lens_model, which_filter=None, throttle_mode=0, use_linear_solver=False, dpl_resolution=200) :
+        self.image = image
+        self.lensmodel = lens_model
         self._DEFAULT_LENSING_COLUMNS = _DEFAULT_LENSING_COLUMNS
-        self.z_source = fits_image.lt.lt_z
-        self.ROI = fits_image.image_widget.current_ROI
-        #self.fits_image.qt_image.addItem(ROI)
+        self.z_source = lens_model.lt_z
+        self.ROI = image.QWidget.current_ROI
+        #self.image.ImageView.addItem(ROI)
         self.models=None
         self.use_linear_solver = use_linear_solver
         
@@ -65,7 +66,7 @@ class image_simulator :
         angle = self.ROI.getState()['angle'] *np.pi/180
         
         x0, y0, a, b, angle = transform_rectangle(x0, y0, a, b, angle) #x0, y0 at the top left, a and b > 0
-        y0 = fits_image.image_data.shape[0] - y0 # Counting pixels from bottom instead of top
+        y0 = image.image_data.shape[0] - y0 # Counting pixels from bottom instead of top
 
         # Here we transform the ROI's parameters into a square area with corners corresponding to integer pixel coordinates.
         x_center, y_center = x0 + a/2, y0 - b/2
@@ -87,10 +88,10 @@ class image_simulator :
         self._crop_x0 = int( x_center_pix - square_size_pix/2 ) # x_center_pix - square_size_pix/2 is float with 0 decimal
         self._crop_y0 = int( y_center_pix + square_size_pix/2 )
         self.anchor = (self._crop_x0, self._crop_y0)
-        self.center_world = fits_image.image_to_world(x_center_pix, y_center_pix)
+        self.center_world = image.image_to_world(x_center_pix, y_center_pix)
 
-        xr_center, yr_center = fits_image.lt.world_to_relative(self.center_world[0], self.center_world[1])
-        self._square_size_arcsec = square_size_pix * fits_image.pix_deg_scale*3600
+        xr_center, yr_center = lens_model.world_to_relative(self.center_world[0], self.center_world[1])
+        self._square_size_arcsec = square_size_pix * image.pix_deg_scale*3600
         self._SquareOfInterest_side_arcsec = self._square_size_arcsec
         self._SquareOfInterest_xr_bottomleft = xr_center - self._square_size_arcsec / 2
         self._SquareOfInterest_yr_bottomleft = yr_center - self._square_size_arcsec / 2
@@ -98,36 +99,36 @@ class image_simulator :
                      self._SquareOfInterest_yr_bottomleft, self._SquareOfInterest_yr_bottomleft + self._square_size_arcsec]
         
         ######### Set Lenstool field corresponding to ROI's position and calculate the local displacement map #########
-        if fits_image.lt.lt is not None :
-            self._initial_field = fits_image.lt.lt.get_field([])
-            fits_image.lt.lt.set_field(new_field)
-            if self.previous_state_current_ROI is None or self.previous_state_current_ROI != self.ROI.getState() or fits_image.lt.dpl_maps[fits_image.lt.lt_z][0].shape[0] != dpl_resolution :
-                fits_image.lt.compute_lt_dpl(npix=dpl_resolution)
-                fits_image.lt.compute_lt_convergence(npix=dpl_resolution)
+        if lens_model.lt is not None :
+            self._initial_field = lens_model.lt.get_field([])
+            lens_model.lt.set_field(new_field)
+            if self.previous_state_current_ROI is None or self.previous_state_current_ROI != self.ROI.getState() or lens_model.dpl_maps[lens_model.lt_z][0].shape[0] != dpl_resolution :
+                lens_model.compute_lt_dpl(npix=dpl_resolution)
+                lens_model.compute_lt_convergence(npix=dpl_resolution)
         else :
-            if fits_image.lt.lt_z not in fits_image.lt.dpl_maps :
-                raise KeyError('Displacement maps for redshift {} have not been calculated yet.'.format(fits_image.lt.lt_z))
+            if lens_model.lt_z not in lens_model.dpl_maps :
+                raise KeyError('Displacement maps for redshift {} have not been calculated yet.'.format(lens_model.lt_z))
             else :
                 print('Lenstool instance not initialized. Using saved displacement maps instead. \
                       Careful: saved maps only cover the area you selected if you previously computed them for this specific area!')
         
         #-------------- Lens model Lenstronomy definitions --------------#
         
-        deltaPix = abs( fits_image.lt.dpl_maps[fits_image.lt.lt_z][2].wcs.cdelt[0]*3600 )
+        deltaPix = abs( lens_model.dpl_maps[lens_model.lt_z][2].wcs.cdelt[0]*3600 )
         x_grid_interp, y_grid_interp = util.make_grid(dpl_resolution, deltaPix)
         x_axes, y_axes = util.get_axes(x_grid_interp, y_grid_interp)
         
         self.LensModel_kwargs = [{'grid_interp_x': x_axes,
                                   'grid_interp_y': y_axes,
-                                  'f_': fits_image.lt.convergence_maps[fits_image.lt.lt_z][0],
-                                  'f_x': fits_image.lt.dpl_maps[fits_image.lt.lt_z][0],
-                                  'f_y': fits_image.lt.dpl_maps[fits_image.lt.lt_z][1]}]
+                                  'f_': lens_model.convergence_maps[lens_model.lt_z][0],
+                                  'f_x': lens_model.dpl_maps[lens_model.lt_z][0],
+                                  'f_y': lens_model.dpl_maps[lens_model.lt_z][1]}]
         # Preserved for ``make_lm_dict`` / ``_assemble_lens_model_kwargs``: INTERPOL dict only,
         # so ellipse ROIs on the image plane can append ``PJAFFE_ELLIPSE_POTENTIAL_Q_PHI`` components.
         self.LensModel_base_kwargs = copy.deepcopy(self.LensModel_kwargs[0])
         
         self.LensModel_list = ['INTERPOL']
-        self.LensModel = LensModel(lens_model_list=self.LensModel_list, z_lens=self.fits_image.lt.z_lens, z_source=self.z_source)
+        self.LensModel = LensModel(lens_model_list=self.LensModel_list, z_lens=self.lensmodel.z_lens, z_source=self.z_source)
         
         #m=4
         #f, ax = plt.subplots(1, 1, figsize=(10, 10), sharex=False, sharey=False)
@@ -159,13 +160,13 @@ class image_simulator :
 
         self.source_center_coordinates = self.LensModel.ray_shooting(0, 0, self.LensModel_kwargs)
         
-        if fits_image.lt.lt is not None and (self.previous_state_current_ROI is None or self.previous_state_current_ROI != self.ROI.getState()) :
-            fits_image.lt.compute_lt_curve()
-        fits_image.lt.plot_lt_curve(color=[0, 255, 0], which='caustic') #to create self.lt_curve_coords_image_sorted
+        if lens_model.lt is not None and (self.previous_state_current_ROI is None or self.previous_state_current_ROI != self.ROI.getState()) :
+            lens_model.compute_lt_curve()
+        lens_model.plot_lt_curve(color=[0, 255, 0], which='caustic') #to create self.lt_curve_coords_image_sorted
         
         self.caustic_plot = pg.PlotDataItem()
         self.caustic_plot.setPen( color=[0,255,0,255], width=4.0001 )
-        #coords = break_curves(fits_image.lt.lt_caustic_coords_relative, distance_threshold=8.*fits_image.pix_deg_scale*3600) #sort_points(self.lt_caustic_coords_relative, distance_threshold=1.0, angle_threshold=np.pi)
+        #coords = break_curves(lens_model.lt_caustic_coords_relative, distance_threshold=8.*image.pix_deg_scale*3600) #sort_points(self.lt_caustic_coords_relative, distance_threshold=1.0, angle_threshold=np.pi)
         #x = coords[0] - xr_center - self.source_center_coordinates[0]
         #y = coords[1] - yr_center - self.source_center_coordinates[1]
 
@@ -173,7 +174,7 @@ class image_simulator :
         self.source_plane_widget.setXRange(-3, 3)
         self.source_plane_widget.setYRange(-3, 3)
         
-        self._lt_curve_coords_relative_broken = break_curves(fits_image.lt.lt_curve_coords_relative, distance_threshold=8.*fits_image.pix_deg_scale*3600) #sort_points(self.lt_curve_coords_relative, distance_threshold=1.0, angle_threshold=np.pi)
+        self._lt_curve_coords_relative_broken = break_curves(lens_model.lt_curve_coords_relative, distance_threshold=8.*image.pix_deg_scale*3600) #sort_points(self.lt_curve_coords_relative, distance_threshold=1.0, angle_threshold=np.pi)
         
         self.filter_source = SourceFilter(self)
         self.source_plane_widget.installEventFilter(self.filter_source)
@@ -184,7 +185,7 @@ class image_simulator :
         
         
         #-------------- Set the PixelGrid for lenstronomy --------------#
-        transform_pix2angle = np.array([[1, 0], [0, 1]]) * fits_image.pix_deg_scale*3600
+        transform_pix2angle = np.array([[1, 0], [0, 1]]) * image.pix_deg_scale*3600
         
         npix = self._crop_npix
         self.PixelGrid_kwargs = {'nx': npix,
@@ -197,28 +198,28 @@ class image_simulator :
         
         #-------------- DATA --------------#
         if which_filter is not None :
-            if which_filter in fits_image.filters.keys() :
+            if which_filter in image.filters.keys() :
                 print('Using filter ' + which_filter)
-                self.individual_filter = fits_image.filters[which_filter]
+                self.individual_filter = image.filters[which_filter]
             elif type(which_filter) is int :
                 if which_filter>2 or which_filter<0 :
                     raise('Filter index must belong to [0,1,2].')
                 c = ['red', 'green', 'blue']
                 which_filter_str = str(c[which_filter])
                 print('Using ' + which_filter_str + ' image.')
-                if fits_image.filters is None :
-                    fits_image.filters = {}
-                if which_filter_str not in fits_image.filters :
-                    exptime = fits_image.header['EXPTIME'] if 'EXPTIME' in fits_image.header else 1000.
-                    self.individual_filter = filter_lite(fits_image.image_data[:,:,which_filter], exptime=exptime)
-                    fits_image.filters[which_filter_str] = self.individual_filter
+                if image.filters is None :
+                    image.filters = {}
+                if which_filter_str not in image.filters :
+                    exptime = image.header['EXPTIME'] if 'EXPTIME' in image.header else 1000.
+                    self.individual_filter = filter_lite(image.image_data[:,:,which_filter], exptime=exptime)
+                    image.filters[which_filter_str] = self.individual_filter
                 else :
-                    self.individual_filter = fits_image.filters[which_filter_str]
+                    self.individual_filter = image.filters[which_filter_str]
             else :
-                print('Filter ' + which_filter + " has not been imported. Import individual filters with fits_image.load_filters(). Filter fits files have to be in a folder named 'filters' placed in the same directory as your main RGB image.")
-                raise ValueError('Filter ' + which_filter + " has not been imported. Import individual filters with fits_image.load_filters(). Filter fits files have to be in a folder named 'filters' placed in the same directory as your main RGB image.")
-        elif fits_image.filters is not None and not all(i in [0, 'red', 'green', 'blue'] for i in fits_image.filters) :
-            filter_list = list(fits_image.filters.keys())
+                print('Filter ' + which_filter + " has not been imported. Import individual filters with image.load_filters(). Filter fits files have to be in a folder named 'filters' placed in the same directory as your main RGB image.")
+                raise ValueError('Filter ' + which_filter + " has not been imported. Import individual filters with image.load_filters(). Filter fits files have to be in a folder named 'filters' placed in the same directory as your main RGB image.")
+        elif image.filters is not None and not all(i in [0, 'red', 'green', 'blue'] for i in image.filters) :
+            filter_list = list(image.filters.keys())
             filter_list[0] = [filter_list[0]]
             filter_list_str = str(filter_list)
             filter_list_str = filter_list_str.replace(", ", "/")
@@ -226,19 +227,19 @@ class image_simulator :
             which_filter = input('Select filter: ' + filter_list_str)
             which_filter = filter_list[0][0] if which_filter=='' else which_filter
             print('Using filter ' + which_filter)
-            self.individual_filter = fits_image.filters[which_filter]
+            self.individual_filter = image.filters[which_filter]
         else :
             print('\n------------------')
-            print('\nUsing main image as individual filter. \nCareful: image simulator needs flux units when calculating the residuals. Make sure the main image has such units when running the optimization, or import individual filters separately with fits_image.load_filters()')
-            which_filter = 'red' if len(fits_image.image_data.shape)==3 else 0
-            if fits_image.filters is not None :
-                if which_filter in fits_image.filters :
-                    self.individual_filter = fits_image.filters[which_filter]
+            print('\nUsing main image as individual filter. \nCareful: image simulator needs flux units when calculating the residuals. Make sure the main image has such units when running the optimization, or import individual filters separately with image.load_filters()')
+            which_filter = 'red' if len(image.image_data.shape)==3 else 0
+            if image.filters is not None :
+                if which_filter in image.filters :
+                    self.individual_filter = image.filters[which_filter]
             else :
-                exptime = fits_image.header['EXPTIME'] if 'EXPTIME' in fits_image.header else 1000.
-                self.individual_filter = filter_lite(fits_image.image_data[:,:,0], exptime=exptime) if which_filter=='red'\
-                                         else filter_lite(fits_image.image_data, exptime=exptime)
-                fits_image.filters = {which_filter: self.individual_filter}
+                exptime = image.header['EXPTIME'] if 'EXPTIME' in image.header else 1000.
+                self.individual_filter = filter_lite(image.image_data[:,:,0], exptime=exptime) if which_filter=='red'\
+                                         else filter_lite(image.image_data, exptime=exptime)
+                image.filters = {which_filter: self.individual_filter}
         
         #-------------- ImageData --------------#
         self.image_data = self.individual_filter.image_data[ self._crop_y0 - self._crop_npix : self._crop_y0, self._crop_x0 : self._crop_x0 + self._crop_npix ]
@@ -248,7 +249,7 @@ class image_simulator :
         #    self.individual_filter.rms = np.std(self.individual_filter.image_data)
         #    print('done: ' + str(self.individual_filter.rms))
         #    if not hasattr(self.individual_filter, 'wcs') : # test if is instance of filter_lite instead of full filter class
-        #        fits_image.rms = self.individual_filter.rms
+        #        image.rms = self.individual_filter.rms
         if 'EXPTIME' not in self.individual_filter.header :
             print('\nCareful: EXPTIME not found in header. Using arbitrary value EXPTIME=1ks.')
             exptime = 1000.
@@ -271,12 +272,12 @@ class image_simulator :
                                             'kernel_point_source': self.individual_filter.psf.data,
                                             #'truncation': 35,
                                             #'point_source_supersampling_factor': 1,
-                                            'pixel_size': fits_image.pix_deg_scale*3600}
+                                            'pixel_size': image.pix_deg_scale*3600}
         else :
             self.PSF_kwargs = {'psf_type': 'GAUSSIAN',
-                                            'fwhm': fits_image.pix_deg_scale*3600*2,
+                                            'fwhm': image.pix_deg_scale*3600*2,
                                             'truncation': 5,
-                                            'pixel_size': fits_image.pix_deg_scale*3600}
+                                            'pixel_size': image.pix_deg_scale*3600}
         self.PSF = PSF(**self.PSF_kwargs)
         
         self.kwargs_numerics = {'supersampling_factor': 8, #ideally, supersampling_factor=16 for light source model, but 8 is ok. Doesn't matter for point source model.
@@ -288,11 +289,11 @@ class image_simulator :
         self.image_plane_observed = pg.ImageView()
         self.image_plane_simulated = pg.ImageView()
         self.image_plane_residual = pg.ImageView()
-        self.image_plane_rgb = DragImagePlotWidget_special(ROI_param_dict=get_ROI_param_dict_lens_model(), slider_init_dict=get_ROI_slider_init_dict_lens_model(), size_sliders_scaling=fits_image.pix_deg_scale*3600, throttle_mode=throttle_mode)
+        self.image_plane_rgb = DragImagePlotWidget_special(ROI_param_dict=get_ROI_param_dict_lens_model(), slider_init_dict=get_ROI_slider_init_dict_lens_model(), size_sliders_scaling=image.pix_deg_scale*3600, throttle_mode=throttle_mode)
         self.image_plane_plot = self.image_plane_simulated  # backward compatibility
 
         sim0 = np.zeros_like(self.image_data)
-        rgb_data_full = fits_image.boosted_image if fits_image.boosted else fits_image.image_data
+        rgb_data_full = image.boosted_image if image.boosted else image.image_data
         rgb_data = rgb_data_full[ self._crop_y0 - self._crop_npix : self._crop_y0, self._crop_x0 : self._crop_x0 + self._crop_npix ]
         self.simulated_image = sim0
         self.residual_image = self.image_data - sim0
@@ -308,13 +309,13 @@ class image_simulator :
 
         XR = []
         YR = []
-        for mult in fits_image.lt.mult.cat :
+        for mult in lens_model.mult.cat :
             xr, yr = world_to_relative( mult['ra'], mult['dec'], self.center_world )
             XR.append(xr)
             YR.append(yr)
 
-        #x_cc = (self._lt_curve_coords_relative_broken[0] - self._SquareOfInterest_xr_bottomleft) / (fits_image.pix_deg_scale * 3600)
-        #y_cc = self.image_data.shape[0] - (self._lt_curve_coords_relative_broken[1] - self._SquareOfInterest_yr_bottomleft) / (fits_image.pix_deg_scale * 3600)
+        #x_cc = (self._lt_curve_coords_relative_broken[0] - self._SquareOfInterest_xr_bottomleft) / (image.pix_deg_scale * 3600)
+        #y_cc = self.image_data.shape[0] - (self._lt_curve_coords_relative_broken[1] - self._SquareOfInterest_yr_bottomleft) / (image.pix_deg_scale * 3600)
         #xr_crit, yr_crit = world_to_relative(ra_crit, dec_crit, self.center_world)
         pen_cc = pg.mkPen(color=[255, 0, 255, 255], width=4.0001)
         self.critical_curve_plots = []
@@ -325,7 +326,7 @@ class image_simulator :
             self.critical_curve_plots.append(cc)
 
             mult_plot = pg.ScatterPlotItem(size=5, symbol='+', brush='r', pen=None)
-            mult_plot.setData(np.array(XR)/fits_image.pix_deg_scale/3600 + self._crop_npix/2, self._crop_npix/2 + np.array(YR)/fits_image.pix_deg_scale/3600)
+            mult_plot.setData(np.array(XR)/image.pix_deg_scale/3600 + self._crop_npix/2, self._crop_npix/2 + np.array(YR)/image.pix_deg_scale/3600)
             iv.addItem(mult_plot)
         #self.critical_curve_plot = self.critical_curve_plots[1]
         self._curve_grid_scale = self._SquareOfInterest_side_arcsec / 100.0
@@ -420,7 +421,7 @@ class image_simulator :
         # Initialize image-plane y-range to full image height for all linked views.
         vb0.setYRange(0, self.image_data.shape[0], padding=0)
         
-        #fits_image.lt.lt.set_field(self._initial_field)
+        #lens_model.lt.set_field(self._initial_field)
         self.previous_state_current_ROI = self.ROI.getState()
     
 
@@ -452,11 +453,11 @@ class image_simulator :
     
     #def save(self) :
     #    self.model_local = format_lm_local(self.models, self.result_kwargs)
-    #    self.source_model.save( path=os.path.join(self.fits_image.lt.model_dir, "lenstronomy_model.pkl") )
+    #    self.source_model.save( path=os.path.join(self.lensmodel.model_dir, "lenstronomy_model.pkl") )
         
     def load(self, path=None) :
         if path is None :
-            self.lm_imported = lenstronomy_model( os.path.join(self.fits_image.lt.model_dir, "lenstronomy_model.pkl"), self )
+            self.lm_imported = lenstronomy_model( os.path.join(self.lensmodel.model_dir, "lenstronomy_model.pkl"), self )
         else :
             self.lm_imported = lenstronomy_model( path, self )
         
@@ -470,17 +471,23 @@ class image_simulator :
     def add_lensing_columns(self, cat=None, which_cat='mult', index=None, overwrite=None, disable_tqdm=False) :
         if cat is None :
             if index is not None :
-                cat = self.fits_image.imported_cat_list[index].cat
+                if self.lensmodel.workspace is not None :
+                    cat = self.lensmodel.workspace.catalogs[index].cat
+                else :
+                    cat = None
             else :
                 if which_cat == 'mult' :
-                    cat = self.fits_image.lt.mult.cat
+                    cat = self.lensmodel.mult.cat
                 elif which_cat == 'imported_cat' :
-                    cat = self.fits_image.imported_cat.cat
+                    if self.lensmodel.workspace is not None :
+                        cat = self.lensmodel.workspace.catalog.cat
+                    else :
+                        cat = None
                 else :
-                    if getattr(self.fits_image, which_cat, None) is not None :
-                        cat = getattr(self.fits_image, which_cat, None).cat
-                    elif getattr(self.fits_image.lt, which_cat, None) is not None :
-                        cat = getattr(self.fits_image.lt, which_cat, None).cat
+                    if getattr(self.image, which_cat, None) is not None :
+                        cat = getattr(self.image, which_cat, None).cat
+                    elif getattr(self.lensmodel, which_cat, None) is not None :
+                        cat = getattr(self.lensmodel, which_cat, None).cat
                     else :
                         raise ValueError('Catalog ' + which_cat + ' not found.')
         
@@ -521,7 +528,7 @@ class image_simulator :
             for i in tqdm(range(len(cat)), disable=disable_tqdm) :
                 ra, dec = cat['ra'][i], cat['dec'][i]
                 xr, yr = self.world_to_relative(ra, dec)
-                delta = self.fits_image.pix_deg_scale * 3600 / 2
+                delta = self.image.pix_deg_scale * 3600 / 2
 
                 x_grid = np.array([xr])
                 y_grid = np.array([yr])
@@ -571,13 +578,13 @@ class image_simulator :
         if stop_sample_index is None :
             stop_sample_index = nsamples
 
-        self.samples_dir = os.path.join(self.fits_image.lt.model_dir, 'samples_lenstronomy')
+        self.samples_dir = os.path.join(self.lensmodel.model_dir, 'samples_lenstronomy')
         if not os.path.exists(self.samples_dir) :
             print('Creating samples directory')
             os.makedirs(self.samples_dir)
 
         samples_dict_path = os.path.join(self.samples_dir, 'samples_dict_' + str(nsamples) + '.pkl')
-        im_ids = self.fits_image.lt.mult.cat['id']
+        im_ids = self.lensmodel.mult.cat['id']
 
         self.samples_dict = _load_or_init_samples_dict(
             samples_dict_path,
@@ -595,7 +602,7 @@ class image_simulator :
 
             sample_kwargs_name = self.lm_imported._make_sample_kwargs('MCMC', i)
             self.LensModel_list = self.lm_imported.local['models']['lens_model_list']
-            self.LensModel = LensModel(lens_model_list=self.LensModel_list, z_lens=self.fits_image.lt.z_lens, z_source=self.z_source)
+            self.LensModel = LensModel(lens_model_list=self.LensModel_list, z_lens=self.lensmodel.z_lens, z_source=self.z_source)
             self.LensModel_kwargs = self.lm_imported.local[sample_kwargs_name]['kwargs_lens']
             del self.lm_imported.local[sample_kwargs_name]
             del self.lm_imported.world[sample_kwargs_name]
@@ -603,8 +610,8 @@ class image_simulator :
             #self.clear()
             #self.lm_imported.send_to_imsim(step='MCMC', sample_index=i)
             #self.simulate(verbose=False)
-            self.add_lensing_columns(cat=self.fits_image.lt.mult.cat, overwrite=True, disable_tqdm=True)
-            for im in self.fits_image.lt.mult.cat :
+            self.add_lensing_columns(cat=self.lensmodel.mult.cat, overwrite=True, disable_tqdm=True)
+            for im in self.lensmodel.mult.cat :
                 for col in lensing_columns :
                     self.samples_dict[im['id']][col][i] = im[col]
 
@@ -629,29 +636,29 @@ class image_simulator :
         self.make_samples_dict(nsamples, recompute=recompute, start_sample_index=start_sample_index, stop_sample_index=stop_sample_index)
         
         for col in self._DEFAULT_LENSING_COLUMNS :
-            col_16_percentile = np.full(len(self.fits_image.lt.mult.cat), np.nan)
-            col_84_percentile = np.full(len(self.fits_image.lt.mult.cat), np.nan)
-            col_50_percentile = np.full(len(self.fits_image.lt.mult.cat), np.nan)
+            col_16_percentile = np.full(len(self.lensmodel.mult.cat), np.nan)
+            col_84_percentile = np.full(len(self.lensmodel.mult.cat), np.nan)
+            col_50_percentile = np.full(len(self.lensmodel.mult.cat), np.nan)
 
             name = f'{col}_16_percentile'
-            if name in self.fits_image.lt.mult.cat.colnames :
-                self.fits_image.lt.mult.cat.replace_column(name, col_16_percentile)
+            if name in self.lensmodel.mult.cat.colnames :
+                self.lensmodel.mult.cat.replace_column(name, col_16_percentile)
             else :
-                self.fits_image.lt.mult.cat.add_column(col_16_percentile, name=name)
+                self.lensmodel.mult.cat.add_column(col_16_percentile, name=name)
 
             name = f'{col}_84_percentile'
-            if name in self.fits_image.lt.mult.cat.colnames :
-                self.fits_image.lt.mult.cat.replace_column(name, col_84_percentile)
+            if name in self.lensmodel.mult.cat.colnames :
+                self.lensmodel.mult.cat.replace_column(name, col_84_percentile)
             else :
-                self.fits_image.lt.mult.cat.add_column(col_84_percentile, name=name)
+                self.lensmodel.mult.cat.add_column(col_84_percentile, name=name)
 
             name = f'{col}_50_percentile'
-            if name in self.fits_image.lt.mult.cat.colnames :
-                self.fits_image.lt.mult.cat.replace_column(name, col_50_percentile)
+            if name in self.lensmodel.mult.cat.colnames :
+                self.lensmodel.mult.cat.replace_column(name, col_50_percentile)
             else :
-                self.fits_image.lt.mult.cat.add_column(col_50_percentile, name=name)
+                self.lensmodel.mult.cat.add_column(col_50_percentile, name=name)
 
-            for im in self.fits_image.lt.mult.cat :
+            for im in self.lensmodel.mult.cat :
                 im[f'{col}_16_percentile'] = np.percentile(self.samples_dict[im['id']][col], 16)
                 im[f'{col}_84_percentile'] = np.percentile(self.samples_dict[im['id']][col], 84)
                 im[f'{col}_50_percentile'] = np.percentile(self.samples_dict[im['id']][col], 50)

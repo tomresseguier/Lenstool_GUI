@@ -130,15 +130,15 @@ class SelectableScatter(DragPlotWidget) :
 class SelectSources() : #pg.PlotWidget()
     def __init__(self, cat_instance, selection_color=[1, 0, 0]) :
         self.cat_instance = cat_instance
-        self.selection_ROI = cat_instance.fits_image.image_widget.current_ROI
+        self.selection_ROI = cat_instance.image.QWidget.current_ROI
         self.selection_mask_temp = np.full(len(self.cat_instance.cat), False)
         self.selection_ROI.sigRegionChangeFinished.connect(self.selection_ROI_changed)
         self.selection_scatter = None
         #self.initial_color = make_full_color(cat_instance.color)
         self.selection_color = make_full_color(selection_color)
         self.confirm_selection_filter = SelectSources_KeyPressFilter(self)
-        #self.window = window
-        cat_instance.fits_image.window.installEventFilter(self.confirm_selection_filter)
+        #self.QMainWindow = window
+        cat_instance.image.QMainWindow.installEventFilter(self.confirm_selection_filter)
         self.make_selection()
         
         
@@ -147,7 +147,7 @@ class SelectSources() : #pg.PlotWidget()
     
         
     def make_selection(self) :
-        size_y = self.cat_instance.fits_image.qt_image.image.shape[0]
+        size_y = self.cat_instance.image.ImageView.image.shape[0]
         
         x = self.cat_instance.cat['x']
         y = size_y - self.cat_instance.cat['y']
@@ -185,7 +185,7 @@ class SelectSources_KeyPressFilter(QObject) :
         self.selection_ROI = SelectSources_instance.selection_ROI
         self.selection_mask = SelectSources_instance.cat_instance.selection_mask
         self.selection_mask_temp = SelectSources_instance.selection_mask_temp
-        self.qt_image = SelectSources_instance.cat_instance.fits_image.qt_image
+        self.ImageView = SelectSources_instance.cat_instance.image.ImageView
         self.qtItems = SelectSources_instance.cat_instance.qtItems
         #self.initial_color = SelectSources_instance.initial_color
         self.selection_regions = SelectSources_instance.cat_instance.selection_regions
@@ -205,8 +205,8 @@ class SelectSources_KeyPressFilter(QObject) :
                 rect_params = transform_rectangle(x0, y0, a, b, angle*np.pi/180)
                 self.selection_regions.append(rect_params)
                 
-            if key in [Qt.Key_Backspace, Qt.Key_Escape, Qt.Key_D] and self.selection_ROI in self.qt_image.getView().allChildren() :
-                self.qt_image.removeItem(self.selection_ROI)
+            if key in [Qt.Key_Backspace, Qt.Key_Escape, Qt.Key_D] and self.selection_ROI in self.ImageView.getView().allChildren() :
+                self.ImageView.removeItem(self.selection_ROI)
                 for qtItem in self.qtItems[~self.selection_mask] :
                     qtItem.setPen( pg.mkPen(qtItem.initial_color[:3] + qtItem.initial_color[-1:], width=qtItem.linewidth) )
                     qtItem.setBrush( pg.mkBrush(qtItem.initial_color[:4]) )
@@ -222,12 +222,12 @@ class SelectSources_KeyPressFilter(QObject) :
 
 
 class ellipse_maker_ROI(pg.EllipseROI) :
-    def __init__(self, pos, size, qt_image, window, cat, color=[1, 1, 0]) :
+    def __init__(self, pos, size, ImageView, QMainWindow, cat, color=[1, 1, 0]) :
         super(ellipse_maker_ROI, self).__init__(pos, size, removable=True)
-        self.qt_image = qt_image
+        self.ImageView = ImageView
         self.color = color
         self.cat = cat
-        window.keyPressEvent = self.keyPressEvent.__get__(window, window)
+        QMainWindow.keyPressEvent = self.keyPressEvent.__get__(QMainWindow, QMainWindow)
         
     def keyPressEvent(self, event) :
         print(self.pos())
@@ -245,9 +245,9 @@ class ellipse_maker_ROI(pg.EllipseROI) :
             ellipse.setPen( pg.mkPen(color + [255]) )
             ellipse.setBrush( pg.mkBrush(color + [127]) )
             
-            self.qt_image.addItem(ellipse)
+            self.ImageView.addItem(ellipse)
             
-            size_y = self.qt_image.image.shape[0]
+            size_y = self.ImageView.image.shape[0]
             y = size_y-y
             theta = -theta
             

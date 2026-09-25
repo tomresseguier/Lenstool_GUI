@@ -5,6 +5,84 @@ from astropy.wcs import WCS
 #import time
 
 
+# Defaults used to build a placeholder WCS/image when Image() is created
+# without a FITS file (see make_default_wcs() and create_empty_image()).
+DEFAULT_EMPTY_IMAGE_SIZE_ARCMIN = 10.0
+DEFAULT_EMPTY_IMAGE_PIXEL_SIZE_ARCSEC = 0.03
+DEFAULT_EMPTY_IMAGE_NPIX = 10*60/DEFAULT_EMPTY_IMAGE_PIXEL_SIZE_ARCSEC
+
+
+def _orientation_from_header(header) :
+    if 'ORIENTAT' in header :
+        orientation = header['ORIENTAT']
+    elif 'CD1_1' in header and 'CD2_2' in header :
+        if 'CD1_2' in header and 'CD2_1' in header :
+            cd = np.array([[header['CD1_1'], header['CD1_2']], [header['CD2_1'], header['CD2_2']]])
+            orientation = np.arctan2(cd[1,0], cd[1,1])
+        else :
+            orientation = 0.0
+    elif 'PC1_1' in header and 'PC2_2' in header :
+        if 'PC1_2' in header and 'PC2_1' in header :
+            cd = np.array([[header['PC1_1'], header['PC1_2']], [header['PC2_1'], header['PC2_2']]])
+            orientation = np.arctan2(cd[1,0], cd[1,1])
+        else :
+            orientation = 0.0
+    else :
+        orientation = None
+    orientation = np.rad2deg(orientation) if orientation is not None else None
+    return orientation
+
+
+def make_default_wcs(ra, dec, size_arcmin=DEFAULT_EMPTY_IMAGE_SIZE_ARCMIN, npix=DEFAULT_EMPTY_IMAGE_NPIX) :
+    """Build a simple, non-rotated WCS for a square field centered on (ra, dec).
+
+    The resulting field has sides of ``size_arcmin`` arcminutes spread over
+    ``npix`` x ``npix`` pixels, with the x axis aligned on RA (increasing
+    leftwards, i.e. the standard East-left convention) and the y axis
+    aligned on Dec (increasing upwards). No rotation is applied.
+
+    Parameters
+    ----------
+    ra, dec : float
+        Coordinates of the field center, in degrees.
+    size_arcmin : float
+        Side length of the square field, in arcminutes.
+    npix : int
+        Number of pixels along each side.
+    """
+    scale = (size_arcmin / 60.) / npix  # deg/pixel
+    wcs = WCS(naxis=2)
+    wcs.wcs.ctype = ['RA---TAN', 'DEC--TAN']
+    wcs.wcs.cunit = ['deg', 'deg']
+    wcs.wcs.crval = [float(ra), float(dec)]
+    wcs.wcs.crpix = [npix / 2. + 0.5, npix / 2. + 0.5]
+    wcs.wcs.cd = np.array([[-scale, 0.], [0., scale]])
+    wcs.pixel_shape = (int(npix), int(npix))
+    return wcs
+
+
+def create_empty_image(wcs, npix=DEFAULT_EMPTY_IMAGE_NPIX) :
+    """Build a blank image array matching the given WCS.
+
+    If ``wcs.pixel_shape`` is set (e.g. the WCS came from
+    :func:`make_default_wcs`, or from a header with NAXIS1/NAXIS2) that
+    shape is used; otherwise a square image of ``npix`` x ``npix`` pixels
+    is created.
+
+    Returns the same tuple as :func:`open_image`:
+    ``(image, pix_deg_scale, orientation, wcs, header)``.
+    """
+    if getattr(wcs, 'pixel_shape', None) is not None :
+        nx, ny = wcs.pixel_shape
+    else :
+        nx, ny = npix, npix
+    image = np.zeros((int(ny), int(nx)))
+    header = wcs.to_header()
+    orientation = _orientation_from_header(header)
+    pix_deg_scale = np.sqrt(wcs.pixel_scale_matrix[0, 0]**2 + wcs.pixel_scale_matrix[0, 1]**2)
+    return image, pix_deg_scale, orientation, wcs, header
+
+
 def open_image(image_path) :
     # Manage the case where user passed a fits.hdu.hdulist.HDUList object
     if isinstance(image_path, fits.hdu.hdulist.HDUList) :
@@ -93,27 +171,7 @@ def open_image(image_path) :
         wcs = WCS(ref_hdu.header)
         header = ref_hdu.header
         
-        if 'ORIENTAT' in header :
-            orientation = header['ORIENTAT']
-        elif 'CD1_1' in header and 'CD2_2' in header :
-            if 'CD1_2' in header and 'CD2_1' in header :
-                cd = np.array([[header['CD1_1'], header['CD1_2']], [header['CD2_1'], header['CD2_2']]])
-                #det = np.linalg.det(cd)
-                #sign = np.sign(det)
-                orientation = np.arctan2(cd[1,0], cd[1,1])
-            else :
-                orientation = 0.0
-        elif 'PC1_1' in header and 'PC2_2' in header :
-            if 'PC1_2' in header and 'PC2_1' in header :
-                cd = np.array([[header['PC1_1'], header['PC1_2']], [header['PC2_1'], header['PC2_2']]])
-                #det = np.linalg.det(cd)
-                #sign = np.sign(det)
-                orientation = np.arctan2(cd[1,0], cd[1,1])
-            else :
-                orientation = 0.0                    
-        else :
-            orientation = None
-        orientation = np.rad2deg(orientation) if orientation is not None else None
+        orientation = _orientation_from_header(header)
         
         ### Finding the pixel scale ###
         #if 'CD1_1' in hdus[0].header.keys() :

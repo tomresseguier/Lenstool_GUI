@@ -13,45 +13,97 @@ class DragWidget(QWidget):
     """
     This class implements the option to create a ROI anywhere by just pressing SHIFT and clicking.
     """
-    def __init__(self, qt_image):
+    def __init__(self, ImageView):
         super().__init__()
         self.initUI()
-        self.qt_image = qt_image
-        self.qt_image.scene.sigMouseMoved.connect(self.mouse_moved)
+        self.ImageView = ImageView
+        self.ImageView.scene.sigMouseMoved.connect(self.mouse_moved)
         
         layout = QHBoxLayout(self) #These lines are necessary for the image to actually display in the QMainWindow later
-        layout.addWidget(self.qt_image)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self.ImageView)
         self.setLayout(layout)
         
         self.cat = None
         self.drawing = False
         self.current_ROI = pg.RectROI([-100, -100], [0, 0], pen='r', invertible=True) #Try initializing with a None
         
+        self._floating_widgets = []  # list of (widget, corner, margin)
+        
     def initUI(self):
         self.timer = QTimer()
         self.timer.setInterval(1)  # Check every 10 ms
         self.timer.timeout.connect(self.checkLongPress)
+    
+    def add_floating_widget(self, widget, corner='top-left', margin=8, x_margin=None, y_margin=None):
+        """
+        Parent a widget to this DragWidget and keep it pinned to one of its
+        corners (floating above the ImageView without taking any layout space),
+        repositioning it automatically whenever the widget is resized.
+        """
+        if x_margin is None :
+            x_margin = margin
+        if y_margin is None :
+            y_margin = margin
+        widget.setParent(self)
+        # Reparenting onto an already-visible widget does NOT make the child
+        # visible automatically in Qt (only the *first* show() of a brand new
+        # top-level window cascades visibility down to its children) - an
+        # explicit show() is required here regardless of whether `self` was
+        # already on screen when this widget was added.
+        widget.show()
+        widget.raise_()
+        self._floating_widgets.append((widget, corner, x_margin, y_margin))
+        self._reposition_floating_widgets()
+        return widget
+
+    def remove_floating_widget(self, widget):
+        """Stop tracking `widget` for auto-repositioning (e.g. before deleting it).
+
+        Without this, a deleted (deleteLater()'d) widget would stay in
+        `_floating_widgets` and the next resizeEvent would try to `.move()` an
+        already-destroyed C/C++ QWidget, raising a RuntimeError.
+        """
+        self._floating_widgets = [entry for entry in self._floating_widgets if entry[0] is not widget]
+
+    def _reposition_floating_widgets(self):
+        still_alive = []
+        for widget, corner, x_margin, y_margin in self._floating_widgets:
+            try :
+                x = x_margin if 'left' in corner else self.width() - widget.width() - x_margin
+                y = y_margin if 'top' in corner else self.height() - widget.height() - y_margin
+                widget.move(x, y)
+            except RuntimeError :
+                # The underlying C/C++ widget was already deleted; drop it.
+                continue
+            still_alive.append((widget, corner, x_margin, y_margin))
+        self._floating_widgets = still_alive
+    
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._reposition_floating_widgets()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton and event.modifiers() == Qt.ShiftModifier :
             try:
-                self.qt_image.removeItem(self.current_ROI)
+                self.ImageView.removeItem(self.current_ROI)
             except Exception:
                 pass
-            self.qt_image.view.setMouseEnabled(x=False, y=False)
+            self.ImageView.view.setMouseEnabled(x=False, y=False)
             self.timer.start()
             ###################################################################
-            self.start_pos = self.qt_image.view.mapToView(event.pos() + QPointF(-13, -14)) #the QPointF(-13, -14) offset corrects a bug where the anchor point would move.
+            self.start_pos = self.ImageView.view.mapToView(event.pos() + QPointF(-13, -14)) #the QPointF(-13, -14) offset corrects a bug where the anchor point would move.
             self.current_ROI = pg.RectROI([self.start_pos.x(), self.start_pos.y()], [0, 0], pen='r', invertible=True)
             for handle in self.current_ROI.handles :
                 self.current_ROI.removeHandle(handle['item'])
-            self.qt_image.addItem(self.current_ROI)
+            self.ImageView.addItem(self.current_ROI)
             self.drawing = True
     
     def keyPressEvent(self, event) :
         if event.key() == Qt.Key_Escape :
             try:
-                self.qt_image.removeItem(self.current_ROI)
+                self.ImageView.removeItem(self.current_ROI)
             except Exception:
                 pass
     
@@ -61,13 +113,13 @@ class DragWidget(QWidget):
             if self.timer.isActive() :
                 self.timer.stop()
             make_handles(self.current_ROI)
-            self.qt_image.view.setMouseEnabled(x=True, y=True)
+            self.ImageView.view.setMouseEnabled(x=True, y=True)
             if self.cat is not None :
                 self.cat.make_selection_ROI()
             
     def mouse_moved(self, pos):
         if self.drawing and self.current_ROI is not None:
-            current_pos = self.qt_image.view.mapToView(pos)
+            current_pos = self.ImageView.view.mapToView(pos)
             width = current_pos.x() - self.start_pos.x()
             height = current_pos.y() - self.start_pos.y()
             self.current_ROI.setSize([width, height])

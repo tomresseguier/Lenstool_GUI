@@ -40,7 +40,7 @@ def _update_curves(imsim):
     y_caustic = yr_caustic_fused - imsim.source_center_coordinates[1]
     imsim.caustic_plot.setData(x_caustic, y_caustic)
 
-    pix_scale = imsim.fits_image.pix_deg_scale * 3600.0
+    pix_scale = imsim.image.pix_deg_scale * 3600.0
     x_crit = (xr_crit_fused + imsim._SquareOfInterest_side_arcsec / 2.0) / pix_scale
     y_crit = (yr_crit_fused + imsim._SquareOfInterest_side_arcsec / 2.0) / pix_scale
     for cc in imsim.critical_curve_plots :
@@ -53,7 +53,7 @@ def _update_curves(imsim):
     SY = []
     XR = []
     YR = []
-    for mult in imsim.fits_image.lt.mult.cat :
+    for mult in imsim.lensmodel.mult.cat :
         xr, yr = world_to_relative( mult['ra'], mult['dec'], imsim.center_world )
         XR.append(xr)
         YR.append(yr)

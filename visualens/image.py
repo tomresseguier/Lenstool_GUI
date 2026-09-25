@@ -15,15 +15,14 @@ from astropy.coordinates import SkyCoord
 from tqdm import tqdm
 
 import PyQt5
-from PyQt5.QtWidgets import QMainWindow, QSplitter
+from PyQt5.QtWidgets import QMainWindow, QSplitter, QPushButton
 import pyqtgraph as pg
 from PyQt5.QtCore import Qt
 from astropy.table import Table
 
-from .catalog import catalog
-from .lenstool_model.lenstool_model import lenstool_model
+from .catalog import Catalog
 from .source_extraction.source_extract import source_extract, source_extract_DIM
-from .utils.utils_fits.utils_fits_image import open_image
+from .utils.utils_fits.utils_fits_image import open_image, make_default_wcs, create_empty_image
 from .utils.utils_plots.plot_utils_general import *
 from .utils.utils_Qt.selectable_classes import *
 from .utils.utils_Qt.drag_widgets import DragWidget
@@ -38,42 +37,78 @@ pg.setConfigOption('imageAxisOrder', 'row-major')
 
 
 
-class fits_image :
-    def __init__(self, image_path, main_window=None, plot_image=True) :
+class Image :
+    def __init__(self, image_path=None, main_window=None, plot_image=True, wcs=(0, 0), workspace=None) :
+        """
+        Parameters
+        ----------
+        image_path : str or None
+            Path to a FITS file. If ``None``, an empty placeholder image is
+            created instead (see ``wcs`` below), which can be useful e.g. to
+            open a blank canvas for hand-selecting a catalog.
+        main_window : QMainWindow, optional
+            External window to reuse instead of spawning a new one.
+        plot_image : bool
+            Whether to display the image right away.
+        wcs : astropy.wcs.WCS or (ra, dec) tuple/list
+            Only used when ``image_path`` is ``None``. Either a ready-made
+            WCS object, or a ``(ra, dec)`` pair (in degrees) used to build a
+            default, non-rotated WCS for a 10 arcmin square field centered
+            on those coordinates, with the x axis aligned on RA and the y
+            axis aligned on Dec.
+        workspace : Visualens, optional
+            Owning workspace, if any. When set, ``plot_image()`` uses it to
+            rebuild the left side panel and its toggle button whenever the
+            main window has to be recreated from scratch.
+        """
         self.image_path = image_path
         # If an external QMainWindow is provided (e.g. from the GUI), use it
         # instead of spawning a new independent window.
         self.main_window = main_window  # type: ignore[assignment]
-        if os.path.isfile(self.image_path[:-8] + 'wht.fits') :
-            print("Weight file found: " + self.image_path[:-8] + 'wht.fits')
-            self.weight_path = self.image_path[:-8] + 'wht.fits'
+        self.workspace = workspace
+
+        if self.image_path is not None :
+            if os.path.isfile(self.image_path[:-8] + 'wht.fits') :
+                print("Weight file found: " + self.image_path[:-8] + 'wht.fits')
+                self.weight_path = self.image_path[:-8] + 'wht.fits'
+            else :
+                self.weight_path = None
+
+            self.image_data, self.pix_deg_scale, self.orientation, self.wcs, self.header = open_image(self.image_path)
+
+            self.boosted_image_path = self.image_path[:-5] + '_boosted.fits'
+            if os.path.isfile(self.boosted_image_path) :
+                print("Boosted image found: " + self.boosted_image_path)
+                self.boosted_image, _, _, _, _ = open_image(self.boosted_image_path)
+            else :
+                self.boosted_image = None
         else :
+            # No FITS file provided: build an empty placeholder image instead.
             self.weight_path = None
-        
-        self.image_data, self.pix_deg_scale, self.orientation, self.wcs, self.header = open_image(self.image_path)
+            wcs_obj = wcs if isinstance(wcs, WCS) else make_default_wcs(wcs[0], wcs[1])
+            self.image_data, self.pix_deg_scale, self.orientation, self.wcs, self.header = create_empty_image(wcs_obj)
+            self.boosted_image_path = None
+            self.boosted_image = None
+
         self.sources = None
         self.fig = None
         self.ax = None
         self.multiple_images = None
         self.galaxy_selection = None
-        self.imported_cat = None
-        self.imported_cat_list = []
-        self.qt_image = None
+        self.ImageView = None
+        self.toggle_histogram_btn = None
         self.qtItems_dict = {'sources': None,
                              'potfile_cat': None,
                              'imported_cat': None,
                              'multiple_images': None}
         self.ax = None
         self.redshift = None
-        self.boosted_image_path = self.image_path[:-5] + '_boosted.fits'
-        if os.path.isfile(self.boosted_image_path) :
-            print("Boosted image found: " + self.boosted_image_path)
-            self.boosted_image, _, _, _, _ = open_image(self.boosted_image_path)
-        else :
-            self.boosted_image = None
         self.boosted = False
-        self.qt_image_list = []
-        self.qt_window_list = []
+        self.ImageView_list = []
+        self.QMainWindow_list = []
+        self._is_split4 = False
+        self._split4_grid_widget = None
+        self._split4_extra_views = []
         if self.orientation==None :
             self.orientation = 0.
         self.cosmo = get_cosmo()
@@ -81,51 +116,118 @@ class fits_image :
         if plot_image :
             self.plot_image()
         self.filters = None
+
+    def _window_title(self) :
+        return os.path.basename(self.image_path) if self.image_path is not None else 'Empty image'
     
     
     def set_cosmo(self, cosmo_name) :
         self.cosmo = get_cosmo(cosmo_name)
     
-    def create_qt_image(self) :
-        to_plot = np.flip(self.image_data, axis=0) if not self.boosted else np.flip(self.boosted_image, axis=0)
-        
-        #qt_image = pg.image(to_plot)
-        qt_image = ImageView_custom_selector(self.wcs)
-        self.hand_selected_catalog = qt_image.catalog
-        qt_image.setImage(to_plot)
-        #qt_image.autoLevels()
-        
-        image_widget = DragWidget(qt_image)
-        
-        qt_layout = QSplitter(Qt.Horizontal)
-        qt_layout.addWidget(image_widget)
-        
-        if self.main_window is None:
-            window = QMainWindow()
-            window.setWindowTitle(os.path.basename(self.image_path))
-            window.setCentralWidget(qt_layout)
-            window.show()
-        else:
-            # Reuse the provided main window.
-            window = self.main_window
-            # Replace any existing central widget.
-            window.setCentralWidget(qt_layout)
-            window.setWindowTitle(os.path.basename(self.image_path))
-            # Ensure the window is visible (may already be shown).
-            window.show()
+    def _make_floating_toggle_button(self, drag_widget, label, corner, callback, margin=8, x_margin=None, y_margin=None) :
+        toggle_btn = QPushButton(label)
+        toggle_btn.setFixedSize(28, 28)
+        toggle_btn.setCursor(Qt.PointingHandCursor)
+        toggle_btn.setStyleSheet(
+            "QPushButton {"
+            "  background-color: rgba(40, 40, 40, 160);"
+            "  color: white;"
+            "  border: none;"
+            "  border-radius: 4px;"
+            "  font-size: 14px;"
+            "}"
+            "QPushButton:hover { background-color: rgba(70, 70, 70, 200); }"
+        )
+        toggle_btn.clicked.connect(callback)
+        drag_widget.add_floating_widget(toggle_btn, corner=corner, margin=margin, x_margin=x_margin, y_margin=y_margin)
+        return toggle_btn
 
-        return qt_image, qt_layout, image_widget, window
+    def _set_right_side_bar_visible_for(self, image_view, visible) :
+        if visible :
+            image_view.ui.histogram.show()
+            image_view.ui.roiBtn.show()
+            image_view.ui.menuBtn.show()
+        else :
+            image_view.ui.histogram.hide()
+            image_view.ui.roiBtn.hide()
+            image_view.ui.menuBtn.hide()
+
+    def _toggle_right_side_bar_for(self, image_view) :
+        self._set_right_side_bar_visible_for(image_view, not image_view.ui.histogram.isVisible())
+
+    def _make_histogram_toggle_button(self, drag_widget, image_view) :
+        return self._make_floating_toggle_button(
+            drag_widget,
+            'H',
+            'top-right',
+            lambda : self._toggle_right_side_bar_for(image_view),
+            x_margin=60,
+            y_margin=8,
+        )
+
+    def _create_image_view_and_drag_widget(self) :
+        """Build a single (ImageView, DragWidget) pair showing the current image.
+
+        This is the reusable building block behind ``create_QT_instances()``: it
+        does not create any window, so it can be used to populate secondary
+        windows or extra panes (e.g. ``toggle_split4()``) sharing the main
+        window. The returned ``ImageView`` starts out with its own,
+        independent hand-selection state; call ``_connect_hand_select_sync()``
+        (done automatically by ``plot_image()``/``toggle_split4()``/
+        ``plot_secondary_image()``) to link it with the other open views so
+        they all feed into the same ``hand_selected_catalog``.
+        """
+        to_plot = np.flip(self.image_data, axis=0) if not self.boosted else np.flip(self.boosted_image, axis=0)
+
+        image_view = ImageView_custom_selector(self.wcs)
+        image_view.setImage(to_plot)
+
+        drag_widget = DragWidget(image_view)
+
+        histogram_toggle_btn = self._make_histogram_toggle_button(drag_widget, image_view)
+        image_view.toggle_histogram_btn = histogram_toggle_btn
+        drag_widget.toggle_histogram_btn = histogram_toggle_btn
+
+        return image_view, drag_widget, histogram_toggle_btn
+
+    def create_QT_instances(self, force_new_window=False) :
+        image_view, drag_widget, _ = self._create_image_view_and_drag_widget()
+
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.addWidget(drag_widget)
+
+        if not force_new_window and self.main_window is not None :
+            # Reuse the provided main window.
+            main_window = self.main_window
+            # Replace any existing central widget.
+            main_window.setCentralWidget(splitter)
+            main_window.setWindowTitle(self._window_title())
+            # Ensure the window is visible (may already be shown). Note that
+            # if the window was already visible, `main_window.show()` is a
+            # no-op and will NOT recursively show the just-added central
+            # widget (Qt only propagates visibility down on the transition
+            # to visible), so the new widget subtree must be shown explicitly.
+            main_window.show()
+            splitter.show()
+        else :
+            main_window = QMainWindow()
+            main_window.setWindowTitle(self._window_title())
+            main_window.setCentralWidget(splitter)
+            main_window.show()
+
+        return image_view, splitter, drag_widget, main_window
     
     def _flush_closed_windows(self) :
-        if self.qt_image is not None :
-            if not self.qt_image.isVisible() :
-                self.window.close()
-                self.qt_image, self.qt_layout, self.image_widget, self.window = None, None, None, None
-        for window in self.qt_window_list :
+        if self.ImageView is not None :
+            if not self.ImageView.isVisible() :
+                self.QMainWindow.close()
+                self.ImageView, self.QSplitter, self.QWidget, self.QMainWindow = None, None, None, None
+                self.toggle_histogram_btn = None
+        for window in self.QMainWindow_list :
             if not window.isVisible() :
                 window.close()
-        self.qt_image_list = [ image for window, image in zip(self.qt_window_list, self.qt_image_list) if window.isVisible() ]
-        self.qt_window_list = [ window for window in self.qt_window_list if window.isVisible() ]
+        self.ImageView_list = [ image for window, image in zip(self.QMainWindow_list, self.ImageView_list) if window.isVisible() ]
+        self.QMainWindow_list = [ window for window in self.QMainWindow_list if window.isVisible() ]
         return
 
     def link_zoom(self) :
@@ -156,29 +258,46 @@ class fits_image :
         sync['pan'] = False
         self._disconnect_view_range_sync_if_idle()
 
+    def toggle_right_side_bar(self) :
+        if self.ImageView is not None :
+            self._toggle_right_side_bar_for(self.ImageView)
+
     def plot_image(self) :
-        #to_plot = self.image_data
-        #to_plot = np.transpose(self.image_data, axes=[1,0,2])
+        """Ensure the main image window is open.
+
+        If the main window is still open, this does nothing. Otherwise, the
+        whole main viewer is recreated from scratch: the image, its drag
+        widget/histogram toggle, and (if this ``Image`` belongs to a
+        ``Visualens`` workspace) the left side panel and its toggle button.
+        Secondary windows/panes are created via
+        ``Visualens.plot_secondary_image()`` and ``Visualens.toggle_split4()``, not
+        by calling this again.
+        """
         self._flush_closed_windows()
-        if self.qt_image is None :
-            print('Creating main window...')
-            self.qt_image, self.qt_layout, self.image_widget, self.window = self.create_qt_image()
-            self.qt_window_list = [self.window] + self.qt_window_list
-            self.qt_image_list = [self.qt_image] + self.qt_image_list
-            print('Done')
-        else :
-            print('Creating secondary window...')
-            extra_qt_image, _, _, extra_window = self.create_qt_image()
-            extra_window.setWindowTitle(os.path.basename(self.image_path) + ' (' + str(len(self.qt_image_list)+1) + ')')
-            extra_window.show()
-            self.qt_image_list.append(extra_qt_image)
-            self.qt_window_list.append(extra_window)
-            print('Done')
+        if self.ImageView is not None :
+            return
+
+        print('Creating main window...')
+        self.ImageView, self.QSplitter, self.QWidget, self.QMainWindow = self.create_QT_instances()
+        self.toggle_histogram_btn = self.ImageView.toggle_histogram_btn
+        self.QMainWindow_list = [self.QMainWindow] + self.QMainWindow_list
+        self.ImageView_list = [self.ImageView] + self.ImageView_list
+        self._is_split4 = False
+        self._split4_grid_widget = None
+        self._split4_extra_views = []
+        print('Done')
+
+        if self.workspace is not None :
+            self.workspace._attach_side_panel(self)
+
         if hasattr(self, '_view_range_sync') and (self._view_range_sync['zoom'] or self._view_range_sync['pan']) :
             self._connect_view_range_sync()
+        self._connect_hand_select_sync()
         return
     
     def boost(self, boost=[2,1.5,1]) :
+        if self.image_path is None :
+            raise ValueError('boost() requires a real FITS image; this Image instance was created without one.')
         if self.boosted_image is None :
             print('Adjusting contrast...')
             adjusted_image = adjust_contrast(self.image_data, boost[0], pivot=boost[1])
@@ -189,21 +308,21 @@ class fits_image :
             hdul.writeto(self.boosted_image_path, overwrite=True)
         if not self.boosted :
             print('Plotting...')
-            self.qt_image.setImage(np.flip(self.boosted_image, axis=0))
-            #self.qt_image.autoLevels()
+            self.ImageView.setImage(np.flip(self.boosted_image, axis=0))
+            #self.ImageView.autoLevels()
             self.boosted = True
-            for extra_qt_image in self.qt_image_list :
-                extra_qt_image.setImage(np.flip(self.boosted_image, axis=0))
+            for extra_ImageView in self.ImageView_list :
+                extra_ImageView.setImage(np.flip(self.boosted_image, axis=0))
             print('Done')
     
     def unboost(self) :
         if self.boosted :
             print('Plotting...')
-            self.qt_image.setImage(np.flip(self.image_data, axis=0))
-            #self.qt_image.autoLevels()
+            self.ImageView.setImage(np.flip(self.image_data, axis=0))
+            #self.ImageView.autoLevels()
             self.boosted = False
-            for extra_qt_image in self.qt_image_list :
-                extra_qt_image.setImage(np.flip(self.image_data, axis=0))
+            for extra_ImageView in self.ImageView_list :
+                extra_ImageView.setImage(np.flip(self.image_data, axis=0))
             print('Done')
     
     def set_weight(self, weight_path) :
@@ -213,6 +332,8 @@ class fits_image :
         print("Source extraction not yet available. Work in progress.")
         if False :
             if image_path is None :
+                if self.image_path is None :
+                    raise ValueError('extract_sources() requires a real FITS image; this Image instance was created without one.')
                 image_path = self.image_path
                 weight_path = self.weight_path
                 
@@ -299,6 +420,8 @@ class fits_image :
             so the new x/y axes align with RA/Dec (North up, East left).
             The output orientation is ``self.orientation - angle``.
         """
+        if self.image_path is None :
+            raise ValueError('rotate() requires a real FITS image; this Image instance was created without one.')
         if angle is None :
             angle = self.orientation
 
@@ -407,12 +530,12 @@ class fits_image :
         self.boosted_image_path = self.image_path[:-5] + '_boosted.fits'
 
         to_plot = np.flip(self.image_data, axis=0)
-        if self.qt_image is not None :
-            self.qt_image.setImage(to_plot)
-            for qt_image in self.qt_image_list :
-                qt_image.setImage(to_plot)
-            if getattr(self, 'window', None) is not None :
-                self.window.setWindowTitle(os.path.basename(self.image_path))
+        if self.ImageView is not None :
+            self.ImageView.setImage(to_plot)
+            for ImageView in self.ImageView_list :
+                ImageView.setImage(to_plot)
+            if getattr(self, 'QMainWindow', None) is not None :
+                self.QMainWindow.setWindowTitle(os.path.basename(self.image_path))
         print('Done')
         return out_path
     
@@ -439,19 +562,15 @@ class fits_image :
     
     
     def make_catalog(self, cat, color=[1., 1., 0], units=None, verbose=True) :
-        if self.qt_image is None :
+        if self.ImageView is None :
             self.plot_image()
-        #to_return = catalog(cat, self.image_data, self.wcs, self.qt_image, window=self.window, image_path=self.image_path, 
-        #                            image_widget = self.image_widget, qt_layout=self.qt_layout, color=color, 
+        #to_return = Catalog(cat, self.image_data, self.wcs, self.ImageView, QMainWindow=self.QMainWindow, image_path=self.image_path, 
+        #                            QWidget = self.QWidget, QSplitter=self.QSplitter, color=color, 
         #                            mag_colnames=mag_colnames, mpl_fig=self.fig, mpl_ax=self.ax, 
         #                            pix_deg_scale=self.pix_deg_scale, units=units)
-        to_return = catalog(cat, self, color=color, units=units, verbose=verbose)
+        to_return = Catalog(cat, self, color=color, units=units, verbose=verbose)
         return to_return
     
-    def import_catalog(self, cat, color=None, units='pixel') :
-        self.imported_cat = self.make_catalog(cat, color=color, units=units)
-        self.imported_cat_list.append(self.imported_cat)
-        
     ###########################################################################
     
     
@@ -470,12 +589,23 @@ class fits_image :
         for key in self.qtItems_dict.keys() :
             if self.qtItems_dict[key] is not None :
                 for i in tqdm( range(len(self.qtItems_dict[key])) ) :
-                    self.qt_image.removeItem(self.qtItems_dict[key][i])
+                    self.ImageView.removeItem(self.qtItems_dict[key][i])
     
+
+    @property
+    def hand_selected_catalog(self) :
+        """Catalog of sources hand-selected via double-click, shared across
+        every currently linked ``ImageView_custom_selector`` (main window,
+        secondary windows and split4 panes all feed into the same catalog).
+        """
+        if self.ImageView is None :
+            return None
+        return self.ImageView.catalog
 
     def export_hand_selection_as_mult_file(self, path=None) :
         if path is None :
-            path = os.path.join(os.path.dirname(self.image_path), 'hand_selected_catalog.lenstool')
+            base_dir = os.path.dirname(self.image_path) if self.image_path is not None else os.getcwd()
+            path = os.path.join(base_dir, 'hand_selected_catalog.lenstool')
         header = "#REFERENCE 0\n## id   RA      Dec        a         b         theta     z         mag\n"
         with open(path, 'w') as f :
             f.write(header)
@@ -484,28 +614,25 @@ class fits_image :
         print('Hand selected catalog exported to ' + path)
 
     def clear_hand_selection(self) :
-        self.qt_image.clear_selection()
-        self.hand_selected_catalog = self.qt_image.catalog
+        """Empty the shared hand-selected catalog and clear its plotted
+        markers ('+' pending and 'o' confirmed) in every currently open,
+        linked view of this image (main window, secondary windows and any
+        split4 panes)."""
+        self._flush_closed_windows()
+        if self.ImageView is not None :
+            self.ImageView.clear_selection()
 
-        
-    def import_lenstool(self, model_dir, compute_predictions=True, verbose=True, use_best=False) :
-        #self.lt_dir = model_dir
-        #if hasattr(self, 'lt'):
-        #    del self.lt
-        self.lt = lenstool_model(model_dir, self, compute_predictions=compute_predictions, verbose=verbose, use_best=use_best)
-    
-    
-    
+
     def start_hand_select(self) :
         cat_dict = {'id': [], 'ra': [], 'dec': [], 'x': [], 'y': [], 'a': [], 'b': [], 'theta': []}
         cat = Table(cat_dict)
-        self.hand_made_cat = catalog(cat, self, units='pixel')
+        self.hand_made_cat = Catalog(cat, self, units='pixel')
         
         def mouse_clicked(evt):
             if evt.double():
                 pos = evt.scenePos()
-                if self.qt_image.getView().sceneBoundingRect().contains(pos):
-                    mouse_point = self.qt_image.getView().mapSceneToView(pos)
+                if self.ImageView.getView().sceneBoundingRect().contains(pos):
+                    mouse_point = self.ImageView.getView().mapSceneToView(pos)
                     x, y_flipped = mouse_point.x(), mouse_point.y()
                     x, y = x, self.image_data.shape[0] - y_flipped
                     ra, dec = self.image_to_world(x, y)
@@ -513,20 +640,20 @@ class fits_image :
                     self.hand_made_cat.qtItems.append(PyQt5.QtWidgets.QGraphicsEllipseItem())
                     self.hand_made_cat.plot(color=[1,1,1,0])
                     
-        self._doubleclick_connection = self.qt_image.scene.sigMouseClicked.connect(mouse_clicked)
+        self._doubleclick_connection = self.ImageView.scene.sigMouseClicked.connect(mouse_clicked)
         
         def keyPressEvent(event):
             #print('Hand selection stopped.')
             if event.key() == Qt.Key_Escape or event.key() == Qt.Key_Space :
                 if hasattr(self, '_doubleclick_connection'):
-                    self.qt_image.scene.sigMouseClicked.disconnect(self._doubleclick_connection)
+                    self.ImageView.scene.sigMouseClicked.disconnect(self._doubleclick_connection)
                     del self._doubleclick_connection
                 self.hand_made_cat.clear()
-                self.window.keyPressEvent = self._original_keyPressEvent
+                self.QMainWindow.keyPressEvent = self._original_keyPressEvent
                 print('Hand selection stopped.')
         
-        self._original_keyPressEvent = self.window.keyPressEvent
-        self.window.keyPressEvent = keyPressEvent
+        self._original_keyPressEvent = self.QMainWindow.keyPressEvent
+        self.QMainWindow.keyPressEvent = keyPressEvent
     
     
     
@@ -566,6 +693,8 @@ class fits_image :
     
     def load_filters(self, filter_dir=None):
         if filter_dir==None :
+            if self.image_path is None :
+                raise ValueError('load_filters() requires a real FITS image; this Image instance was created without one.')
             listdir = os.listdir( os.path.dirname(self.image_path) )
             listdir_lower = [ name.lower() for name in os.listdir( os.path.dirname(self.image_path) ) ]
             indices = np.where([ 'filter' in name for name in listdir_lower ])[0]
@@ -668,7 +797,7 @@ class fits_image :
             self._scale_bar.update()
             return self._scale_bar
 
-        view = self.qt_image.getView()
+        view = self.ImageView.getView()
 
         # pg.ScaleBar is a UIGraphicsItem: it renders at a fixed screen position and
         # redraws its pixel width automatically whenever the ViewBox zoom changes so
@@ -692,10 +821,21 @@ class fits_image :
 
 
 
+    ########## Hand-selection synchronization ##########
+    def _connect_hand_select_sync(self) :
+        """(Re-)link every currently open ``ImageView_custom_selector`` of this
+        image (main window, secondary windows, split4 panes) so they share a
+        single hand-selected catalog and marker set. Should be called
+        whenever ``self.ImageView_list`` changes.
+        """
+        self._flush_closed_windows()
+        if self.ImageView_list :
+            ImageView_custom_selector.link(self.ImageView_list)
+
     ########## View range synchronization functions##########
     def _all_viewboxes(self) :
         self._flush_closed_windows()
-        return [iv.getView() for iv in self.qt_image_list]
+        return [iv.getView() for iv in self.ImageView_list]
 
     def _view_range_sync_state(self) :
         if not hasattr(self, '_view_range_sync') :
@@ -769,7 +909,7 @@ class fits_image :
 
 
 
-class FilterImage(fits_image) :
+class FilterImage(Image) :
     def __init__(self, image_path, main_window=None, plot_image=False) :
         super().__init__(image_path, main_window=main_window, plot_image=plot_image)
         self.filter = self._get_filter_name()

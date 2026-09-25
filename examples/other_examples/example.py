@@ -1,7 +1,7 @@
 import os
 import sys
 import numpy as np
-from visualens.fits_image import fits_image
+from visualens import Visualens
 
 
 DATA_dir = 'path/to/data/'
@@ -9,29 +9,30 @@ DATA_dir = 'path/to/data/'
 
 
 # Red sequence
-im = fits_image(DATA_dir + "macs0308_rgb.fits")
-im.boost()
+vl = Visualens()
+vl.import_image(DATA_dir + "macs0308_rgb.fits")
+vl.image.boost()
 phot_cat_path = DATA_dir + "macs0308_phot-eazy.cat"
-im.import_catalog(phot_cat_path)
+vl.import_catalog(phot_cat_path)
 
 
-im.imported_cat.plot()
-im.imported_cat.plot_column('z_phot')
+vl.catalog.plot()
+vl.catalog.plot_column('z_phot')
 
-im.extract_sources()
-im.sources.cat
-im.sources.plot()
+vl.image.extract_sources()
+vl.image.sources.cat
+vl.image.sources.plot()
 
-im.imported_cat.transfer_col('a', which_cat='sources')
-im.imported_cat.transfer_col('b', which_cat='sources')
-im.imported_cat.transfer_col('theta', which_cat='sources')
+vl.catalog.transfer_col('a', which_cat='sources')
+vl.catalog.transfer_col('b', which_cat='sources')
+vl.catalog.transfer_col('theta', which_cat='sources')
 
-im.imported_cat.cat['a'] = im.imported_cat.cat['a_CAT2']
-im.imported_cat.cat['b'] = im.imported_cat.cat['b_CAT2']
-im.imported_cat.cat['theta'] = im.imported_cat.cat['theta_CAT2']
+vl.catalog.cat['a'] = vl.catalog.cat['a_CAT2']
+vl.catalog.cat['b'] = vl.catalog.cat['b_CAT2']
+vl.catalog.cat['theta'] = vl.catalog.cat['theta_CAT2']
 
 
-im.imported_cat.plot()
+vl.catalog.plot()
 
 
 
@@ -43,37 +44,27 @@ def add_magnitude_column(catalog, flux_col):
     catalog[flux_col[:-len('flux')]+'mag'] = magnitude
     return catalog
 
-add_magnitude_column(im.imported_cat.cat, 'f200w_flux')
-add_magnitude_column(im.imported_cat.cat, 'f105w_flux')
+add_magnitude_column(vl.catalog.cat, 'f200w_flux')
+add_magnitude_column(vl.catalog.cat, 'f105w_flux')
 
-im.imported_cat.mag_colnames = im.imported_cat.cat.colnames[-2:]
-im.imported_cat.plot_selection_panel()
-im.imported_cat.plot()
-
-
-
-im.imported_cat.export_to_potfile()
+vl.catalog.mag_colnames = vl.catalog.cat.colnames[-2:]
+vl.catalog.plot_selection_panel()
+vl.catalog.plot()
 
 
 
-
-selection_mask = im.imported_cat.seselection_mask
-RS_catalog = im.imported_cat.cat[selection_mask]
+vl.catalog.export_to_potfile()
 
 
+
+
+selection_mask = vl.catalog.seselection_mask
+RS_catalog = vl.catalog.cat[selection_mask]
 
 
 
 
 # Multiple images
-im.plot_image()
-im.import_catalog(phot_cat_path)
-im.imported_cat.plot()
-
-
-
-
-
-
-
-
+vl.image.plot_image()
+vl.import_catalog(phot_cat_path)
+vl.catalog.plot()

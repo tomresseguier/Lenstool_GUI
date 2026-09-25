@@ -636,7 +636,7 @@ class lenstronomy_model :
             # This is in case we have added two models together where one was optimized but not the other
             kwargs_name = self._get_kwargs_name('kwargs_lens', i)
             kwargs = self.local[kwargs_name]['kwargs_lens'][i]
-            pix_scale = self.imsim.fits_image.pix_deg_scale * 3600.0 # because this is the RGB panel
+            pix_scale = self.imsim.image.pix_deg_scale * 3600.0 # because this is the RGB panel
             npix = self.imsim._crop_npix
             x_center = kwargs['center_x'] / pix_scale + npix / 2.0
             y_center = kwargs['center_y'] / pix_scale + npix / 2.0
