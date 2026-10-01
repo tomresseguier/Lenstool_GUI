@@ -128,15 +128,19 @@ def InRectangle(x_array, y_array, rect_params) :
     return full_mask
 
 
+##############################################################################
+# Default color format is color = [R, G, B, contour opacity, inside opacity] #
+##############################################################################
 def make_full_color(color) :
     full_color = color.copy()
     if type(full_color)==np.ndarray :
         full_color = full_color.tolist()
     if len(full_color)==3 :
-        full_color = full_color + [0]
+        full_color = full_color + [1, 0]
     if len(full_color)==4 :
-        edge_color = 0.5 + round(full_color[-1]/2)
-        full_color = full_color + [edge_color]
+        full_color = full_color + [0]
+    elif len(full_color)!=5 :
+        raise ValueError("Initial color must be in the format [R, G, B, contour opacity, inside opacity]")
     return list(np.array(full_color)*255)
 
 

@@ -13,6 +13,7 @@ from PyQt5.QtWidgets import (
 
 from PyQt5.QtCore import Qt
 
+from .image import DEFAULT_MAIN_WINDOW_HEIGHT, DEFAULT_MAIN_WINDOW_WIDTH
 from .visualens import Visualens
 
 
@@ -30,7 +31,7 @@ class LensToolMainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Lenstool GUI")
-        self.resize(800, 600)
+        self.resize(DEFAULT_MAIN_WINDOW_WIDTH, DEFAULT_MAIN_WINDOW_HEIGHT)
 
         # The workspace holding the currently loaded Image, Catalog(s) and
         # LensModel (all None until a file is opened / imported). The empty
@@ -68,6 +69,11 @@ class LensToolMainWindow(QMainWindow):
         boost_action.setShortcut("Ctrl+B")
         boost_action.triggered.connect(self._boost_image)  # type: ignore[arg-type]
         image_menu.addAction(boost_action)
+
+        show_viewer_action = QAction("Show &viewer", self)
+        show_viewer_action.setShortcut("Ctrl+Shift+V")
+        show_viewer_action.triggered.connect(self._show_viewer)  # type: ignore[arg-type]
+        image_menu.addAction(show_viewer_action)
 
         image_menu.addSeparator()
 
@@ -165,6 +171,16 @@ class LensToolMainWindow(QMainWindow):
             self.image.unboost()
         else:
             self.image.boost()
+
+    def _show_viewer(self) -> None:
+        """Show or recreate the main image viewer window."""
+        if self.image is None:
+            QMessageBox.warning(self, "No image", "Please open an image first.")
+            return
+        try:
+            self.workspace.reopen_main_window()
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Failed to show viewer", str(exc))
 
     def _open_catalog(self) -> None:
         """Open a catalog file and import it into the current image."""

@@ -1,10 +1,12 @@
 from PyQt5.QtWidgets import QPushButton, QFileDialog, QMessageBox, QWidget, QGridLayout
 from PyQt5.QtCore import Qt
+from PyQt5 import sip
 
 from .image import Image
 from .catalog import Catalog
 from .LensModel.LensModel import LensModel
-from .utils.utils_Qt.side_panel import ImageSidePanel
+from .UI.side_panel import ImageSidePanel
+from .UI.workspace_signals import WorkspaceSignals
 
 
 
@@ -14,6 +16,7 @@ class Visualens :
         # These must exist before `Image(...)` runs, since a freshly created
         # Image plots itself right away, which calls back into
         # `_attach_side_panel()` (see Image.plot_image()).
+        self.signals = WorkspaceSignals()
         self.lens_model = None
         self.catalog = None
         self.catalogs = []
@@ -27,7 +30,41 @@ class Visualens :
             main_window = getattr(self.image, 'QMainWindow', None)
         self.image = Image(image_path, main_window=main_window, plot_image=plot_image, wcs=wcs, workspace=self)
         self._attach_side_panel()
+        self.signals.image_changed.emit()
         return self.image
+
+    def main_window_is_open(self) :
+        """Return whether the main image viewer window is currently open."""
+        img = self.image
+        if img is None or img.ImageView is None :
+            return False
+        main_window = getattr(img, 'QMainWindow', None)
+        if main_window is not None and not main_window.isVisible() :
+            return False
+        return img.ImageView.isVisible()
+
+    def reopen_main_window(self) :
+        """Show or recreate the main image viewer window.
+
+        If the main viewer was closed, this rebuilds it (image, side panel,
+        toggles) and re-applies any loaded catalog and lens-model overlays.
+        If it is already open, this brings it to the front.
+        """
+        if self.image is None :
+            raise ValueError('No image loaded; import an image first.')
+
+        was_closed = not self.main_window_is_open()
+        self.image.plot_image()
+        if was_closed :
+            if self.catalog is not None :
+                self.catalog.plot()
+            if self.lens_model is not None :
+                self.lens_model.plot()
+        elif self.image.QMainWindow is not None :
+            self.image.QMainWindow.show()
+            self.image.QMainWindow.raise_()
+            self.image.QMainWindow.activateWindow()
+        return self.image.QMainWindow
 
     def plot_secondary_image(self) :
         """Open a new, independent window showing only the current image (no left panel/toggle).
@@ -178,6 +215,7 @@ class Visualens :
         self.catalog = new_cat
         self.catalogs.append(new_cat)
         self._attach_side_panel()
+        self.signals.catalogs_changed.emit()
         return new_cat
 
     def import_lens_model(self, model_dir, compute_predictions=True, verbose=True, use_best=False) :
@@ -185,6 +223,8 @@ class Visualens :
         self.image = self.lens_model.image   # adopt the auto-created empty Image if there wasn't one
         self._attach_side_panel()
         self.lens_model.clear()
+        self.lens_model.plot()
+        self.signals.lens_model_changed.emit()
         return self.lens_model
 
     def open_image_dialog(self) :
@@ -227,8 +267,6 @@ class Visualens :
             return
         try :
             self.import_lens_model(dir_path)
-            if self.lens_model is not None :
-                self.lens_model.plot()
         except Exception as exc :
             QMessageBox.critical(self._dialog_parent(), 'Failed to import model', str(exc))
 
@@ -248,21 +286,27 @@ class Visualens :
         if img is None or img.QSplitter is None or img.QWidget is None :
             return
 
-        if self.side_panel is None :
+        # Closing the window destroys its splitter and, with it, the panel and toggle button.
+        if self.side_panel is not None and sip.isdeleted(self.side_panel) :
+            self.side_panel = None
+        if self.toggle_panel_btn is not None and sip.isdeleted(self.toggle_panel_btn) :
+            self.toggle_panel_btn = None
+
+        panel_is_new = self.side_panel is None
+        if panel_is_new :
             self.side_panel = ImageSidePanel(self)
             self.side_panel.hide()
 
         if self.side_panel.parent() is not None and self.side_panel.parent() is not img.QSplitter :
             self.side_panel.setParent(None)
 
-        if self.side_panel.parent() is not img.QSplitter :
+        moved_to_new_window = self.side_panel.parent() is not img.QSplitter
+        if moved_to_new_window :
             img.QSplitter.insertWidget(0, self.side_panel)
             img.QSplitter.setStretchFactor(0, 1)
             img.QSplitter.setStretchFactor(1, 3)
-
-        self.side_panel.sync_link_button_states()
-        self.side_panel.refresh_catalog_tabs()
-        self.side_panel.refresh_lens_model_tab()
+            if not panel_is_new :
+                self.signals.window_attached.emit()
 
         if self.toggle_panel_btn is not None :
             parent = self.toggle_panel_btn.parent()

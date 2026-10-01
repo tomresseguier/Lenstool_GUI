@@ -25,7 +25,7 @@ def get_lenstool_file_path(model_dir, name) :
         return path_list[0]
 
 
-def import_sources(self, predicted_sources_path, image, AttrName='source', units='pixel', filled_markers=False) :
+def import_sources(self, predicted_sources_path, image, AttrName='source', units='pixel') :
     with open(predicted_sources_path) as file :
         source_lines = file.readlines()[1:]
     sources = Table(names=['id','ra','dec','a','b','theta','z','mag'], dtype=['str', *['float',]*7])
@@ -195,13 +195,13 @@ def import_lenstool_files(self) :
         if len(arclets_path_list)==1 :
             arclets_path = arclets_path_list[0]
             print(f"{os.path.basename(arclets_path)} found and used as arclets.")
-            import_multiple_images(self, arclets_path, self.image, AttrName='arclets', units='pixel', filled_markers=False)
+            import_multiple_images(self, arclets_path, self.image, AttrName='arclets', units='pixel')
                 
     if self.images is None :
         predicted_images_path = os.path.join(self.model_dir, 'image.dat')
         if os.path.isfile(predicted_images_path) :
-            import_multiple_images(self, predicted_images_path, self.image, AttrName='images', units='pixel', filled_markers=False)
-            import_multiple_images(self, predicted_images_path, self.image, AttrName='images_filtered', units='pixel', filled_markers=False)
+            import_multiple_images(self, predicted_images_path, self.image, AttrName='images', units='pixel')
+            import_multiple_images(self, predicted_images_path, self.image, AttrName='images_filtered', units='pixel')
             self.filter_image()
     
     if self.curves is None :
@@ -212,5 +212,5 @@ def import_lenstool_files(self) :
     if self.source is None and self.reference is not None :
         predicted_sources_path = os.path.join(self.model_dir, 'source.dat')
         if os.path.isfile(predicted_sources_path) :
-            import_sources(self, predicted_sources_path, self.image, AttrName='source', units='pixel', filled_markers=False)
+            import_sources(self, predicted_sources_path, self.image, AttrName='source', units='pixel')
 

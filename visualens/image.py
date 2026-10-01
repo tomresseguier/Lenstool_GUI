@@ -35,6 +35,8 @@ from .utils.utils_Qt.ImageView_custom_selector import ImageView_custom_selector
 
 pg.setConfigOption('imageAxisOrder', 'row-major')
 
+DEFAULT_MAIN_WINDOW_WIDTH = 1200
+DEFAULT_MAIN_WINDOW_HEIGHT = 900
 
 
 class Image :
@@ -212,6 +214,7 @@ class Image :
         else :
             main_window = QMainWindow()
             main_window.setWindowTitle(self._window_title())
+            main_window.resize(DEFAULT_MAIN_WINDOW_WIDTH, DEFAULT_MAIN_WINDOW_HEIGHT)
             main_window.setCentralWidget(splitter)
             main_window.show()
 

@@ -9,10 +9,14 @@ from tqdm import tqdm
 from .utils_general import transform_rectangle, InRectangle, make_full_color
 from .drag_widgets import DragPlotWidget
 
+##############################################################################
+# Default color format is color = [R, G, B, contour opacity, inside opacity] #
+##############################################################################
+
 
 class SelectableEllipse(QGraphicsEllipseItem) :
-    def __init__(self, x, y, width, height, idx, selection_mask, initial_color, selection_color=[1, 1, 1], 
-                 scatter_pos=None, Scatter_widget=None, linewidth=3, alpha=None):
+    def __init__(self, x, y, width, height, idx, selection_mask, initial_color, selection_color=None, 
+                 scatter_pos=None, Scatter_widget=None, linewidth=3):
         #super(SelectableEllipse, self).__init__(x, y, width, height)
         super().__init__(x, y, width, height)
         self.idx = idx
@@ -20,14 +24,18 @@ class SelectableEllipse(QGraphicsEllipseItem) :
         self.selection_mask = selection_mask
         self.linewidth = linewidth
         self.setFlag(QGraphicsEllipseItem.ItemIsSelectable, True)
-        
-        if alpha is not None and len(initial_color)==3 :
-            initial_color = initial_color + [alpha]
+
         self.initial_color = make_full_color(initial_color)
-        self.selection_color = make_full_color(selection_color)
+        if selection_color is not None :
+            self.selection_color = make_full_color(selection_color)
+        else :
+            # Default selection color is white with the same opacities as the initial color
+            self.selection_color = self.initial_color.copy()
+            for i in range(3) :
+                self.selection_color[i] = 255
         
-        self.setPen( pg.mkPen(self.initial_color[:3] + self.initial_color[-1:], width=linewidth) )
-        self.setBrush( pg.mkBrush(self.initial_color[:4]) )
+        self.setPen( pg.mkPen(self.initial_color[:4], width=linewidth) )
+        self.setBrush( pg.mkBrush(self.initial_color[:3] + [self.initial_color[4]]) )
         
         self.scatter_pos = scatter_pos
         self.Scatter_widget = Scatter_widget
@@ -40,11 +48,11 @@ class SelectableEllipse(QGraphicsEllipseItem) :
             
             self.selection_mask[self.idx] = not self.selection_mask[self.idx]
             if self.is_selected :
-                self.setPen( pg.mkPen(self.selection_color[:3] + self.selection_color[-1:], width=self.linewidth) )
-                self.setBrush( pg.mkBrush(self.selection_color[:4]) )
+                self.setPen( pg.mkPen(self.selection_color[:4], width=self.linewidth) )
+                self.setBrush( pg.mkBrush(self.selection_color[:3] + [self.selection_color[4]]) )
             else :
-                self.setPen( pg.mkPen(self.initial_color[:3] + self.initial_color[-1:], width=self.linewidth) )
-                self.setBrush( pg.mkBrush(self.initial_color[:4]) )
+                self.setPen( pg.mkPen(self.initial_color[:4], width=self.linewidth) )
+                self.setBrush( pg.mkBrush(self.initial_color[:3] + [self.initial_color[4]]) )
             
             
             if self.Scatter_widget is not None :

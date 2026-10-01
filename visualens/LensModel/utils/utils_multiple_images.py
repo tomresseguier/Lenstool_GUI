@@ -17,30 +17,19 @@ from ...utils.utils_plots.plt_framework import plt_framework
 
 
 
-def make_which_colors(self, filled_markers=False, saturation=None) :
+def make_which_colors(self, saturation=0.8, alpha=[1,0]) :
     which = self.broad_families if self.which=='all' else self.which
-    
-    if filled_markers:
-        colors = make_palette(len(which), 1, alpha=0.5, sat_fixed=saturation)
-    else:
-        colors = make_palette(len(which), 1, alpha=0, sat_fixed=saturation)
-    
+    colors = make_palette(hue_range=len(which), alpha=alpha, sat_fixed=saturation)
     which_colors_dict = {}
     for i, name in enumerate(which) :
         which_colors_dict[name] = colors[i]
-    #for i, mask in enumerate(to_plot_mask):
-    #    for multiple_image in cat[mask]:
-    #        which_colors_dict[multiple_image['id']] = colors[i]
     return which_colors_dict
 
 
 def make_full_color_function(families) :
     n_families = len(families)
-    def make_full_color_dict(filled_markers=False, saturation=None) :
-        if filled_markers:
-            colors = make_palette(n_families, 1, alpha=0.5, sat_fixed=saturation)
-        else:
-            colors = make_palette(n_families, 1, alpha=0, sat_fixed=saturation)
+    def make_full_color_dict(saturation=0.8, alpha=[1,0]) :
+        colors = make_palette(hue_range=n_families, alpha=alpha, sat_fixed=saturation)
         full_colors_dict = {}
         for i, family in enumerate(families) :
             full_colors_dict[family] = colors[i]
@@ -48,7 +37,7 @@ def make_full_color_function(families) :
     return make_full_color_dict
 
 
-def import_multiple_images(LensModel, mult_file_path_or_cat, image, units=None, AttrName='mult', marker='o', filled_markers=False, saturation=0.8) :
+def import_multiple_images(LensModel, mult_file_path_or_cat, image, units=None, AttrName='mult', marker='o', saturation=0.8, alpha=[1,0], scale=1.) :
     if type(mult_file_path_or_cat)==str :
         multiple_images = Table(names=['id','family','broad_family','ra','dec','a','b','theta','z_in','mag','z_opt', 'z','confidence'], dtype=['str','str','str',*['float',]*10])
         with open(mult_file_path_or_cat, 'r') as mult_file:
@@ -68,7 +57,7 @@ def import_multiple_images(LensModel, mult_file_path_or_cat, image, units=None, 
         multiple_images['z_in'][no_z_in_mask] = np.nan
     else :
         multiple_images = mult_file_path_or_cat.copy()
-        
+    
     multiple_images['family'], multiple_images['broad_family'], local_families, local_broad_families, multiple_images['confidence'] = find_families(multiple_images['id'])
     add_optimized_redshifts(multiple_images, LensModel.param_best)
     
@@ -78,6 +67,8 @@ def import_multiple_images(LensModel, mult_file_path_or_cat, image, units=None, 
     
     setattr(LensModel, AttrName, image.make_catalog(multiple_images, units=units, verbose=LensModel.verbose))
     getattr(LensModel, AttrName).workspace = LensModel.workspace
+    getattr(LensModel, AttrName)._default_saturation = saturation
+    getattr(LensModel, AttrName)._default_alpha = alpha
     
     if AttrName=='mult' :
         LensModel.families, indices = np.unique(LensModel.families + local_families, return_index=True)
@@ -88,9 +79,7 @@ def import_multiple_images(LensModel, mult_file_path_or_cat, image, units=None, 
         
         LensModel.which = LensModel.broad_families.copy()
         LensModel.mult_colors = make_full_color_function(LensModel.broad_families) #make_full_color_function(LensModel.broad_families)
-        
-    getattr(LensModel, AttrName).saturation = saturation
-    
+            
     def make_to_plot_masks() :
         to_plot_masks = {}
         #for i, name in enumerate(LensModel.which) :
@@ -121,11 +110,10 @@ def import_multiple_images(LensModel, mult_file_path_or_cat, image, units=None, 
     getattr(LensModel, AttrName).masks = make_to_plot_masks
     getattr(LensModel, AttrName).mask = make_overall_mask
         
-    def plot_multiple_images(self, scale=1, marker=marker, filled_markers=filled_markers, color=None, mpl=False, fontsize=9,
+    def plot_multiple_images(self, scale=scale, marker=marker, saturation=saturation, alpha=alpha, color=None, mpl=False, fontsize=9,
                              make_thumbnails=False, square_size=150, margin=50, distance=200, savefig=False, square_thumbnails=True,
-                             boost=[2,1.5,1], linewidth=1.7, text_color='white', text_alpha=0.5, saturation=saturation) :
+                             boost=[2,1.5,1], linewidth=1.7, text_color='white', text_alpha=0.5) :
         self.clear()
-        self.saturation = saturation
         
         if color is not None :
             colors_dict = {}
@@ -136,7 +124,7 @@ def import_multiple_images(LensModel, mult_file_path_or_cat, image, units=None, 
                 for i, family in enumerate(LensModel.which) :
                     colors_dict[family] = color
         else :
-            colors_dict = LensModel.mult_colors(filled_markers=filled_markers, saturation=saturation)
+            colors_dict = LensModel.mult_colors(saturation=saturation, alpha=alpha)
         
         cat_contains_ellipse_params = len(np.unique(self.cat['a']))!=1
         count = 0
@@ -145,31 +133,34 @@ def import_multiple_images(LensModel, mult_file_path_or_cat, image, units=None, 
             for colname in ['id', 'family', 'broad_family'] :
                 if name in self.cat[colname] :
                     colname_to_use = colname
-            broad_family = self.cat['broad_family'][ np.where(self.cat[colname_to_use]==name)[0][0] ]
-            for multiple_image in self.cat[mask] :
-                # Remove the *1000
-                if not cat_contains_ellipse_params :
-                    a, b = scale*40, scale*40
-                else :
-                    a, b = multiple_image['a']*scale, multiple_image['b']*scale
-                color = colors_dict[broad_family].copy()
-                if multiple_image['confidence']==1 :
-                    color/=2
-                elif multiple_image['confidence']==0 :
-                    color/=4
-                ellipse = self.plot_one_object(multiple_image['x'], multiple_image['y'], a, b, 
-                                               multiple_image['theta'], count, color=color, 
-                                               linewidth=linewidth, marker=marker, size=scale*15)
-                #self.qtItems[count] = ellipse
-                self.qtItems.append(ellipse)
-                count += 1
-                
-                if mpl :
-                    font = {'size':fontsize, 'family':'DejaVu Sans'}
-                    plt.rc('font', **font)
-                    self.plot_one_galaxy_mpl(multiple_image['x'], multiple_image['y'], a, b, multiple_image['theta'], color=colors_dict[broad_family][:3],
-                                             text=multiple_image['id'], linewidth=linewidth, text_color=text_color, text_alpha=text_alpha)
-                    #self.plot_one_galaxy_mpl(multiple_image['x'], multiple_image['y'], a, b, multiple_image['theta'], color=colors_dict[broad_family][:3], text=multiple_image['id'])
+            indices = np.where(self.cat[colname_to_use]==name)[0]
+            if len(indices)>0 :
+                broad_family = self.cat['broad_family'][ indices[0] ]
+
+                for multiple_image in self.cat[mask] :
+                    # Remove the *1000
+                    if not cat_contains_ellipse_params :
+                        a, b = scale*40, scale*40
+                    else :
+                        a, b = multiple_image['a']*scale, multiple_image['b']*scale
+                    color = colors_dict[broad_family].copy()
+                    if multiple_image['confidence']==1 :
+                        color/=2
+                    elif multiple_image['confidence']==0 :
+                        color/=4
+                    ellipse = self.plot_one_object(multiple_image['x'], multiple_image['y'], a, b, 
+                                                multiple_image['theta'], count, color=color, 
+                                                linewidth=linewidth, marker=marker, size=scale*15)
+                    #self.qtItems[count] = ellipse
+                    self.qtItems.append(ellipse)
+                    count += 1
+                    
+                    if mpl :
+                        font = {'size':fontsize, 'family':'DejaVu Sans'}
+                        plt.rc('font', **font)
+                        self.plot_one_galaxy_mpl(multiple_image['x'], multiple_image['y'], a, b, multiple_image['theta'], color=colors_dict[broad_family][:3],
+                                                text=multiple_image['id'], linewidth=linewidth, text_color=text_color, text_alpha=text_alpha)
+                        #self.plot_one_galaxy_mpl(multiple_image['x'], multiple_image['y'], a, b, multiple_image['theta'], color=colors_dict[broad_family][:3], text=multiple_image['id'])
         
         
         if make_thumbnails :
@@ -263,9 +254,7 @@ def import_multiple_images(LensModel, mult_file_path_or_cat, image, units=None, 
                 for i, family in enumerate(LensModel.which) :
                     colors_dict[family] = color
         else :
-            colors_dict = LensModel.mult_colors(filled_markers=False, saturation=self.saturation)
-        
-        colors_dict_background = LensModel.mult_colors(filled_markers=False, saturation=self.saturation)
+            colors_dict = LensModel.mult_colors(saturation=self._default_saturation, alpha=self._default_alpha)
 
         for name, mask in self.masks().items() :
             #broad_family = name #self.cat['broad_family'][ np.where(self.cat['family']==name)[0][0] ]
@@ -286,7 +275,7 @@ def import_multiple_images(LensModel, mult_file_path_or_cat, image, units=None, 
                     if type(bbox) is list or type(bbox) is tuple or type(bbox) is np.ndarray :
                         background_color = np.array(bbox)*255
                     elif type(bbox) is float :
-                        background_color = list( np.array(colors_dict_background[broad_family])*255 )[:3] + [bbox*255]
+                        background_color = list( np.array(colors_dict[broad_family])*255 )[:3] + [bbox*255]
                 
                 if background_color is not None :
                     text_item = pg.TextItem( text, color=list( np.array(colors_dict[broad_family])*255 )[:3], fill=pg.mkBrush(background_color) )

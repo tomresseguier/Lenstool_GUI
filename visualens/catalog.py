@@ -19,7 +19,9 @@ from .utils.utils_Qt.utils_general import make_handles, InRectangle, make_full_c
 from .utils.utils_general.utils_general import make_colnames_dict
 from .utils.utils_LaTeX.catalog_to_latex import catalog_to_latex
 
-
+##############################################################################
+# Default color format is color = [R, G, B, contour opacity, fill opacity] #
+##############################################################################
 
 
 
@@ -140,7 +142,7 @@ class Catalog :
         #self.qtItems = [PyQt5.QtWidgets.QGraphicsEllipseItem() for _ in range(len(self.cat))]
         self.qtItems_column = [] #np.empty(len(self.cat), dtype=pg.TextItem)
         #self.qtItems = np.empty(len(self.cat), dtype=utils.utils_classes.selectable_ellipse.SelectableEllipse)
-        self.color = color if color is not None else [0., 1., 1., 0., 0.5]
+        self.color = color if color is not None else [0., 1., 1., 0.5, 0.]
         self.selection_mask = np.full(len(self.cat), False)
         self.selection_regions = []
         self.Scatter_widget = None
@@ -264,13 +266,14 @@ class Catalog :
         else :
             to_plot = pg.ScatterPlotItem(size=size, symbol=marker)
             color = make_full_color(color)
-            if color[3]==0 : #filled_markers==False
-                to_plot.setPen( pg.mkPen(color[:3], width=2) ) #no outline
-                to_plot.setBrush( pg.mkBrush([0,0,0,0]) )
+            if marker=='o' :
+                to_plot.setPen( pg.mkPen(color[:4], width=2) )
+                to_plot.setBrush( pg.mkBrush(color[:3] + [color[4]]) )
             else :
-                to_plot.setPen( pg.mkPen([0,0,0,0], width=0.1) ) #outline makes cross thicker
-                to_plot.setBrush( pg.mkBrush(color[:-2]) )
-                
+                # For markers '+', 'x', etc., we ignore the edge/fill distinction and just use the edge color as fill
+                to_plot.setPen( pg.mkPen(color[:4], width=0.1) )
+                to_plot.setBrush( pg.mkBrush(color[:4]) )
+            
             to_plot.setData([x], [y])
         
         self.image.ImageView.addItem(to_plot)

@@ -151,7 +151,7 @@ class LensModel :
             self.families = []
             self.broad_families = []
             self.which = []
-            import_multiple_images(self, self.mult_path, self.image, units='pixel', marker='o', filled_markers=False)
+            import_multiple_images(self, self.mult_path, self.image, units='pixel', marker='o', alpha=[1,0], saturation=0.8)
         
         # Get the lens redshift if unique
         if self.param is not None  or self.param_best is not None :
@@ -264,7 +264,7 @@ class LensModel :
         source.rename_column('ra_source', 'ra')
         source.rename_column('dec_source', 'dec')
         
-        import_multiple_images(self, source, self.image, AttrName='source', units='pixel', marker='x', filled_markers=True)
+        import_multiple_images(self, source, self.image, AttrName='source', units='pixel', marker='x', alpha=[1,1], saturation=1., scale=0.5)
         
         # Format source catalog in the Lenstool format
         source.rename_column('id', 'n')
@@ -309,8 +309,8 @@ class LensModel :
         for j, colname in enumerate(['family','broad_family', 'confidence']) :
             image.add_column(cols_to_add[j], name=colname)
         
-        import_multiple_images(self, image, self.image, AttrName='images', units='pixel')
-        import_multiple_images(self, image, self.image, AttrName='images_filtered', units='pixel')
+        import_multiple_images(self, image, self.image, AttrName='images', units='pixel', marker='+', alpha=[1,1], saturation=1., scale=0.75)
+        import_multiple_images(self, image, self.image, AttrName='images_filtered', units='pixel', marker='+', alpha=[1,1], saturation=1., scale=0.75)
         self.filter_image()
         
         self.lt.set_grid(_initial_ngrid_value, 0)
@@ -384,16 +384,17 @@ class LensModel :
         if which is not None :
             self.set_which(which)
         if self.mult is not None :
-            self.mult.plot(marker='o', filled_markers=False, scale=1.25)#size=1.5, linewidth=2, filled_markers=False)
+            self.mult.plot() #marker='o', scale=1.25)#size=1.5, linewidth=2)
             self.mult.plot_column('id')
-        if self.images is not None :
-            #self.images.plot(marker='x', filled_markers=True, scale=1)
-            self.images.saturation = 1.
-            #self.images.plot_column('id')
+        if self.source is not None :
+            self.source.plot() #marker='x', alpha=[1,1], saturation=1., scale=0.5)
+            #self.source.plot_column('id')
+        #if self.images is not None :
+        #    #self.images.plot(marker='x', alpha=[1,1], saturation=1., scale=1)
+        #    #self.images.plot_column('id')
         if self.images_filtered is not None :
-            self.images_filtered.plot(marker='x', filled_markers=True, scale=0.5)
-            #self.images_filtered.saturation = 1.
-            self.images.plot_column('id')
+            self.images_filtered.plot() #marker='+', alpha=[1,1], saturation=1., scale=0.75)
+            #self.images_filtered.plot_column('id')
         if self.curves is not None :
             self.curves.plot()
     
