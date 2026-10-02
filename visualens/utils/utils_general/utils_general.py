@@ -97,6 +97,15 @@ def remove_png_margins(im) :
     return im_cropped
 
 
+def has_world_coordinates(cat) :
+    for col in cat.colnames :
+        if col.lower() in ['ra', 'alpha_j2000', 'x_world'] :
+            for col in cat.colnames :
+                if col.lower() in ['dec', 'delta_j2000', 'y_world'] :
+                    return True
+    return False
+
+
 def make_colnames_dict(catalog, use_default_names=True):
     """
     Extracts column names for positions and shape parameters from an Astropy table.
@@ -109,8 +118,8 @@ def make_colnames_dict(catalog, use_default_names=True):
     """
     
     to_test_names_dict = {}
-    to_test_names_dict['ra'] = ['ra', 'ALPHA_J2000', 'X_WORLD']
-    to_test_names_dict['dec'] = ['dec', 'DELTA_J2000', 'Y_WORLD']
+    to_test_names_dict['ra'] = ['ra', 'ALPHA_J2000', 'X_WORLD'] #No need to add different upper/lower cases as str.lower() will be tested
+    to_test_names_dict['dec'] = ['dec', 'DELTA_J2000', 'Y_WORLD'] #No need to add different upper/lower cases as str.lower() will be tested
     #to_test_names_dict['x'] = ['X_IMAGE', 'x']
     #to_test_names_dict['y'] = ['Y_IMAGE', 'y']
     to_test_names_dict['a'] = ['a', 'A_IMAGE']

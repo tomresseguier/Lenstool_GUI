@@ -65,11 +65,11 @@ def match_cat2(cats, match_radius=0.5, fill_in_value=np.nan, return_match_idx=Fa
 
     for colname in columns_to_process:
         col_type = type(cat_giver[colname][0])
-        if not np.isnan(fill_in_value) :
-            fill_in_value_type = col_type if col_type!=np.ndarray else type(cat_giver[colname][0][0])
-            fill_in_value_matched_type = fill_in_value_type(fill_in_value)
-        else :
-            fill_in_value_matched_type = fill_in_value
+        #if not np.isnan(fill_in_value) :
+        fill_in_value_type = col_type if col_type!=np.ndarray else type(cat_giver[colname][0][0])
+        fill_in_value_matched_type = fill_in_value_type(fill_in_value)
+        #else :
+        #    fill_in_value_matched_type = fill_in_value
         if colname not in matched_cat.colnames:
             #print(f'Adding column: {colname}')
             if col_type == np.ndarray :

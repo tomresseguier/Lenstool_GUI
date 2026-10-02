@@ -16,7 +16,8 @@ from .utils.utils_astro.cat_manip import match_cat2
 from .utils.utils_plots.plot_utils_general import *
 from .utils.utils_Qt.selectable_classes import SelectableEllipse, SelectableScatter, SelectSources, ellipse_maker_ROI
 from .utils.utils_Qt.utils_general import make_handles, InRectangle, make_full_color
-from .utils.utils_general.utils_general import make_colnames_dict
+from .utils.utils_general.utils_general import make_colnames_dict, has_world_coordinates
+from .utils.utils_general.read_any_cat import read_any_cat
 from .utils.utils_LaTeX.catalog_to_latex import catalog_to_latex
 
 ##############################################################################
@@ -38,13 +39,17 @@ def open_cat(cat_path) :
     else :
         with open(cat_path, 'r') as raw_cat :
             first_line, second_line = raw_cat.readlines()[0:2]
-            #print(first_line)
             start_line = 1 if second_line.startswith('--') else 0
         if len(first_line.split()) > len(first_line.split(',')) :
             cat_df = pd.read_csv(cat_path, sep='\s+', skip_blank_lines=True, comment='#')[start_line:].apply(pd.to_numeric, errors='coerce')
         else :
             cat_df = pd.read_csv(cat_path, skip_blank_lines=True, comment='#')[start_line:].apply(pd.to_numeric, errors='coerce')
         cat = Table.from_pandas(cat_df)
+        # Check that we have a catalog with world coordinates
+        if not has_world_coordinates(cat) :
+            cat = read_any_cat(cat_path)
+            if not has_world_coordinates(cat) :
+                raise ValueError("Catalog does not have world coordinates")
     return cat, header
 
     
@@ -201,7 +206,7 @@ class Catalog :
         
         for i in tqdm(range(len(self.cat))) :
             to_plot = self.cat[text_column][i]
-            text = to_plot if type(to_plot)==str else f"{to_plot:.{n_digit}g}"
+            text = to_plot if type(to_plot) in (str, np.str_) else f"{to_plot:.{n_digit}g}"
             text_item = pg.TextItem(text, color=color)
     
             # Get ellipse position and size for offset calculation
@@ -539,7 +544,7 @@ class Catalog :
     #    else :
     #        print('No imported_cat')
     
-    def transfer_col(self, col_to_transfer, which_cat="imported_cat", index=None, source_cat=None, match_radius=0.5, overwrite=False) :
+    def transfer_col(self, col_to_transfer, which_cat="imported_cat", index=None, source_cat=None, match_radius=0.5, overwrite=False, fill_in_value=np.nan) :
         if source_cat is None :
             if index is not None :
                 if self.workspace is not None :
@@ -556,7 +561,7 @@ class Catalog :
     
         if source_cat is not None :
             if col_to_transfer in source_cat.cat.colnames:
-                temp_cat, match_idx = match_cat2([self.cat, source_cat.cat], keep_all_col=True, return_match_idx=True, match_radius=match_radius) #, fill_in_value=-1.0
+                temp_cat, match_idx = match_cat2([self.cat, source_cat.cat], keep_all_col=True, return_match_idx=True, match_radius=match_radius, fill_in_value=fill_in_value) #, fill_in_value=-1.0
                 if col_to_transfer in self.cat.colnames :
                     if overwrite :
                         self.cat.replace_column(col_to_transfer, temp_cat[col_to_transfer])
